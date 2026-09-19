@@ -18,6 +18,7 @@ import math
 
 import torch
 import torch.nn as nn
+import copy
 import torch.nn.functional as F
 
 __all__ = [
@@ -586,28 +587,21 @@ class OBB(_BaseHead):
         self.ne = int(ne)
         self.layout = layout
         self.legacy = bool(legacy)
-        if layout == "upstream":
-            super().__init__(
-                nc=nc, ch=ch, reg_channels=4 * int(reg_max), hidden=hidden,
-                cls_extra=self.ne, legacy=self.legacy,
-            )
-        else:
-            super().__init__(
-                nc=nc, ch=ch, reg_channels=4, hidden=hidden, legacy=self.legacy,
-            )
-            c4 = max(16, ch[0] // 4 * 4)
-            self.cv4 = nn.ModuleList(
-                nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.ne, 1))
-                for x in ch
-            )
-            for m in self.cv4:
-                nn.init.constant_(m[-1].bias, 0.0)
+        super().__init__(
+            nc=nc, ch=ch, reg_channels=4 * int(reg_max), hidden=hidden,
+            cls_extra=0, legacy=self.legacy,
+        )
+        c4 = max(ch[0] // 4, self.ne)  # 对齐 ultralytics OBB.cv4
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.ne, 1))
+            for x in ch
+        )
+        for m in self.cv4:
+            nn.init.constant_(m[-1].bias, 0.0)
         self.reg_max = int(reg_max)
         self.stride = torch.zeros(self.nl)
 
     def forward(self, x):
-        if self.layout == "upstream":
-            return self._tower(x, order="rc")
         return self._tower(x, extra=self.cv4, order="rcx")
 
 
@@ -657,6 +651,30 @@ class Proto(nn.Module):
 
     def forward(self, x):
         return self.cv3(self.cv2(self.upsample(self.cv1(x))))
+
+
+@register
+class Proto26(Proto):
+    """YOLO26 mask prototype module: multi-scale fuse + optional semantic head."""
+
+    def __init__(self, ch, c_=256, c2=32, nc=80):
+        c_ = int(c_)
+        super().__init__(c_, c2, c_)
+        self.feat_refine = nn.ModuleList(Conv(x, ch[0], k=1) for x in ch[1:])
+        self.feat_fuse = Conv(ch[0], c_, k=3)
+        self.semseg = nn.Sequential(
+            Conv(ch[0], c_, k=3), Conv(c_, c_, k=3), nn.Conv2d(c_, nc, 1)
+        )
+
+    def forward(self, x, return_semantic=True):
+        feat = x[0]
+        for i, f in enumerate(self.feat_refine):
+            up = F.interpolate(f(x[i + 1]), scale_factor=2 ** (i + 1), mode="nearest")
+            feat = feat + up
+        p = super().forward(self.feat_fuse(feat))
+        if self.training and return_semantic:
+            return (p, self.semseg(feat))
+        return p
 
 
 @register
@@ -1110,6 +1128,57 @@ class SegmentU(nn.Module):
 
 
 @register
+class Segment26(nn.Module):
+    """YOLO26-style end-to-end segmentation head ``[reg, cls, coeff]``.
+
+    Keeps the upstream one-to-one (``one2one_cv2/cv3/cv4``) branches so the
+    released YOLO26 ``-seg`` checkpoints load with ``missing=0``; the main forward
+    returns the one-to-many branch plus prototypes (framework pipeline contract).
+    """
+
+    def __init__(self, nc=80, ch=(), nm=32, npr=256, reg_max=1, end2end=True, hidden=None):
+        super().__init__()
+        self.nc = int(nc)
+        self.nl = len(ch)
+        self.reg_max = int(reg_max)
+        self.nm = int(nm)
+        self.npr = int(npr)
+        self.no = 4 * self.reg_max + self.nc + self.nm
+        self.end2end = bool(end2end)
+        c2 = max(16, ch[0] // 4, 4 * self.reg_max)
+        c3 = max(ch[0], min(self.nc, 100))
+        c4 = max(ch[0] // 4, self.nm)
+        self.cv2 = nn.ModuleList(
+            nn.Sequential(
+                Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)
+            )
+            for x in ch
+        )
+        self.cv3 = nn.ModuleList(_dw_cls_branch(x, c3, self.nc) for x in ch)
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1))
+            for x in ch
+        )
+        self.proto = Proto26(ch, self.npr, self.nm, self.nc)
+        if self.end2end:
+            self.one2one_cv2 = copy.deepcopy(self.cv2)
+            self.one2one_cv3 = copy.deepcopy(self.cv3)
+            self.one2one_cv4 = copy.deepcopy(self.cv4)
+        for a in self.cv2:
+            nn.init.constant_(a[-1].bias, 1.0)
+        for b in self.cv3:
+            nn.init.constant_(b[-1].bias, -math.log((1 - 0.01) / 0.01))
+        self.stride = torch.zeros(self.nl)
+
+    def forward(self, x):
+        outs = [
+            torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv4[i](x[i])), 1)
+            for i in range(self.nl)
+        ]
+        return outs, self.proto(x, return_semantic=False)
+
+
+@register
 class OBBU(nn.Module):
     """YOLO26-style oriented head: ``[reg(4*reg_max), cls(nc), angle(ne)]``."""
 
@@ -1193,10 +1262,8 @@ class PoseU(nn.Module):
 # YOLO26-style aliases: the detection-style heads above keep the same output
 # layouts, so the seg/obb/pose variants can reuse them directly.
 OBB26 = OBB
-Segment26 = Segment
 Pose26 = Pose
 REGISTRY["OBB26"] = OBB
-REGISTRY["Segment26"] = Segment
 REGISTRY["Pose26"] = Pose
 
 
@@ -1216,7 +1283,7 @@ REGISTRY["SegmentDFL"] = SegmentDFL
 REGISTRY["OBBDFL"] = OBBDFL
 REGISTRY["PoseDFL"] = PoseDFL
 REGISTRY["Detect26"] = Detect26
-REGISTRY["Segment26"] = SegmentU
+REGISTRY["Segment26"] = Segment26
 REGISTRY["OBB26"] = OBBU
 REGISTRY["Pose26"] = PoseU
 REGISTRY["v10Detect"] = Detect10
