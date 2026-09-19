@@ -7,6 +7,8 @@ box with a soft classification target proportional to the metric.
 """
 from __future__ import absolute_import
 
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,7 +23,7 @@ from pytorchx.det.ops import (
     make_anchors,
     split_head,
 )
-from pytorchx.det.rbox import dist2rbox, points_in_rboxes, probiou
+from pytorchx.det.rbox import dist2rbox, points_in_rboxes, probiou, rbox2dist
 
 __all__ = ["TaskAlignedAssigner", "DetLoss", "ObbLoss", "points_in_boxes", "df_loss"]
 
@@ -363,10 +365,11 @@ class ObbLoss(DetLoss):
         beta=6.0,
         cls_gain=0.5,
         box_gain=7.5,
+        dfl_gain=1.5,
         reg_max=1,
         reg_layout="ltrb_angle",
         ne=1,
-        angle_gain=0.0,
+        angle_gain=1.0,
         **kwargs
     ):
         super().__init__(
@@ -390,6 +393,7 @@ class ObbLoss(DetLoss):
         )
         self.ne = int(ne)
         self.reg_layout = reg_layout
+        self.dfl_gain = float(dfl_gain)
         self.angle_gain = float(angle_gain)
 
     def _split(self, feats):
@@ -397,11 +401,30 @@ class ObbLoss(DetLoss):
         dist, cls, _ = split_head(feats, self.num_classes, self.reg_max, mode, self.ne)
         return dist, cls
 
+    def _split_raw(self, feats):
+        """Return raw (un-projected) reg, cls logits and angle logits.
+
+        Layout (upstream) per level: ``[reg(4*reg_max), cls(nc), angle(ne)]``.
+        """
+        rc = 4 * self.reg_max
+        raw_dists, scores, angles = [], [], []
+        for feat in feats:
+            b, c, h, w = feat.shape
+            f = feat.view(b, c, h * w).permute(0, 2, 1)
+            raw_dists.append(f[..., :rc])
+            scores.append(f[..., rc : rc + self.num_classes])
+            angles.append(f[..., rc + self.num_classes :])
+        return torch.cat(raw_dists, 1), torch.cat(scores, 1), torch.cat(angles, 1)
+
     def forward(self, preds, batch):
-        pred_dist, pred_scores = self._split(preds)
+        dist_raw, pred_scores, angle_raw = self._split_raw(preds)
         anchor_points, stride_tensor = make_anchors(preds, self.strides)
-        anchors_px = anchor_points * stride_tensor
-        pred_rboxes = dist2rbox(pred_dist, anchor_points, stride_tensor)
+        pred_distri = (
+            dfl_project(dist_raw, self.reg_max) if self.reg_max > 1 else dist_raw
+        )
+        pred_bboxes = dist2rbox(
+            torch.cat([pred_distri, angle_raw], dim=-1), anchor_points
+        )  # grid-unit xywhr
 
         device = pred_scores.device
         targets = batch[1].to(device)
@@ -410,10 +433,13 @@ class ObbLoss(DetLoss):
         gt_rboxes = targets[..., 1:6]
 
         with torch.no_grad():
-            t_labels, t_rboxes, t_scores, fg, _ = self.assigner(
+            # scale pred boxes to pixels for matching (matches ultralytics)
+            bboxes_for_assigner = pred_bboxes.clone().detach()
+            bboxes_for_assigner[..., :4] *= stride_tensor
+            t_labels, t_bboxes, t_scores, fg, _ = self.assigner(
                 pred_scores.detach().sigmoid(),
-                pred_rboxes.detach(),
-                anchors_px,
+                bboxes_for_assigner,
+                anchor_points * stride_tensor,
                 gt_labels,
                 gt_rboxes,
                 mask_gt,
@@ -426,15 +452,51 @@ class ObbLoss(DetLoss):
         loss_cls = loss_cls.sum() / scores_sum
 
         if bool(fg.any()):
+            t_bboxes = t_bboxes.clone()
+            t_bboxes[..., :4] = t_bboxes[..., :4] / stride_tensor  # back to grid
             weight = t_scores.sum(-1)[fg].detach()
-            piou = probiou(pred_rboxes[fg], t_rboxes[fg])
-            loss_box = ((1.0 - piou) * weight).sum() / scores_sum
-        else:
-            loss_box = pred_rboxes.sum() * 0.0
+            iou = probiou(pred_bboxes[fg], t_bboxes[fg], floor=0.01)
+            loss_box = ((1.0 - iou) * weight).sum() / scores_sum
 
-        loss = self.box_gain * loss_box + self.cls_gain * loss_cls
+            # DFL (RotatedBboxLoss)
+            if self.reg_max > 1:
+                target_ltrb = rbox2dist(
+                    t_bboxes[..., :4].contiguous(),
+                    anchor_points,
+                    t_bboxes[..., 4:5],
+                    reg_max=self.reg_max - 1,
+                )
+                b_sz, a_sz = fg.shape
+                pd = dist_raw.view(b_sz, a_sz, 4, self.reg_max)[fg].reshape(-1, self.reg_max)
+                per_side = df_loss(pd, target_ltrb[fg].reshape(-1)).view(-1, 4).mean(-1)
+                loss_dfl = (per_side * weight).sum() / scores_sum
+            else:
+                loss_dfl = dist_raw.sum() * 0.0
+
+            # angle loss (v8OBBLoss.calculate_angle_loss)
+            w_gt = t_bboxes[..., 2]
+            h_gt = t_bboxes[..., 3]
+            log_ar = torch.log((w_gt + 1e-9) / (h_gt + 1e-9))
+            scale_weight = torch.exp(-(log_ar ** 2) / (3.0 ** 2))
+            delta = pred_bboxes[..., 4] - t_bboxes[..., 4]
+            delta_wrapped = delta - torch.round(delta / math.pi) * math.pi
+            ang_loss = (torch.sin(2 * delta_wrapped[fg]) ** 2) * scale_weight[fg] * weight
+            loss_angle = ang_loss.sum() / scores_sum
+        else:
+            loss_box = pred_bboxes.sum() * 0.0
+            loss_dfl = dist_raw.sum() * 0.0
+            loss_angle = pred_bboxes.sum() * 0.0
+
+        loss = (
+            self.box_gain * loss_box
+            + self.cls_gain * loss_cls
+            + self.dfl_gain * loss_dfl
+            + self.angle_gain * loss_angle
+        )
         return {
             "loss": loss * int(batch[0].shape[0]),
             "loss_box": loss_box.detach(),
             "loss_cls": loss_cls.detach(),
+            "loss_dfl": loss_dfl.detach(),
+            "loss_angle": loss_angle.detach(),
         }

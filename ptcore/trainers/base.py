@@ -284,7 +284,9 @@ class BaseTrainer:
         # 注意 Windows 下训练循环只取 len(loader)-1 个 batch(PaddleOCR 语义),需据此折算。
         _win = platform.system() == "Windows"
         _bpe = max(1, len(self.train_loader) - 1 if _win else len(self.train_loader))
-        self.opt_steps_per_epoch = max(1, _bpe // self.accumulate)
+        # do_step 在 ``(idx+1)%accumulate==0 or idx+1>=max_iter`` 时触发,故每 epoch 实为
+        # ``ceil(max_iter/accumulate)`` 次(向下取整会低估,导致 LR 相位错乱)。
+        self.opt_steps_per_epoch = max(1, (_bpe + self.accumulate - 1) // self.accumulate)
         self.logger.info("Building optimizer...")
         self.optimizer, self.lr_scheduler = build_optimizer(
             config["Optimizer"], self.epoch_num, self.opt_steps_per_epoch, self._raw_model()
@@ -311,6 +313,7 @@ class BaseTrainer:
         )
 
         self.global_step = 0
+        self._last_eval_global_step = -1
         self.best_metric = 0.0
         self.best_metrics = {}
         self.best_fps = 0.0
@@ -774,6 +777,12 @@ class BaseTrainer:
         start = int(evs[0]) if len(evs) > 0 else 0
         if interval <= 0 or step < start or step % interval != 0:
             return
+        # 梯度累积窗口内 global_step 会连续多批停在同一个值,
+        # 直接 `step % interval == 0` 会在 step=start(通常为0)时每批都触发评估。
+        # 只在 global_step 变化到新的满足条件的值时评估一次(否则累积窗口内会重复评估)。
+        if step == self._last_eval_global_step:
+            return
+        self._last_eval_global_step = step
         self.evaluate_and_save()
 
     def evaluate(self):

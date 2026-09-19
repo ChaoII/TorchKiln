@@ -235,6 +235,7 @@ def parse_model(d, ch=3, verbose=False):
                 if len(extra) > 1:
                     reg_max = extra[1]
                 kwargs["layout"] = d.get("obb_layout", "upstream")
+                kwargs["legacy"] = d.get("legacy", True)
             elif "Pose" in cls_name:
                 if d.get("kpt_shape"):
                     kwargs["kpt_shape"] = tuple(d["kpt_shape"])
@@ -475,6 +476,8 @@ def build_from_arch(arch):
         spec["reg_max"] = int(head["reg_max"])
     if head.get("reg_layout"):
         spec["obb_layout"] = str(head["reg_layout"])
+    if head.get("legacy") is not None:
+        spec["legacy"] = bool(head["legacy"])
     spec["scale"] = arch.get("scale", spec.get("scale", "n"))
     ch = int(arch.get("in_channels", arch.get("ch", 3)))
     model, save, last = parse_model(spec, ch=ch)

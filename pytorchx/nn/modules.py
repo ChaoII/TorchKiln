@@ -397,12 +397,13 @@ class _BaseHead(nn.Module):
     ``reg_max > 1`` enables the DFL parameterisation (``reg_channels = 4*reg_max``).
     """
 
-    def __init__(self, nc=80, ch=(), reg_channels=4, hidden=None, cls_extra=0):
+    def __init__(self, nc=80, ch=(), reg_channels=4, hidden=None, cls_extra=0, legacy=True):
         super().__init__()
         self.nc = int(nc)
         self.nl = len(ch)
         self.reg_channels = int(reg_channels)
         self.cls_extra = int(cls_extra)
+        self.legacy = bool(legacy)
         self.no = self.reg_channels + self.nc + self.cls_extra
         c2 = max(16, ch[0] // 4, self.reg_channels)
         c3 = max(ch[0], min(self.nc, 100))
@@ -412,14 +413,25 @@ class _BaseHead(nn.Module):
             )
             for x in ch
         )
-        self.cv3 = nn.ModuleList(
-            nn.Sequential(
-                Conv(x, c3, 3),
-                Conv(c3, c3, 3),
-                nn.Conv2d(c3, self.nc + self.cls_extra, 1),
+        if self.legacy:
+            self.cv3 = nn.ModuleList(
+                nn.Sequential(
+                    Conv(x, c3, 3),
+                    Conv(c3, c3, 3),
+                    nn.Conv2d(c3, self.nc + self.cls_extra, 1),
+                )
+                for x in ch
             )
-            for x in ch
-        )
+        else:
+            # ultralytics new head (yolo11/12/26): depthwise classifier tower
+            self.cv3 = nn.ModuleList(
+                nn.Sequential(
+                    nn.Sequential(DWConv(x, x, 3), Conv(x, c3, 1)),
+                    nn.Sequential(DWConv(c3, c3, 3), Conv(c3, c3, 1)),
+                    nn.Conv2d(c3, self.nc + self.cls_extra, 1),
+                )
+                for x in ch
+            )
         self.bias_init()
 
     def bias_init(self):
@@ -563,17 +575,18 @@ class OBB(_BaseHead):
     ``cls_extra``/``layout='upstream'``; our own head keeps ``[reg, angle, cls]``.
     """
 
-    def __init__(self, nc=80, ch=(), ne=1, hidden=None, reg_max=1, layout="upstream"):
+    def __init__(self, nc=80, ch=(), ne=1, hidden=None, reg_max=1, layout="upstream", legacy=True):
         self.ne = int(ne)
         self.layout = layout
+        self.legacy = bool(legacy)
         if layout == "upstream":
             super().__init__(
                 nc=nc, ch=ch, reg_channels=4 * int(reg_max), hidden=hidden,
-                cls_extra=self.ne,
+                cls_extra=self.ne, legacy=self.legacy,
             )
         else:
             super().__init__(
-                nc=nc, ch=ch, reg_channels=4, hidden=hidden,
+                nc=nc, ch=ch, reg_channels=4, hidden=hidden, legacy=self.legacy,
             )
             c4 = max(16, ch[0] // 4 * 4)
             self.cv4 = nn.ModuleList(
@@ -1093,12 +1106,13 @@ class SegmentU(nn.Module):
 class OBBU(nn.Module):
     """YOLO26-style oriented head: ``[reg(4*reg_max), cls(nc), angle(ne)]``."""
 
-    def __init__(self, nc=80, ch=(), ne=1, reg_max=1, hidden=None, layout=None):
+    def __init__(self, nc=80, ch=(), ne=1, reg_max=1, hidden=None, layout=None, legacy=True):
         super().__init__()
         self.nc = int(nc)
         self.nl = len(ch)
         self.reg_max = int(reg_max)
         self.ne = int(ne)
+        self.legacy = bool(legacy)
         self.no = 4 * self.reg_max + self.nc + self.ne
         c2 = max(16, ch[0] // 4, 4 * self.reg_max)
         c3 = max(ch[0], min(self.nc, 100))

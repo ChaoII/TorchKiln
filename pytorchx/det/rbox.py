@@ -7,17 +7,18 @@ by ``theta`` (counter-clockwise).
 """
 from __future__ import absolute_import
 
+import math
+
 import cv2
 import numpy as np
 import torch
-
-from pytorchx.det.ops import dist2bbox
 
 __all__ = [
     "poly2rbox",
     "rbox2poly",
     "rbox2poly_np",
     "dist2rbox",
+    "rbox2dist",
     "probiou",
     "points_in_rboxes",
     "poly_iou_np",
@@ -76,22 +77,51 @@ def rbox2poly(boxes):
 
 
 # ----------------------------------------------------------------------- probiou
-def dist2rbox(dist_angle, anchor_points, stride_tensor):
-    """Decode ``(l, t, r, b, angle_raw)`` into pixel ``xywhr`` boxes.
+def dist2rbox(dist_angle, anchor_points, stride_tensor=None):
+    """Decode ``(l, t, r, b, angle_logit)`` into ``xywhr`` OBBs.
 
-    The axis-aligned box is decoded in *grid* units and then scaled by the
-    stride; ``theta = atan(angle_raw)`` keeps the angle in ``(-pi/2, pi/2)``.
+    Aligned with ultralytics ``dist2rbox`` + OBB-head angle decoding: the box
+    centre offset is rotated by the angle in *grid* units, ``w = l + r`` /
+    ``h = t + b``, and ``theta = (sigmoid(angle_logit) - 0.25) * pi`` (the
+    ultralytics ``OBB.forward`` angle decode). Returns grid-unit ``xywhr``
+    unless ``stride_tensor`` scales it to pixels.
     """
     dist = dist_angle[..., :4]
     ang = dist_angle[..., 4:5]
-    xyxy = dist2bbox(dist, anchor_points, xywh=False)
-    cxy = (xyxy[..., 0:2] + xyxy[..., 2:4]) / 2
-    wh = xyxy[..., 2:4] - xyxy[..., 0:2]
-    out = torch.cat([cxy, wh], dim=-1) * stride_tensor
-    return torch.cat([out, torch.atan(ang)], dim=-1)
+    theta = (torch.sigmoid(ang) - 0.25) * math.pi
+    lt, rb = dist.split(2, dim=-1)
+    cos, sin = torch.cos(theta), torch.sin(theta)
+    xf, yf = ((rb - lt) / 2).split(1, dim=-1)
+    x = xf * cos - yf * sin
+    y = xf * sin + yf * cos
+    xy = torch.cat([x, y], dim=-1) + anchor_points
+    wh = lt + rb
+    out = torch.cat([xy, wh], dim=-1)
+    if stride_tensor is not None:
+        out = out * stride_tensor
+    return torch.cat([out, theta], dim=-1)
 
 
-def _probiou_pairwise(b1, b2, eps=1e-7):
+def rbox2dist(target_bboxes, anchor_points, target_angle, dim=-1, reg_max=None):
+    """Inverse of :func:`dist2rbox`: ``xywhr`` -> ``(l, t, r, b)`` in grid units."""
+    xy, wh = target_bboxes.split(2, dim)
+    offset = xy - anchor_points
+    ox, oy = offset.split(1, dim)
+    cos, sin = torch.cos(target_angle), torch.sin(target_angle)
+    xf = ox * cos + oy * sin
+    yf = -ox * sin + oy * cos
+    w, h = wh.split(1, dim)
+    target_l = w / 2 - xf
+    target_t = h / 2 - yf
+    target_r = w / 2 + xf
+    target_b = h / 2 + yf
+    dist = torch.cat([target_l, target_t, target_r, target_b], dim)
+    if reg_max is not None:
+        dist = dist.clamp_(0, reg_max - 0.01)
+    return dist
+
+
+def _probiou_pairwise(b1, b2, eps=1e-7, floor=0.0):
     """Element-wise ProbIoU; ``b1``/``b2`` broadcast to the same shape ``(..., 5)``.
 
     Aligned with ultralytics ``batch_probiou`` (ProbIoU from
@@ -100,7 +130,7 @@ def _probiou_pairwise(b1, b2, eps=1e-7):
     """
 
     def _cov(b):
-        gbbs = torch.cat((b[..., 2:4].pow(2) / 12, b[..., 4:5]), dim=-1)
+        gbbs = torch.cat((b[..., 2:4].pow(2) / 12 + floor, b[..., 4:5]), dim=-1)
         aa, bb, c = gbbs.split(1, dim=-1)
         cos, sin = c.cos(), c.sin()
         cos2, sin2 = cos.pow(2), sin.pow(2)
@@ -125,15 +155,15 @@ def _probiou_pairwise(b1, b2, eps=1e-7):
     return (1.0 - hd).squeeze(-1)
 
 
-def probiou(box1, box2, eps=1e-7):
+def probiou(box1, box2, eps=1e-7, floor=0.0):
     """Probabilistic IoU between rotated boxes.
 
     * ``(N, 5)`` against ``(N, 5)``  -> element-wise ``(N,)``
     * ``(B, N, 5)`` against ``(B, M, 5)`` -> cross ``(B, N, M)``
     """
     if box1.dim() == 2:
-        return _probiou_pairwise(box1, box2, eps)
-    return _probiou_pairwise(box1.unsqueeze(2), box2.unsqueeze(1), eps)
+        return _probiou_pairwise(box1, box2, eps, floor)
+    return _probiou_pairwise(box1.unsqueeze(2), box2.unsqueeze(1), eps, floor)
 
 
 def points_in_rboxes(points, boxes, margin=0.0):
@@ -236,6 +266,8 @@ def nms_rotated(boxes, scores, iou_thres, max_candidates=3000):
     if n > max_candidates:
         b = b[:max_candidates]
         sorted_idx = sorted_idx[:max_candidates]
+    if b.shape[0] == 1:
+        return sorted_idx
     ious = _pairwise_probiou(b).triu_(diagonal=1)
     pick = torch.nonzero((ious >= iou_thres).sum(0) <= 0).squeeze_(-1)
     return sorted_idx[pick]
