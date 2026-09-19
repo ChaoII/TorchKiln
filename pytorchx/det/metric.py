@@ -58,14 +58,17 @@ class DetMetric(object):
     def _iou(self, box, boxes):
         """IoU of one box against many, honouring ``box_format``."""
         if self.box_format == "xywhr":
-            from pytorchx.det.rbox import poly_iou_np, rbox2poly_np
+            from pytorchx.det.rbox import probiou
+
+            import torch as _t
 
             if boxes.shape[0] == 0:
                 return np.zeros((0,), dtype=np.float32)
-            p1 = rbox2poly_np(box.reshape(1, 5))[0]
-            return np.array(
-                [poly_iou_np(p1, p) for p in rbox2poly_np(boxes)], dtype=np.float32
-            )
+            b1 = _t.from_numpy(box.reshape(1, 5).astype(np.float32))
+            b2 = _t.from_numpy(boxes.astype(np.float32))
+            with _t.no_grad():
+                iou = probiou(b1, b2).numpy()
+            return iou.astype(np.float32)
         return _iou_matrix(box, boxes)
 
     def __call__(self, post_result, batch):

@@ -616,8 +616,9 @@ class Pose(_BaseHead):
         super().__init__(nc=nc, ch=ch, reg_channels=4 * int(reg_max), hidden=hidden)
         self.kpt_shape = tuple(kpt_shape)
         self.nk = int(kpt_shape[0]) * int(kpt_shape[1])
+        c4 = max(ch[0] // 4, self.nk)  # 对齐 ultralytics Pose.cv4
         self.cv4 = nn.ModuleList(
-            nn.Sequential(Conv(x, x, 3), Conv(x, x, 3), nn.Conv2d(x, self.nk, 1))
+            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nk, 1))
             for x in ch
         )
 
@@ -1143,8 +1144,9 @@ class PoseU(nn.Module):
             for x in ch
         )
         self.cv3 = nn.ModuleList(_dw_cls_branch(x, c3, self.nc) for x in ch)
+        c4 = max(ch[0] // 4, self.nk)  # 对齐 ultralytics Pose.cv4
         self.cv4 = nn.ModuleList(
-            nn.Sequential(Conv(x, x, 3), Conv(x, x, 3), nn.Conv2d(x, self.nk, 1))
+            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nk, 1))
             for x in ch
         )
         for a in self.cv2:

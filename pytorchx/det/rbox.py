@@ -92,36 +92,37 @@ def dist2rbox(dist_angle, anchor_points, stride_tensor):
 
 
 def _probiou_pairwise(b1, b2, eps=1e-7):
-    """Element-wise ProbIoU; ``b1``/``b2`` have the same shape ``(..., 5)``."""
+    """Element-wise ProbIoU; ``b1``/``b2`` broadcast to the same shape ``(..., 5)``.
 
-    def _gauss(b):
-        cx, cy, w, h, t = (b[..., i] for i in range(5))
-        a = (w / 2) ** 2
-        bb = (h / 2) ** 2
-        cos, sin = torch.cos(t), torch.sin(t)
-        c2, s2 = cos * cos, sin * sin
-        sxx = a * c2 + bb * s2
-        syy = a * s2 + bb * c2
-        sxy = (a - bb) * cos * sin
-        return cx, cy, sxx, syy, sxy
+    Aligned with ultralytics ``batch_probiou`` (ProbIoU from
+    arXiv:2106.06072): the Gaussian covariance of an ``xywhr`` box uses the
+    uniform-distribution variance ``w^2/12`` / ``h^2/12``.
+    """
 
-    cx1, cy1, sxx1, syy1, sxy1 = _gauss(b1)
-    cx2, cy2, sxx2, syy2, sxy2 = _gauss(b2)
+    def _cov(b):
+        gbbs = torch.cat((b[..., 2:4].pow(2) / 12, b[..., 4:5]), dim=-1)
+        aa, bb, c = gbbs.split(1, dim=-1)
+        cos, sin = c.cos(), c.sin()
+        cos2, sin2 = cos.pow(2), sin.pow(2)
+        return aa * cos2 + bb * sin2, aa * sin2 + bb * cos2, (aa - bb) * cos * sin
 
-    det1 = (sxx1 * syy1 - sxy1 * sxy1).clamp(min=eps)
-    det2 = (sxx2 * syy2 - sxy2 * sxy2).clamp(min=eps)
-    sxx = (sxx1 + sxx2) / 2
-    syy = (syy1 + syy2) / 2
-    sxy = (sxy1 + sxy2) / 2
-    det = (sxx * syy - sxy * sxy).clamp(min=eps)
+    x1, y1 = b1[..., 0:1], b1[..., 1:2]
+    x2, y2 = b2[..., 0:1], b2[..., 1:2]
+    a1, b1_, c1 = _cov(b1)
+    a2, b2_, c2 = _cov(b2)
 
-    dx = cx1 - cx2
-    dy = cy1 - cy2
-    quad = (syy * dx * dx - 2 * sxy * dx * dy + sxx * dy * dy) / det
-    bc = 0.125 * quad + 0.5 * torch.log(det / (torch.sqrt(det1 * det2) + eps) + eps)
-    hc = torch.sqrt((1 - torch.exp(-bc)).clamp(min=0, max=1 - 1e-7))
-    # similarity in [0, 1]: 1.0 for identical boxes
-    return 1.0 - hc
+    denom = (a1 + a2) * (b1_ + b2_) - (c1 + c2).pow(2) + eps
+    t1 = (((a1 + a2) * (y1 - y2).pow(2) + (b1_ + b2_) * (x1 - x2).pow(2)) / denom) * 0.25
+    t2 = (((c1 + c2) * (x2 - x1) * (y1 - y2)) / denom) * 0.5
+    t3 = (
+        ((a1 + a2) * (b1_ + b2_) - (c1 + c2).pow(2))
+        / (4 * ((a1 * b1_ - c1.pow(2)).clamp_(0) * (a2 * b2_ - c2.pow(2)).clamp_(0)).sqrt() + eps)
+        + eps
+    ).log() * 0.5
+
+    bd = (t1 + t2 + t3).clamp(eps, 100.0)
+    hd = (1.0 - (-bd).exp() + eps).sqrt()
+    return (1.0 - hd).squeeze(-1)
 
 
 def probiou(box1, box2, eps=1e-7):
@@ -210,22 +211,31 @@ def poly_iou_np(poly1, poly2):
     return float(inter / (a1 + a2 - inter + 1e-9))
 
 
-def nms_rotated(boxes, scores, iou_thres):
-    """Greedy rotated NMS on ``(N,5)`` xywhr boxes -> kept indices."""
+def _pairwise_probiou(boxes):
+    """``(N,5)`` xywhr -> ``(N,N)`` ProbIoU matrix (GPU-vectorised)."""
+    return probiou(boxes.unsqueeze(0), boxes.unsqueeze(0))[0].squeeze_(-1)
+
+
+def nms_rotated(boxes, scores, iou_thres, max_candidates=3000):
+    """Rotated NMS on ``(N,5)`` xywhr boxes -> kept indices.
+
+    Aligned with ultralytics ``TorchNMS.fast_nms(boxes, scores, iou_thres,
+    iou_func=batch_probiou)``: ProbIoU pairwise matrix + upper-triangular
+    suppression, fully vectorised on the device (fast vs. the old O(N²)
+    per-pair polygon clipping).
+
+    ``max_candidates`` mirrors ultralytics ``max_nms``: if more than this many
+    boxes pass the confidence filter, only the top-scoring ones are kept before
+    building the (N, N) ProbIoU matrix, bounding GPU memory on dense scenes.
+    """
     if boxes.numel() == 0:
         return torch.empty((0,), dtype=torch.long, device=boxes.device)
-    polys = rbox2poly_np(boxes.detach().cpu().numpy())
-    sc = scores.detach().cpu().numpy()
-    order = np.argsort(-sc)
-    keep = []
-    suppressed = np.zeros(len(order), dtype=bool)
-    for i in range(len(order)):
-        if suppressed[i]:
-            continue
-        keep.append(int(order[i]))
-        for j in range(i + 1, len(order)):
-            if suppressed[j]:
-                continue
-            if poly_iou_np(polys[order[i]], polys[order[j]]) > iou_thres:
-                suppressed[j] = True
-    return torch.tensor(keep, dtype=torch.long, device=boxes.device)
+    sorted_idx = torch.argsort(scores, descending=True)
+    b = boxes[sorted_idx]
+    n = b.shape[0]
+    if n > max_candidates:
+        b = b[:max_candidates]
+        sorted_idx = sorted_idx[:max_candidates]
+    ious = _pairwise_probiou(b).triu_(diagonal=1)
+    pick = torch.nonzero((ious >= iou_thres).sum(0) <= 0).squeeze_(-1)
+    return sorted_idx[pick]

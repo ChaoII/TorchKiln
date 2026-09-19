@@ -331,6 +331,25 @@ class PoseMetric(object):
         e = d / ((2.0 * np.asarray(sigma)) ** 2 * (gt_area[:, None, None] + 1e-9) * 2.0)
         return (np.exp(-e) * kpt_mask[:, None]).sum(-1) / (kpt_mask.sum(-1)[:, None] + 1e-9)
 
+    @staticmethod
+    def _match(oks, thr):
+        """Match GTs to preds per image, aligned with ultralytics ``match_predictions``.
+
+        ``oks`` is ``(N_gt, M_pred)``.  Returns an ``(M_pred,)`` bool TP mask for
+        the given OKS threshold (classes are already filtered by the caller).
+        """
+        M = oks.shape[1]
+        matches = np.argwhere(oks >= thr)  # (P, 2) as (gt, pred)
+        if matches.shape[0] == 0:
+            return np.zeros(M, dtype=bool)
+        vals = oks[matches[:, 0], matches[:, 1]]
+        matches = matches[np.argsort(vals)[::-1]]  # highest OKS first
+        matches = matches[np.unique(matches[:, 1], return_index=True)[1]]
+        matches = matches[np.unique(matches[:, 0], return_index=True)[1]]
+        correct = np.zeros(M, dtype=bool)
+        correct[matches[:, 1]] = True
+        return correct
+
     def get_metric(self):
         n_cls = 0
         for g in self.gts:
@@ -364,24 +383,13 @@ class PoseMetric(object):
                     ps = p["scores"][sel_p]
                     order = np.argsort(-ps)
                     pb_k, ps = pb_k[order], ps[order]
-                    matches = np.zeros(gt_k.shape[0], dtype=bool)
                     if gt_k.shape[0]:
                         oks = self._kpt_iou(gt_k, area, pb_k)  # (N, M)
                     else:
                         oks = np.zeros((0, pb_k.shape[0]), dtype=np.float32)
-                    for j in range(pb_k.shape[0]):
-                        if gt_k.shape[0]:
-                            col = oks[:, j]
-                            col[matches] = -1.0
-                            k = int(col.argmax())
-                        else:
-                            k = -1
-                        if k >= 0 and oks[k, j] > thr:
-                            matches[k] = True
-                            tps.append(1)
-                        else:
-                            tps.append(0)
-                        scores.append(ps[j])
+                    correct = self._match(oks, thr)
+                    tps.extend(correct.astype(np.int64).tolist())
+                    scores.extend(ps.tolist())
                 if n_gt == 0:
                     continue
                 if not scores:
