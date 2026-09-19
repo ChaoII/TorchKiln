@@ -80,6 +80,17 @@ Train:
     - basketball-court
     transform:
       image_size: 1024
+    augment:
+      mosaic: 1.0
+      mosaic9: 0.0
+      mixup: 0.0
+      copy_paste: 0.0
+      close_mosaic: 10
+      multi_scale: 0.0
+      hsv: {p: 1.0, hgain: 0.015, sgain: 0.7, vgain: 0.4}
+      affine: {degrees: 0.0, translate: 0.1, scale: 0.5, shear: 0.0, perspective: 0.0}
+      fliplr: 0.5
+      flipud: 0.0
   loader:
     batch_size_per_card: 8
     shuffle: true

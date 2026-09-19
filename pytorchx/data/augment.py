@@ -78,19 +78,34 @@ def _rbox_corners(labels):
 
 
 def _corners_to_rbox(corners):
+    """Corners ``(N,4,2)`` -> ``(N,5)`` (cx, cy, w, h, theta).
+
+    Aligned with ultralytics ``xyxyxyxy2xywhr``: ``cv2.minAreaRect`` + canonical
+    parameterisation (``w`` longer side, ``theta`` in ``[-pi/4, 3pi/4)``), so the
+    augmented box convention matches the model / ground-truth labels.
+    """
     out = np.zeros((corners.shape[0], 5), dtype=np.float32)
     for i, pts in enumerate(corners):
-        c = pts.mean(0)
-        e1 = pts[1] - pts[0]
-        e2 = pts[3] - pts[0]
-        w = float(np.hypot(*e1))
-        h = float(np.hypot(*e2))
-        theta = float(np.arctan2(e1[1], e1[0]))
+        try:
+            (cx, cy), (w, h), angle = cv2.minAreaRect(pts.reshape(-1, 2))
+            theta = angle / 180.0 * np.pi
+        except cv2.error:
+            # degenerate / collinear corners after augment: fall back to edge method
+            c = pts.mean(0)
+            e1 = pts[1] - pts[0]
+            e2 = pts[3] - pts[0]
+            w = float(np.hypot(*e1))
+            h = float(np.hypot(*e2))
+            theta = float(np.arctan2(e1[1], e1[0]))
+            cx, cy = c[0], c[1]
         if w < h:
             w, h = h, w
             theta += np.pi / 2
-        theta = (theta + np.pi / 2) % np.pi - np.pi / 2
-        out[i] = [c[0], c[1], w, h, theta]
+        while theta >= 3 * np.pi / 4:
+            theta -= np.pi
+        while theta < -np.pi / 4:
+            theta += np.pi
+        out[i] = [cx, cy, w, h, theta]
     return out
 
 
