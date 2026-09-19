@@ -324,9 +324,7 @@ class DetLoss(nn.Module):
                     -1, self.reg_max
                 )
                 stride_fg = stride_tensor.squeeze(-1).unsqueeze(0).expand_as(fg)[fg]
-                tgt = (t_bboxes[fg] / stride_fg[:, None]).clamp(
-                    0, self.reg_max - 1.0 - 1e-3
-                )
+                tgt = t_bboxes[fg] / stride_fg[:, None]
                 ap_fg = anchor_points.unsqueeze(0).expand(fg.shape[0], -1, -1)[fg]
                 target_ltrb = bbox2dist(ap_fg, tgt).clamp(
                     0, self.reg_max - 1.0 - 0.01
@@ -370,6 +368,10 @@ class ObbLoss(DetLoss):
         reg_layout="ltrb_angle",
         ne=1,
         angle_gain=1.0,
+        raw_angle=False,
+        use_one2one=False,
+        one2one_gain=1.0,
+        one2one_topk=1,
         **kwargs
     ):
         super().__init__(
@@ -395,6 +397,19 @@ class ObbLoss(DetLoss):
         self.reg_layout = reg_layout
         self.dfl_gain = float(dfl_gain)
         self.angle_gain = float(angle_gain)
+        self.raw_angle = bool(raw_angle)
+        self.use_one2one = bool(use_one2one)
+        self.one2one_gain = float(one2one_gain)
+        if self.use_one2one:
+            self.assigner_one2one = TaskAlignedAssigner(
+                one2one_topk,
+                self.num_classes,
+                alpha,
+                beta,
+                stride=self.strides,
+                iou_fn=probiou,
+                inside_fn=points_in_rboxes,
+            )
 
     def _split(self, feats):
         mode = "obb" if self.reg_layout == "upstream" else "obb_ours"
@@ -417,13 +432,35 @@ class ObbLoss(DetLoss):
         return torch.cat(raw_dists, 1), torch.cat(scores, 1), torch.cat(angles, 1)
 
     def forward(self, preds, batch):
+        if (
+            self.use_one2one
+            and isinstance(preds, (tuple, list))
+            and len(preds) == 2
+            and isinstance(preds[0], (list, tuple))
+            and isinstance(preds[1], (list, tuple))
+        ):
+            one2many, one2one = preds
+            d1 = self._forward_one(one2many, batch, self.assigner)
+            d2 = self._forward_one(one2one, batch, self.assigner_one2one)
+            out = {"loss": d1["loss"] + self.one2one_gain * d2["loss"]}
+            for key in d1:
+                if key != "loss":
+                    out[key] = d1[key]
+            for key in d2:
+                if key != "loss":
+                    out["one2one_" + key] = d2[key]
+            return out
+        return self._forward_one(preds, batch, self.assigner)
+
+    def _forward_one(self, preds, batch, assigner):
         dist_raw, pred_scores, angle_raw = self._split_raw(preds)
         anchor_points, stride_tensor = make_anchors(preds, self.strides)
         pred_distri = (
             dfl_project(dist_raw, self.reg_max) if self.reg_max > 1 else dist_raw
         )
         pred_bboxes = dist2rbox(
-            torch.cat([pred_distri, angle_raw], dim=-1), anchor_points
+            torch.cat([pred_distri, angle_raw], dim=-1), anchor_points,
+            raw_angle=self.raw_angle,
         )  # grid-unit xywhr
 
         device = pred_scores.device
@@ -436,7 +473,7 @@ class ObbLoss(DetLoss):
             # scale pred boxes to pixels for matching (matches ultralytics)
             bboxes_for_assigner = pred_bboxes.clone().detach()
             bboxes_for_assigner[..., :4] *= stride_tensor
-            t_labels, t_bboxes, t_scores, fg, _ = self.assigner(
+            t_labels, t_bboxes, t_scores, fg, _ = assigner(
                 pred_scores.detach().sigmoid(),
                 bboxes_for_assigner,
                 anchor_points * stride_tensor,

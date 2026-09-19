@@ -1,5 +1,22 @@
 # AGENTS.md
 
+## Detect（目标检测）与 ultralytics 的对齐（单步验证已通过，yolo11n）
+- 验证方法为**单步验证**：同权重（`\\tsclient\D\项目资料\ultralytics_models` dump）+ 同输入 `\opencode\det_x_1.npz`(1,3,640,640)
+  + 同 GT（像素框 [192,128,320,384]，ultra 归一化 xywh=[0.4,0.4,0.2,0.4]）做前向（feature/loss）+ 反向（梯度）对比。
+- **yolo11n 检测对齐完成**（单步验证全过）：
+  - 权重加载：missing=0 / unexpected=1（仅函数式 `dfl.conv.weight`，同 pose/seg/OBB）。
+  - assigner 匹配一致：n_fg=10 / t_scores.sum=1.3955（框架=ultra）。
+  - 损失三分量（raw）全对齐：box=**0.5508**、cls=**23.3453**、dfl=**3.1119**；total=**20.47179** vs ultra **20.47182**（差 3e-5）。
+  - 梯度 maxdiff=0.0216（worst `model.0.conv.weight`，cuDNN 卷积反向算子级微差）。
+- **关键 bug 修复（DFL 目标，影响所有 detect 训练）**：`pytorchx/det/loss.py::DetLoss._forward_one`
+  原先把 `tgt = (t_bboxes[fg]/stride_fg).clamp(0, reg_max-1-1e-3)` —— 把 **GT 框坐标** clamp 到 reg_max-1-0.99，
+  导致 x2=320/16=20 被截断到 14.99，DFL target 错误（dfl 4.07 vs ultra 3.11）。**ultra 从不对框坐标 clamp**，
+  只在 `bbox2dist` 输出的 **ltrb 距离**上 clamp（`reg_max-1-0.01`，对齐 ultra `DFLoss`）。已改为：
+  `tgt = t_bboxes[fg]/stride_fg[:,None]`，`target_ltrb = bbox2dist(ap_fg, tgt).clamp(0, reg_max-1.0-0.01)`。
+- 对齐所需默认值：`DetLoss` 的 `topk=13→10`、`alpha=1.0→0.5`（对齐 ultra `v8DetectionLoss`）。
+- 因该 DFL 修复影响**所有检测算法**（detect/OBB 共用同上 DFL 分支），OBB 训练也可受益；当前 OBB 对齐记录仍有效。
+- 待办：按 `docs/plan_detect_align.md` 顺序把单步验证推广到 yolov8→12→26→v10→v9→v5→v3u（n/s/m/l/x）。
+
 ## 回复语言
 - 所有大模型（AI 助手/Agent）在本仓库中的回复一律使用**中文**。
 - 包括：解释代码、回答提问、汇总结果、生成文档、提交说明等所有面向用户的文本。
