@@ -1,0 +1,9 @@
+seqs/val_c0_00.npy 0
+seqs/val_c0_01.npy 0
+seqs/val_c0_02.npy 0
+seqs/val_c1_00.npy 1
+seqs/val_c1_01.npy 1
+seqs/val_c1_02.npy 1
+seqs/val_c2_00.npy 2
+seqs/val_c2_01.npy 2
+seqs/val_c2_02.npy 2

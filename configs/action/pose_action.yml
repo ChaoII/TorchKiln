@@ -1,0 +1,49 @@
+﻿Global:
+  model_name: pose_action
+  use_gpu: true
+  epoch_num: 100
+  print_batch_step: 5
+  save_model_dir: ./output/pose_action
+  save_epoch_step: 10
+  eval_batch_step: [0, 20]
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  amp: false
+Architecture:
+  model_family: yolo
+  task: pose_action
+  algorithm: STGCN
+  Backbone: {name: STGCN, num_joints: 17, in_channels: 2, dropout: 0.1}
+  Head: {num_classes: 3}
+Optimizer:
+  name: SGD
+  momentum: 0.9
+  lr: {name: Cosine, learning_rate: 0.01, warmup_epoch: 1}
+  regularizer: {name: L2, factor: 0.0001}
+Loss:
+  name: PoseActionLoss
+  label_smoothing: 0.0
+Metric:
+  name: PoseActionMetric
+  main_indicator: acc
+  topk: 5
+PostProcess:
+  name: PoseActionPostProcess
+Train:
+  dataset:
+    name: PoseActionDataset
+    data_dir: datasets/pose_action_demo
+    label_file_list: [datasets/pose_action_demo/train.txt]
+    transform: {clip_len: 60, num_joints: 17}
+    augment: {flip: 0.5, jitter: 0.01}
+  loader: {batch_size_per_card: 4, shuffle: true, drop_last: false, num_workers: 0, prefetch_factor: 4}
+Eval:
+  dataset:
+    name: PoseActionDataset
+    data_dir: datasets/pose_action_demo
+    label_file_list: [datasets/pose_action_demo/val.txt]
+    transform: {clip_len: 60, num_joints: 17}
+  loader: {batch_size_per_card: 4, shuffle: false, drop_last: false, num_workers: 0, prefetch_factor: 4}

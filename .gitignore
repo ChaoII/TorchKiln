@@ -1,0 +1,58 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ===== 训练/导出产物 =====
+output/
+run/
+inference/
+*.log
+
+# ===== 权重(放 ModelScope / 本地缓存,不入库) =====
+*.pth
+*.pt
+*.pdparams
+*.pdopt
+*.onnx
+*.trt
+*.engine
+*.mnn
+*.param
+*.bin
+*.part
+
+# ===== 数据集:只保留文本(label 与 train.txt/val.txt 等清单),图片不入库 =====
+datasets/**/images/
+datasets/**/*.jpg
+datasets/**/*.jpeg
+datasets/**/*.png
+datasets/**/*.bmp
+datasets/**/*.npy
+datasets/**/*.tif
+datasets/**/*.tiff
+datasets/**/annotations/
+datasets/**/masks/
+datasets/**/depth/
+datasets/**/*.cache
+datasets/**/.labels_cache_*.pkl
+datasets/**/.labels_cache_*.pkl
+datasets/**/*.zip
+datasets/**/*.tgz
+datasets/**/*.tar
+
+# ===== 第三方参考/缓存 =====
+_downloads/
+wheels/
+.cache/
+.pytest_cache/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ===== 参考/特殊目录 =====
+_ref/

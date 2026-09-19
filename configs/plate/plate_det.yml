@@ -1,0 +1,85 @@
+Global:
+  model_name: plate_det
+  use_gpu: true
+  epoch_num: 100
+  print_batch_step: 10
+  save_model_dir: ./output/plate_det
+  save_epoch_step: 10
+  eval_batch_step: [0, 200]
+  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/PytorchOCR/resolve/master/pretrained/plate_detect_state.pth
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  amp: false
+Architecture:
+  model_family: yolo
+  task: plate_det
+  algorithm: yolov5n-0.5
+  yaml_file: pytorchx/cfg/models/plate/yolov5n-0.5.yaml
+  scale: n
+  in_channels: 3
+  Head:
+    num_classes: 2
+    kpt_label: 4
+Optimizer:
+  name: SGD
+  momentum: 0.937
+  lr:
+    name: Cosine
+    learning_rate: 0.01
+    warmup_epoch: 3
+  regularizer:
+    name: L2
+    factor: 0.0005
+Loss:
+  name: PlateDetLoss
+  box: 0.05
+  cls: 0.5
+  obj: 1.0
+  landmark: 0.005
+  cls_pw: 1.0
+  obj_pw: 1.0
+  anchor_t: 4.0
+  gr: 1.0
+  balance: [4.0, 1.0, 0.4]
+Metric:
+  name: PlateDetMetric
+  main_indicator: mAP50-95
+PostProcess:
+  name: PlateDetPostProcess
+  conf_thres: 0.25
+  iou_thres: 0.45
+  max_det: 300
+Train:
+  dataset:
+    name: PlateDetDataset
+    data_dir: datasets/plate_det_demo
+    label_file_list: [datasets/plate_det_demo/train.txt]
+    kpt_shape: [4, 2]
+    transform:
+      image_size: 320
+    augment:
+      mosaic: 0.5
+      hsv: {p: 0.5, hgain: 0.015, sgain: 0.7, vgain: 0.4}
+      affine: {degrees: 0.0, translate: 0.1, scale: 0.5, shear: 0.0, perspective: 0.0}
+  loader:
+    batch_size_per_card: 8
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4
+Eval:
+  dataset:
+    name: PlateDetDataset
+    data_dir: datasets/plate_det_demo
+    label_file_list: [datasets/plate_det_demo/val.txt]
+    kpt_shape: [4, 2]
+    transform:
+      image_size: 320
+  loader:
+    batch_size_per_card: 4
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4

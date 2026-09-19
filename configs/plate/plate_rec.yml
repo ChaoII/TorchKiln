@@ -1,0 +1,70 @@
+Global:
+  model_name: plate_rec
+  use_gpu: true
+  epoch_num: 100
+  print_batch_step: 10
+  save_model_dir: ./output/plate_rec
+  save_epoch_step: 10
+  eval_batch_step: [0, 200]
+  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/PytorchOCR/resolve/master/pretrained/plate_rec_color_state.pth
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  amp: false
+Architecture:
+  model_family: yolo
+  task: plate_rec
+  algorithm: myNet_ocr_color
+  in_channels: 3
+  Head:
+    cfg: [8, 8, 16, 16, M, 32, 32, M, 48, 48, M, 64, 128]
+    num_classes: 78
+    color_num: 5
+Optimizer:
+  name: SGD
+  momentum: 0.9
+  lr:
+    name: Cosine
+    learning_rate: 0.0025
+    warmup_epoch: 1
+  regularizer:
+    name: L2
+    factor: 0.0005
+Loss:
+  name: PlateRecLoss
+  ctc_gain: 1.0
+  color_gain: 1.0
+Metric:
+  name: PlateRecMetric
+  main_indicator: acc
+PostProcess:
+  name: PlateRecPostProcess
+Train:
+  dataset:
+    name: PlateRecDataset
+    data_dir: datasets/plate_rec_demo
+    label_file_list: [datasets/plate_rec_demo/train.txt]
+    double_plate: false
+    transform:
+      image_size: [48, 168]
+  loader:
+    batch_size_per_card: 16
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4
+Eval:
+  dataset:
+    name: PlateRecDataset
+    data_dir: datasets/plate_rec_demo
+    label_file_list: [datasets/plate_rec_demo/val.txt]
+    double_plate: false
+    transform:
+      image_size: [48, 168]
+  loader:
+    batch_size_per_card: 8
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4

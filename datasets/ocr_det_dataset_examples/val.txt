@@ -1,0 +1,4 @@
+images/val_000.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
+images/val_001.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
+images/val_002.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
+images/val_003.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]

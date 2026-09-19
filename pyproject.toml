@@ -1,0 +1,16 @@
+﻿[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytorchx"
+version = "0.1.0"
+description = "Unified PyTorch training platform: OCR (PP-OCR), YOLO family (7 tasks + upstream YAML zoo), licence plate, attribute recognition"
+requires-python = ">=3.8"
+dependencies = ["torch", "numpy", "opencv-python", "PyYAML"]
+
+[project.scripts]
+ptx = "pytorchx.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pytorchx*", "ptcore*", "pytorchocr*"]

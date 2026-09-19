@@ -1,0 +1,4 @@
+﻿#!/usr/bin/env sh
+# ptx - unified PyTorchX CLI:  ptx <task> <mode> [args...]
+PY=""
+exec "" -m pytorchx "$@"

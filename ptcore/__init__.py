@@ -1,0 +1,1 @@
+﻿"""ptcore: task-agnostic building blocks shared by pytorchx (multi-task) / pytorchx.ocr."""

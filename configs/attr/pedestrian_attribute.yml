@@ -1,0 +1,84 @@
+Global:
+  model_name: PP-LCNet_x1_0_pedestrian_attribute
+  use_gpu: true
+  epoch_num: 20
+  print_batch_step: 10
+  save_model_dir: ./output/PP-LCNet_x1_0_pedestrian_attribute
+  save_epoch_step: 1
+  eval_batch_step: [0, 200]
+  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/PytorchOCR/resolve/master/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  amp: false
+Architecture:
+  model_family: yolo
+  task: attribute
+  algorithm: PP-LCNet_x1_0_pedestrian_attribute
+  in_channels: 3
+  Backbone:
+    name: PPLCNet_x1_0
+    scale: 1.0
+    dropout_prob: 0.5   # use_ssld: True in PaddleX
+  Head:
+    num_classes: 26
+    class_expand: 1280
+    dropout_prob: 0.5
+    label_list: pytorchx/utils/pedestrian_attribute_label_list.txt
+Optimizer:
+  name: SGD          # PaddleClas "Momentum" == SGD + momentum
+  momentum: 0.9
+  lr:
+    name: Cosine
+    learning_rate: 0.01
+    warmup_epoch: 5
+  regularizer:
+    name: L2
+    factor: 0.0005
+Loss:
+  name: MultiLabelLoss
+  weight: 1.0
+  weight_ratio: true
+  size_sum: true
+Metric:
+  name: AttrMetric
+  main_indicator: mA
+  threshold: 0.5
+PostProcess:
+  name: MultiLabelThresPostProcess
+  threshold: 0.5
+Train:
+  dataset:
+    name: AttributeDataset
+    data_dir: datasets/pedestrian_attribute_demo
+    label_file_list: [datasets/pedestrian_attribute_demo/train.txt]
+    label_ratio: true
+    transform:
+      image_size: [192, 256]   # W, H  (PaddleClas ResizeImage size)
+      resize: [192, 256]
+      crop_pad: [212, 276]     # Padv2 (w,h) before RandomCrop
+    augment:
+      flip: true
+      randaugment: {p: 0.8, num_ops: 2, magnitude: 9, magnitude_std: 0.5, inc: 1}
+      erasing: {p: 0.4}
+  loader:
+    batch_size_per_card: 16
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4
+Eval:
+  dataset:
+    name: AttributeDataset
+    data_dir: datasets/pedestrian_attribute_demo
+    label_file_list: [datasets/pedestrian_attribute_demo/val.txt]
+    label_ratio: true
+    transform:
+      image_size: [192, 256]
+  loader:
+    batch_size_per_card: 8
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4

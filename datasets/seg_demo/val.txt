@@ -1,0 +1,4 @@
+images/val_000.jpg
+images/val_001.jpg
+images/val_002.jpg
+images/val_003.jpg

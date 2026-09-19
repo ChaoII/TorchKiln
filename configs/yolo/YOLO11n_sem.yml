@@ -1,0 +1,90 @@
+Global:
+  model_name: YOLO11n_sem
+  debug: false
+  use_gpu: true
+  device: null
+  epoch_num: 60
+  log_smooth_window: 20
+  print_batch_step: 10
+  save_model_dir: ./output/YOLO11n_sem
+  save_epoch_step: 10
+  eval_batch_step:
+  - 0
+  - 2000
+  pretrained_model: null
+  checkpoints: null
+  output: null
+  distributed: false
+  dist_backend: null
+  dist_init_method: null
+  seed: 1024
+  use_ema: true
+  ema_decay: 0.9998
+  ema_decay_type: threshold
+  show_eval_progress: true
+Architecture:
+  model_family: yolo
+  task: semantic
+  algorithm: YOLOSem
+  Backbone:
+    name: DetBackbone
+    scale: n
+    in_channels: 3
+  Neck: null
+  Head:
+    name: SemDecoder
+    num_classes: 3
+    hidden: 64
+Optimizer:
+  name: SGD
+  momentum: 0.937
+  nbs: 64
+  lr:
+    name: Linear
+    learning_rate: 0.01
+    lrf: 0.01
+    warmup_epoch: 3
+    warmup_bias_lr: 0.1
+    warmup_momentum: 0.8
+  regularizer:
+    name: L2
+    factor: 0.0005
+Loss:
+  name: SemLoss
+  ignore_index: 255
+  dice_weight: 0.5
+Metric:
+  name: SemMetric
+  main_indicator: mIoU
+  ignore_index: 255
+PostProcess:
+  name: SemPostProcess
+Train:
+  dataset:
+    name: SemDataset
+    data_dir: datasets/sem_demo
+    label_file_list:
+    - datasets/sem_demo/train.txt
+    ignore_index: 255
+    transform:
+      image_size: 256
+  loader:
+    batch_size_per_card: 8
+    shuffle: true
+    drop_last: false
+    num_workers: 4
+    prefetch_factor: 4
+Eval:
+  dataset:
+    name: SemDataset
+    data_dir: datasets/sem_demo
+    label_file_list:
+    - datasets/sem_demo/val.txt
+    ignore_index: 255
+    transform:
+      image_size: 256
+  loader:
+    batch_size_per_card: 8
+    shuffle: false
+    num_workers: 0
+    prefetch_factor: 4

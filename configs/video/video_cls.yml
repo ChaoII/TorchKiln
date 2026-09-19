@@ -1,0 +1,49 @@
+﻿Global:
+  model_name: video_cls
+  use_gpu: true
+  epoch_num: 100
+  print_batch_step: 5
+  save_model_dir: ./output/video_cls
+  save_epoch_step: 10
+  eval_batch_step: [0, 20]
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  amp: false
+Architecture:
+  model_family: yolo
+  task: video_cls
+  algorithm: TSM-LCNet
+  Backbone: {name: TSM, num_segments: 8, shift_div: 8, scale: 0.5}
+  Head: {num_classes: 3, dropout_prob: 0.5}
+Optimizer:
+  name: SGD
+  momentum: 0.9
+  lr: {name: Cosine, learning_rate: 0.01, warmup_epoch: 1}
+  regularizer: {name: L2, factor: 0.0001}
+Loss:
+  name: VideoClsLoss
+  label_smoothing: 0.1
+Metric:
+  name: VideoClsMetric
+  main_indicator: acc
+  topk: 5
+PostProcess:
+  name: VideoClsPostProcess
+Train:
+  dataset:
+    name: VideoClsDataset
+    data_dir: datasets/video_cls_demo
+    label_file_list: [datasets/video_cls_demo/train.txt]
+    transform: {num_segments: 8, frames_per_seg: 1, image_size: 80, crop_size: 64}
+    augment: {flip: 0.5}
+  loader: {batch_size_per_card: 4, shuffle: true, drop_last: false, num_workers: 0, prefetch_factor: 4}
+Eval:
+  dataset:
+    name: VideoClsDataset
+    data_dir: datasets/video_cls_demo
+    label_file_list: [datasets/video_cls_demo/val.txt]
+    transform: {num_segments: 8, frames_per_seg: 1, image_size: 80, crop_size: 64}
+  loader: {batch_size_per_card: 4, shuffle: false, drop_last: false, num_workers: 0, prefetch_factor: 4}
