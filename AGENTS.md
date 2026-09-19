@@ -107,7 +107,6 @@
   - 权重对齐评估（同一 checkpoint）：框架 vs ultra 一致（0.0288 vs 0.033）。
   - 已验证一致：权重加载、输入（letterbox/通道/归一化）、`make_anchors`、layer0 手工重算、cls bias、各块代码。
 - 配置：`configs/_parity/pkg_pose.yml`（数据 `datasets/tiger-pose`，model 为 `yolo11-pose` 图模型，reg_max=16）。
-
 ## Segment（实例分割）与 ultralytics 的对齐（已完成并验证）
 - 数据：`datasets/package-seg/`（单类 `package`，1920 train / 188 val，RF 多边形 `cls+归一化点` 标签，
   来自 `C:\Users\ADMINI~1\AppData\Local\Temp\1\opencode\pkgseg`），已生成 train.txt/val.txt，
@@ -147,6 +146,31 @@
   每模型梯度**全部层匹配（无漏层）**，**梯度 maxdiff 均 ≤0.00017**（最大为首层 `model.0.conv.weight`，cuDNN 卷积反向的算子级微差，非逻辑 bug）。
   → 分类的前向（推理）与训练（loss+梯度）均与 ultralytics 对齐，残差仅算子级。
 - 注：cls_demo（3 类 96×96）是 toy 数据，与 1000 类预训练权重不匹配；核心对齐验证用 ImageNet 预训练权重完成。
+
+## 家族头路由与 seg 全家族对齐（重要）
+- **按家族路由检测/分割头（`pytorchx/nn/graph.py`）**：`build_from_arch` 从 `yaml_file` 判断家族，
+  旧家族（`v3/v5/v8/v9`）令 `spec["_legacy"]=True`；`parse_model` 里对 legacy 家族把
+  `Detect/Segment/OBB/Pose` 路由到 **旧式 Conv 头**（`modules.py` 的 `Detect/Segment/OBB/Pose` 类），
+  新家族（`yolo11/12/26`）用 **新 DWConv 头**（`SegmentU`/`Detect26` 等）。
+  根因：`REGISTRY` 里的 `"Detect"→Detect26`、`"Segment"→SegmentU` 是「新头」别名；而 **ultra 的 v8 不论
+  detect 还是 seg 都用 legacy 旧式 Conv 头**（`cv3 = [Conv,Conv,Conv2d]`），yolo11/26 才用新
+  DWConv 头（`cv3 = [Seq[DWConv,Conv],...]`）。此路由同时修正了 **v8 的 detect/obb/pose/seg**（此前
+  框架误用新头，参数/结构不匹配；改后 v8n-detect 也 missing=0/unexpected=1）。
+- **`C3k2` 增加 `attn` 分支**（`modules.py`）：签名对齐 ultra `(c1,c2,n,c3k,e,attn,g,shortcut)`，
+  `attn=True` 时用 `nn.Sequential(Bottleneck, PSABlock(self.c, attn_ratio=0.5, num_heads=max(self.c//64,1)))`。
+  yolo26 的 `C3k2 [c, True, 0.5, True]` 第 4 参即 `attn`。
+- **新增 `Segment26`（end2end 双头）+ `Proto26`（`modules.py`）**：yolo26 实例分割头，`reg_max=1`、
+  `npr=make_divisible(256*width,8)`、`end2end=True`（含 `one2one_cv2/cv3/cv4` 副本，对齐 ultra 训练态
+  checkpoint）；`Proto26` = 基础 `Proto` + `feat_refine/feat_fuse/semseg`（语义分支）。`REGISTRY["Segment26"]`
+  指向该新类（原先被别名覆盖为 legacy `Segment`/`SegmentU`）。
+- **15 档 seg 权重加载全部对齐（`missing=0`）**（官方 `\\tsclient\D\项目资料\ultralytics_models\...`，nc=80、imgsz 无关）：
+  - `yolov8-seg` n/s/m/l/x：`missing=0 / unexpected=1`（仅函数式 dfl），参数差 ~0.3%。
+  - `yolo11-seg` n/s/m/l/x：`missing=0 / unexpected=1`，参数差 ~0.2%。
+  - `yolo26-seg` n/s/m/l/x：`missing=0 / unexpected=0`，参数差 ~0.1%（`reg_max=1` + 新 `Segment26`+`Proto26`）。
+  - 说明：验证时 `Architecture.scale` 需指定档位、`num_classes=80`；yolo26 头 `reg_max=1`（无 DFL）。
+- **前向 smoke**：yolo26n-seg 加载官方权重后 `model(img)` 产出 `{"feats"(3 层), "protos"}`，`SegPostProcess` 解码正常。
+  - 注：框架推理目前走 one2many + NMS；ultra yolo26 为 end2end（one2one/NMS-free）。权重已对齐；若需
+    NMS-free 端到端推理，需在框架推理路径切换到 `one2one_*` 分支（后续可加）。
 
 ## 仍存在的小差异（不影响 mAP 对齐，后续可改进）
 - **`loss_cls` 框架偏高**（约 100~200 vs ultra ~4.8）：源于从零初始化时的分类校准差异，

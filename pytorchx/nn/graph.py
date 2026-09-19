@@ -242,6 +242,7 @@ def parse_model(d, ch=3, verbose=False):
                     reg_max = extra[1]
                 kwargs["layout"] = d.get("obb_layout", "upstream")
                 kwargs["legacy"] = d.get("legacy", True)
+                kwargs["end2end"] = bool(d.get("end2end", False))
             elif "Pose" in cls_name:
                 if d.get("kpt_shape"):
                     kwargs["kpt_shape"] = tuple(d["kpt_shape"])

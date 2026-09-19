@@ -1182,7 +1182,7 @@ class Segment26(nn.Module):
 class OBBU(nn.Module):
     """YOLO26-style oriented head: ``[reg(4*reg_max), cls(nc), angle(ne)]``."""
 
-    def __init__(self, nc=80, ch=(), ne=1, reg_max=1, hidden=None, layout=None, legacy=True):
+    def __init__(self, nc=80, ch=(), ne=1, reg_max=1, hidden=None, layout=None, legacy=True, end2end=False):
         super().__init__()
         self.nc = int(nc)
         self.nl = len(ch)
@@ -1211,13 +1211,34 @@ class OBBU(nn.Module):
                 b[-1].bias[: self.nc] = -math.log((1 - 0.01) / 0.01)
         for m in self.cv4:
             nn.init.constant_(m[-1].bias, 0.0)
+        import copy as _copy
+
+        self.end2end = bool(end2end)
+        if self.end2end:
+            self.one2one_cv2 = nn.ModuleList(_copy.deepcopy(a) for a in self.cv2)
+            self.one2one_cv3 = nn.ModuleList(_copy.deepcopy(b) for b in self.cv3)
+            self.one2one_cv4 = nn.ModuleList(_copy.deepcopy(m) for m in self.cv4)
         self.stride = torch.zeros(self.nl)
 
     def forward(self, x):
-        return [
+        one2many = [
             torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv4[i](x[i])), 1)
             for i in range(self.nl)
         ]
+        if not self.end2end:
+            return one2many
+        one2one = [
+            torch.cat(
+                (
+                    self.one2one_cv2[i](x[i]),
+                    self.one2one_cv3[i](x[i]),
+                    self.one2one_cv4[i](x[i]),
+                ),
+                1,
+            )
+            for i in range(self.nl)
+        ]
+        return (one2many, one2one) if self.training else one2one
 
 
 @register
