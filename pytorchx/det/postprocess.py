@@ -26,6 +26,7 @@ class DetPostProcess(object):
         ne=1,
         reg_channels=None,
         end2end=False,
+        angle_raw=False,
         **kwargs
     ):
         self.conf_thres = float(conf_thres)
@@ -37,6 +38,7 @@ class DetPostProcess(object):
         self.reg_layout = reg_layout
         self.ne = int(ne)
         self.end2end = bool(end2end)
+        self.angle_raw = bool(angle_raw)
         if reg_channels is None:
             if box_type == "xywhr":
                 reg_channels = (
@@ -58,7 +60,7 @@ class DetPostProcess(object):
 
     def _decode(self, dist, anchor_points, stride_tensor):
         if self.box_type == "xywhr":
-            return dist2rbox(dist, anchor_points, stride_tensor)
+            return dist2rbox(dist, anchor_points, stride_tensor, raw_angle=self.angle_raw)
         return dist2bbox(dist, anchor_points, xywh=False) * stride_tensor
 
     def _nms(self, boxes, scores):

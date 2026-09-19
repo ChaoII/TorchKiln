@@ -80,18 +80,19 @@ def rbox2poly(boxes):
 
 
 # ----------------------------------------------------------------------- probiou
-def dist2rbox(dist_angle, anchor_points, stride_tensor=None):
-    """Decode ``(l, t, r, b, angle_logit)`` into ``xywhr`` OBBs.
+def dist2rbox(dist_angle, anchor_points, stride_tensor=None, raw_angle=False):
+    """Decode ``(l, t, r, b, angle)`` into ``xywhr`` OBBs.
 
     Aligned with ultralytics ``dist2rbox`` + OBB-head angle decoding: the box
     centre offset is rotated by the angle in *grid* units, ``w = l + r`` /
-    ``h = t + b``, and ``theta = (sigmoid(angle_logit) - 0.25) * pi`` (the
-    ultralytics ``OBB.forward`` angle decode). Returns grid-unit ``xywhr``
-    unless ``stride_tensor`` scales it to pixels.
+    ``h = t + b``. ``raw_angle=False`` (default) treats the 5th channel as the
+    OBB ``(sigmoid(angle) - 0.25) * pi`` logit (v8/v11); ``raw_angle=True`` uses
+    the channel directly as theta radians (YOLO26 ``OBB26`` head). Returns
+    grid-unit ``xywhr`` unless ``stride_tensor`` scales it to pixels.
     """
     dist = dist_angle[..., :4]
     ang = dist_angle[..., 4:5]
-    theta = (torch.sigmoid(ang) - 0.25) * math.pi
+    theta = ang if raw_angle else (torch.sigmoid(ang) - 0.25) * math.pi
     lt, rb = dist.split(2, dim=-1)
     cos, sin = torch.cos(theta), torch.sin(theta)
     xf, yf = ((rb - lt) / 2).split(1, dim=-1)
