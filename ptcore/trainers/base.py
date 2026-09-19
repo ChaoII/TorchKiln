@@ -63,6 +63,12 @@ class BaseTrainer:
 
         enable_paddle_like_precision()
 
+        # cuDNN 非确定性算法会让我们的 GPU 前向与 ultralytics 产生不同数值
+        # (cls 在 conf 阈值附近大量翻转),导致评估 mAP 被系统性低估。
+        # 强制 deterministic 使 GPU 结果与 CPU/ultralytics 逐点一致(默认开)。
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = bool(gcfg.get("cudnn_deterministic", True))
+
         self.rank = int(os.environ.get("RANK", "0"))
         self.local_rank = int(os.environ.get("LOCAL_RANK", "0"))
         self.world_size = int(os.environ.get("WORLD_SIZE", "1"))

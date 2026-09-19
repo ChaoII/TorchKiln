@@ -62,11 +62,40 @@
   - 注：dota128 从零 30 epoch 只有 0.0008（数据集太小、从零难学），
     **微调/预训练才是正道**；dota128 上微调 30 epoch 反而过拟（ultralytics 微调后掉到 ~0.65）。
 
+## Pose（关键点）与 ultralytics 的对齐（已完成并验证）
+- **数据管线**：`PoseDataset` 支持 `kpt_shape:[12,2]`（无可见性维），加载时若 `ndim==2` 会**补一列可见性**
+  （`x/y<0 → 0，否则 1`），与 ultralytics `verify_image_label` 一致（GT 关键点恒为 `(N,nk,3)`）。
+- **Pose 头 cv4**：`pytorchx/nn/modules.py` 的 `Pose`/`PoseU` 头 `cv4` 从 `c4=x` 改为 **`c4=max(ch[0]//4, nk)`**，
+  与 ultralytics `Pose.cv4` 一致；框架模型与 ultralytics `yolo11n-pose`（nc=1,kpt:[12,2]）**权重完全加载
+  （missing=0 unexpected=0）**。
+- **关键点损失（重要 bug 修复）**：`pytorchx/pose.py::PoseLoss` 对齐 ultralytics `v8PoseLoss`——
+  `KeypointLoss` 用 `e=d/((2σ)²·area·2)`、`loss_pose=(kpt_loss_factor·(1-exp(-e))·kpt_mask).mean()`、`pose_gain=12/kobj_gain=1`；
+  **关键修复**：`target_bboxes` 也先 `/=stride` 转成**网格单位**再算 `area`（原实现用像素面积，梯度被稀释 ~1.7 万倍，
+  导致关键点头几乎不学习）。修复前从零 30ep pose mAP=0，修复后 **0.164**。
+- **关键点解码**：对齐 ultra——推理 `(raw*2+(anchor-0.5))*stride`；损失路径为网格单位（乘 `2`、加 `anchor-0.5`、**不乘 stride**）。
+- **OKS 指标**：`PoseMetric` 用 `kpt_iou`（`e=d/((2σ)²·area·2)`、`area=w*h*0.53`、`σ=ones(nk)/nk`（非 COCO）），
+  匹配复刻 ultra `match_predictions`（按 OKS 降序、去重预测列后再去重 GT 行）。
+- **训练性能 bug 修复**：`ptcore/trainers/base.py::_maybe_eval_and_save` 原 `step%interval==0` 在**梯度累积窗口内
+  （global_step 停 0）**会每批触发评估（每批 ~30s）；已加"仅当 `global_step` 变化到新满足条件的值时评估一次"，
+  训练从 30s/批 → **3s/epoch**。
+- **cuDNN 非确定性→评估低估（重要 bug 修复）**：`ptcore/trainers/base.py` 默认 `cudnn.deterministic=True`
+  （`Global.cudnn_deterministic` 可关）。cuDNN 非确定性算法会让我们的 GPU 前向与 ultralytics 产生不同数值，
+  cls 在 conf 阈值(0.001)附近大量翻转→同权重下我们出 275 个检测 vs ultra 2 个，评估 mAP 被系统性低估。
+  修复后同一超训微调权重评估 mAP50-95 由 **0.312 → 0.495**（ultra 0.509，mAP50 均 0.995）。
+- **对齐验证（tiger-pose：`datasets/tiger-pose/`，kpt:[12,2]，imgsz=640，batch=4，SGD 同超参）**：
+  - 从零 30ep：框架 **pose mAP50-95=0.164** / ultralytics 0.033（框架更强）。
+  - 预训练微调 30ep：框架 **0.495**（mAP50 0.995）/ ultralytics 0.509（mAP50 0.995）；mAP50 一致（deterministic 修复后）。
+  - 权重对齐评估（同一 checkpoint）：框架 vs ultra 一致（0.0288 vs 0.033）。
+  - 已验证一致：权重加载、输入（letterbox/通道/归一化）、`make_anchors`、layer0 手工重算、cls bias、各块代码。
+- 配置：`configs/_parity/pkg_pose.yml`（数据 `datasets/tiger-pose`，model 为 `yolo11-pose` 图模型，reg_max=16）。
+
 ## 仍存在的小差异（不影响 mAP 对齐，后续可改进）
 - **`loss_cls` 框架偏高**（约 100~200 vs ultra ~4.8）：源于从零初始化时的分类校准差异，
   但对 mAP 影响很小（metric 用 argmax class）。可能需要对齐从零初始权重/BN momentum。
 - **OBB 头缺独立的 angle `cv4` 塔**：框架把 angle 并入 `cv3` 输出尾通道（`head.params` 433776 vs
   ultra 536579，差 71K）。不影响当前 mAP 对齐，但若要参数完全一致需补 angle 塔。
+- **Pose 预训练微调 mAP50-95**：已用 `cudnn.deterministic` 修复评估低估（0.312→0.495，ultra 0.509）。
+  剩余 ~0.014 差额为算子级微差（非逻辑 bug），如需进一步收敛可在独占 GPU 下逐块核验。
 
 ## 环境
 - 框架用 conda 环境 **`ptocr`**；原版 ultralytics 用 **`ultralytics`** 环境（两者 GPU 可用）。

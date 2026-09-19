@@ -481,4 +481,15 @@ def build_from_arch(arch):
     spec["scale"] = arch.get("scale", spec.get("scale", "n"))
     ch = int(arch.get("in_channels", arch.get("ch", 3)))
     model, save, last = parse_model(spec, ch=ch)
+    _set_bn_ultralytics(model)
     return GraphModel(model, save, spec, nc=spec["nc"], ch=ch)
+
+
+def _set_bn_ultralytics(model):
+    """Align BN momentum/eps with ultralytics ``initialize_weights`` (0.03 / 1e-3)."""
+    import torch.nn as _nn
+
+    for m in model.modules():
+        if isinstance(m, _nn.BatchNorm2d):
+            m.momentum = 0.03
+            m.eps = 1e-3
