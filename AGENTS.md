@@ -98,6 +98,24 @@
   - **yolov8-obb（n/s/m/l/x）**：OBB 头 `cv3`（cls 分支）结构不同——框架用 v11 风格 `_dw_cls_branch`（DWConv），
     ultralytics v8 用普通 [Conv,Conv,Conv2d]，仅最末卷积 `cv3.*.2` 通道不匹配。
 
+## OBB 多版本/多尺寸全对齐（v8/v11/v26 × n/s/m/l/x，训练+推理均已对齐）
+- **v8/v11/v26 全尺寸权重加载完全对齐**（missing=0/unexpected=0，参数逐位一致，v8n=3096079/v26n=2672486）。
+  - v8（旧家族 legacy 头）：OBB 头重构为**独立 `cv4`(angle) + legacy plain `cv3`**（out=nc，cls_extra=0，`_tower("rcx")`）。
+  - v26：OBB26 头 `reg_max=1`（无 DFL，`dfl=Identity`，head `no=19`）、`end2end=True`（含 `one2one_cv2/cv3/cv4` 双头）；
+    C2PSA/C3k2(attn) 已在框架。
+- **关键修复（v26 推理对齐）**：SPPF 缺 **add(shortcut) 残差** — yaml `SPPF [c,5,3,True]` 第 4 参为 shortcut，
+  ultra `SPPF.forward` 输出 `cv2(cat(...))+x`（add 时残差）；框架原 SPPF 无残差。修后框架前向从 L9(SPPF)
+  diffmax 5.6/mean0.40 降到 mean~0.06-0.09（残差即首差异层）。**v8/v11 的 SPPF 参数无 add(False)→不受影响**。
+- **推理 mAP 对齐（同权重）**：v8n **0.790**（ultra 0.8021）、v11n **0.8005**（ultra 0.821）、v26n **0.806**（ultra 0.828），
+  差 ≤0.022，算子级微差（与 seg/pose 一致量级）。
+- **v26 angle**：OBB26 头输出 **raw angle**（不 sigmoid，`dist2rbox(..., raw_angle=True)` 直接用 `theta=ang`）；
+  postprocess `angle_raw=true`。v8/v11 仍用 `(sigmoid(ang)-0.25)*pi`。
+- **ObbLoss 扩展**：新增 `raw_angle` 与 `use_one2one` 参数（`_forward_one` + assigner_one2one/one2one_gain/one2one_topk），
+  支持 v26 端到端训练（reg_max=1 时 `loss_dfl=dist_raw.sum()*0`）。
+- **训练对齐验证**：v8n 微调 5 轮 best mAP50-95=**0.7905**、v26n 微调 5 轮 best=**0.8065**（均 best_epoch1，
+  =预训练推理水平，无退化），v11 微调 =0.809（超预训练）。v8/v26 与 demoseg 同 ObbLoss（reg_max16 路径与 v11 相同）。
+- v26 训练/评估需在 CLI 传：`-o Loss.raw_angle=true -o Loss.use_one2one=true -o PostProcess.end2end=true -o PostProcess.angle_raw=true -o Architecture.Head.reg_max=1 -o Architecture.Head.end2end=true`。
+
 ## Pose（关键点）与 ultralytics 的对齐（已完成并验证）
 - **数据管线**：`PoseDataset` 支持 `kpt_shape:[12,2]`（无可见性维），加载时若 `ndim==2` 会**补一列可见性**
   （`x/y<0 → 0，否则 1`），与 ultralytics `verify_image_label` 一致（GT 关键点恒为 `(N,nk,3)`）。
