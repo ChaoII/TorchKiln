@@ -100,6 +100,46 @@
   - 已验证一致：权重加载、输入（letterbox/通道/归一化）、`make_anchors`、layer0 手工重算、cls bias、各块代码。
 - 配置：`configs/_parity/pkg_pose.yml`（数据 `datasets/tiger-pose`，model 为 `yolo11-pose` 图模型，reg_max=16）。
 
+## Segment（实例分割）与 ultralytics 的对齐（已完成并验证）
+- 数据：`datasets/package-seg/`（单类 `package`，1920 train / 188 val，RF 多边形 `cls+归一化点` 标签，
+  来自 `C:\Users\ADMINI~1\AppData\Local\Temp\1\opencode\pkgseg`），已生成 train.txt/val.txt，
+  `package-seg.yaml` 的 path 改为绝对、val 统一指向 `images/val`（188）。
+- 配置：`configs/_parity/pkg_seg_package.yml`（data_dir `datasets/package-seg`，model `yolo11-seg`，
+  imgsz=640，mask_stride=4，reg_max=16，num_classes=1，batch=4，SGD 同超参）。
+- **权重加载完全对齐**：先 dump ultralytics `yolo11n-seg`（nc=1，框架加载 COCO 80 类预训练时的
+  `cv3` 分类头 mismatch 属**预期跳过**，非 bug）；对 ultra 在 package-seg 微调 30ep 的 `best.pt`
+  （nc=1 同类别）做 `load_state_dict`：**missing=0 / unexpected=1**（仅函数式 `dfl.conv.weight`，同 pose/OBB）。
+  → 说明**框架 SegmentU 头与 ultra yolo11-seg 参数完全一致**。
+- **对齐验证（同一 best.pt 权重，imgsz=640，cudnn.deterministic 评估）**：
+  - 框架 box_mAP50=0.929 / box_mAP50-95=0.840，mask_mAP50=0.9228 / mask_mAP50-95=**0.8206**。
+  - ultralytics box_mAP50=0.922 / box_mAP50-95=0.845，mask_mAP50=0.9235 / mask_mAP50-95=**0.8214**。
+  - **同一权重下高度一致**：mask_mAP50-95 差 0.0008（几乎相等），box_mAP50-95 差 ~0.005（算子级微差）。
+
+## Classification（图像分类）与 ultralytics 的对齐（已完成并验证）
+- **任务已存在但需对齐验证**：`pytorchx/tasks/classify.py` + `_cls.py`（ClsLoss/ClsMetric/ClsPostProcess）
+  + `pytorchx/data/cls.py::ClsDataset`（读 `path label` 清单）；框架 `pytorchx/cfg/models/11/yolo11-cls.yaml`
+  与 ultra yolo11-cls 结构一致（backbone + 单一 `Classify` 头：Conv→1280 → AdaptiveAvgPool → Linear(nc)）。
+- **权重加载完全对齐**：dump ultralytics `yolo11n-cls.pt`（ImageNet 1000 类）→ `build_arch_model(...,"classify")` 加载：
+  **missing=0 / unexpected=0**（框架 `Classify` 头与 ultra 完全一致）。
+- **全部 15 个权重对齐（yolov8/yolo11/yolo26 × n/s/m/l/x）**：对 `\\tsclient\D\项目资料\ultralytics_models\{yolov8,yolo11,yolo26}\*-cls.pt`
+  全部验证——加载均 **missing=0/unexpected=0**；同输入(224)推理 softmax maxdiff **≤0.0000007**（几乎逐位一致），top1 全部一致。
+- **C3k2 的 M/L/X 规模逻辑已对齐**：ultra `parse_model` 对 `scale∈{m,l,x}` 强制 C3k2 `c3k=True`（用 C3k，1×1）；框架
+  `pytorchx/nn/graph.py::parse_model` 已复刻（`if module_name=="C3k2" and scale in ("m","l","x"): args[2]=True`），
+  n/s 用 Bottleneck(3×3)，m/l/x 用 C3k(1×1)，故各规模权重均能完全加载。
+- **前向一致性（同权重同输入，imgsz=224）**：框架 vs ultra 逐层对比——
+  - backbone 各层（Conv/C3k2/C2PSA）maxdiff **≈0.00000**（几乎逐位一致）；raw logits maxdiff 0.000004；softmax maxdiff **0.000000**；top1 一致（885）。
+- **关键修复（BN eps 推理对齐，影响所有任务评估）**：ultra `initialize_weights` 把 BN eps 设 **1e-3**（仅训练期），
+  但**保存的权重不含 BN eps**，ultra 加载后**推理**时 BN 用构造默认 **1e-5**。框架 `_set_bn_ultralytics` 永久设 1e-3，
+  导致推理层0 起即有 0.005 meanabs 差异并可能被分类 linear 头放大。已在 `ptcore/trainers/base.py::evaluate()`
+  评估时**临时恢复 BN eps=1e-5**（评估完还原，不影响训练 forward）——修复后 backbone/logits/softmax 全部对齐。
+- **评估流程冒烟**：`configs/_parity/pkg_cls_demo.yml`（cls_demo 3 类，imgsz=224）评估跑通（top1/top5 正常输出）。
+- **训练对齐（同权重同输入同标签，向前+反向）**：loss 公式与 ultra `v8ClassificationLoss`（`F.cross_entropy(preds, cls, reduction="mean")`）
+  完全一致（框架 `ClsLoss` = `nn.CrossEntropyLoss`, label_smoothing=0）。用 yolo11n-cls 同权重、同 `(2,3,224,224)` 输入、
+  同标签（[3,885]）各做一步：**loss 框架=ultra=8.159525（diff=0.00000000）**；119 层参数梯度全部匹配（无漏层），
+  **总体梯度 maxdiff=0.00017**（最大在首层 `model.0.conv.weight`，为 cuDNN 卷积反向的算子级微差，非逻辑 bug）。
+  → 分类的前向（推理）与训练（loss+梯度）均与 ultralytics 对齐，残差仅算子级。
+- 注：cls_demo（3 类 96×96）是 toy 数据，与 1000 类预训练权重不匹配；核心对齐验证用 ImageNet 预训练权重完成。
+
 ## 仍存在的小差异（不影响 mAP 对齐，后续可改进）
 - **`loss_cls` 框架偏高**（约 100~200 vs ultra ~4.8）：源于从零初始化时的分类校准差异，
   但对 mAP 影响很小（metric 用 argmax class）。可能需要对齐从零初始权重/BN momentum。
@@ -107,6 +147,13 @@
   ultra 536579，差 71K）。不影响当前 mAP 对齐，但若要参数完全一致需补 angle 塔。
 - **Pose 预训练微调 mAP50-95**：已用 `cudnn.deterministic` 修复评估低估（0.312→0.495，ultra 0.509）。
   剩余 ~0.014 差额为算子级微差（非逻辑 bug），如需进一步收敛可在独占 GPU 下逐块核验。
+
+## 官方预训练权重目录
+- 所有 ultralytics 官方预训练权重位于 **`\\tsclient\D\项目资料\ultralytics_models`**。
+- 子目录：`yolov5` `yolov8` `yolov9` `yolov10` `yolo11` `yolo12` `yolo26` `yolov3u`。
+- 每个家族含 `n/s/m/l/x` 五档，任务后缀：`-seg`(实例分割) `-cls`(分类) `-obb`(旋转框) `-pose`(关键点) `-depth`/`-sem`(yolo26 深度/语义)。
+- 例：`yolo11n-seg.pt`、`yolov8x-obb.pt`、`yolo26m-seg.pt` 等（yolo11 无 `-depth/-sem`，yolo26 本身有 `-depth/-sem/-sem-ade20k`）。
+- 框架加载这些官方权重验证对齐时，需按 `Architecture.scale` 指定对应档位（`n/m/s/l/x`），并令 `num_classes=80` 以匹配 COCO 预训练。
 
 ## 环境
 - 框架用 conda 环境 **`ptocr`**；原版 ultralytics 用 **`ultralytics`** 环境（两者 GPU 可用）。

@@ -277,6 +277,9 @@ def parse_model(d, ch=3, verbose=False):
                 args = list(args)
                 args.insert(1, max(round(n * depth), 1) if n > 1 else 1)
                 n = 1
+            if module_name == "C3k2" and scale in ("m", "l", "x"):
+                # ultralytics: C3k2 uses C3k blocks for M/L/X sizes
+                args[2] = True
             layer = module_cls(c1, *args)
             this_c2 = out_ch
         elif module_name in ("nn.ConvTranspose2d", "nn.Conv2d"):

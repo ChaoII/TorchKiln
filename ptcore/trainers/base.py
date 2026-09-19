@@ -802,8 +802,24 @@ class BaseTrainer:
             self.ema_model.load_state_dict(self.ema.apply())
             model = self.ema_model
         model.eval()
+        # 对齐 ultralytics 推理数值：ultra 训练 initialize_weights 把 BN eps 设为 1e-3，
+        # 但保存的权重不含 BN eps，加载后推理时 BN 用构造默认 1e-5。此处评估临时恢复 1e-5，
+        # 评估完再还原（raw 训练模型保持 1e-3，不影响训练 forward）。
+        import torch.nn as _nn
+
+        _bns = [m for m in model.modules() if isinstance(m, _nn.BatchNorm2d)]
+        _old_bn = [(m, m.eps) for m in _bns]
+        for _m in _bns:
+            _m.eps = 1e-5
+        try:
+            return self._evaluate_loop(model, tic=time.time())
+        finally:
+            for _m, _eps in _old_bn:
+                _m.eps = _eps
+
+    def _evaluate_loop(self, model, tic):
         self.metric.reset()
-        tic = time.time()
+        tic = tic if tic is not None else time.time()
         total_samples = 0
         bar = None
         if self.show_progress:
