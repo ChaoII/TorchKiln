@@ -114,7 +114,9 @@ class PoseLoss(DetLoss):
         tgt_kpt = gt_kpt[b_idx, t_gt_idx[fg]]  # (N, nk, ndim)
         stride_fg = stride_tensor.squeeze(-1).unsqueeze(0).expand_as(fg)[fg]  # (N,)
         tgt_xy = tgt_kpt[..., 0:2] / stride_fg[:, None, None]
-        area = xyxy2xywh(t_bboxes[fg])[:, 2:].prod(1, keepdim=True)  # (N, 1) pixels
+        # ultralytics `calculate_keypoints_loss`: target_bboxes 先除 stride 转网格单位再算 area
+        tb = t_bboxes[fg] / stride_fg[:, None]
+        area = xyxy2xywh(tb)[:, 2:].prod(1, keepdim=True)  # (N, 1) grid^2
 
         pred_xy = xy[fg]  # (N, nk, 2) grid units
         if self.ndim == 3:

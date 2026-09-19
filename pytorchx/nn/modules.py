@@ -1122,18 +1122,25 @@ class OBBU(nn.Module):
             )
             for x in ch
         )
-        self.cv3 = nn.ModuleList(_dw_cls_branch(x, c3, self.nc + self.ne) for x in ch)
+        self.cv3 = nn.ModuleList(_dw_cls_branch(x, c3, self.nc) for x in ch)
+        c4 = max(ch[0] // 4, self.ne)
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.ne, 1))
+            for x in ch
+        )
         for a in self.cv2:
             nn.init.constant_(a[-1].bias, 1.0)
         for b in self.cv3:
             with torch.no_grad():
                 b[-1].bias[: self.nc] = -math.log((1 - 0.01) / 0.01)
-                b[-1].bias[self.nc :] = 0.0
+        for m in self.cv4:
+            nn.init.constant_(m[-1].bias, 0.0)
         self.stride = torch.zeros(self.nl)
 
     def forward(self, x):
         return [
-            torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1) for i in range(self.nl)
+            torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv4[i](x[i])), 1)
+            for i in range(self.nl)
         ]
 
 
