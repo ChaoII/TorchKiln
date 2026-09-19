@@ -50,6 +50,14 @@
   - 框架：**mAP50-95 = 0.00087**（mAP50=0.0039，best at epoch3）。
   - ultralytics：**mAP50-95 = 0.00078**（mAP50=0.0059，13 epoch）。
   - 两者**同量级，已对齐**（dota128 从零本就难学，指标都低，但一致）。
+- **预训练权重加载（关键）**：`OBBU` 头补独立 `angle cv4` 塔后，框架模型与 ultralytics
+  `yolo11n-obb` **参数完全一致（2,664,416）**，仅差 `model.23.dfl.conv.weight`（框架 DFL 是函数式）。
+  把 `weights/yolo11n-obb.pt`（官方 DOTA 15 类预训练）去掉该键存为 `weights/yolo11n_obb_fw.pth`，
+  框架 `load_state_dict` **missing=0 / unexpected=0**。
+- **预训练直接推理 mAP（dota128 val）**：框架 **mAP50-95 = 0.754**（mAP50=0.947）；
+  ultralytics **0.821**（mAP50=0.963）。**接近但差 ~0.067**，来自后处理/metric 细节（待继续排查）。
+  - 注：dota128 从零 30 epoch 只有 0.0008（数据集太小、从零难学），
+    **微调/预训练才是正道**；dota128 上微调 30 epoch 反而过拟（ultralytics 微调后掉到 ~0.65）。
 
 ## 仍存在的小差异（不影响 mAP 对齐，后续可改进）
 - **`loss_cls` 框架偏高**（约 100~200 vs ultra ~4.8）：源于从零初始化时的分类校准差异，
