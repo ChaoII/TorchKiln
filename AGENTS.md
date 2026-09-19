@@ -30,24 +30,29 @@
   - 类别：15 类（plan/ship/storage-tank/... 见 dota128.yaml）。
 - 图片与权重一律**不入库**（由 `.gitignore` 忽略），只保留标签文本与清单文件。
 
-## OBB（旋转框）实现与 ultralytics 的差异（分析结论）
-- **旋转框 NMS 是最大性能瓶颈**：框架自研 `pytorchx/det/rbox.py::nms_rotated` 是 **O(N²) 纯 NumPy
-  逐对多边形裁剪**（Sutherland-Hodgman `poly_iou_np`）。实测 2000 个框 `nms_rotated` 需 **87 秒**；
-  而 DOTA 图很密集、评估 `conf_thres=0.001` 会产生成千上万框 × 每类、每张 val 图，导致**评估阶段几乎跑不完**，
-  表现为训练在 first eval 卡住、train.log / checkpoint 迟迟不落盘。
-  对比：ultralytics 用编译版 rotated NMS（快得多）。
-- **OBB 损失不含单独的 angle loss**：`pytorchx/det/loss.py::ObbLoss.forward` 只有
-  `box_gain*(1-probiou) + cls_gain*BCE`（`angle_gain` 定义了但未参与 loss）。
-  ultralytics `v8OBBLoss` 有 4 项：box + cls + dfl + **angle loss**(×`hyp.angle=1.0`)。角度仅靠 probiou 隐式优化。
-- **角度解码**：框架 `rbox.py::dist2rbox` 用 `theta = atan(angle_raw)`；ultralytics 用 `angle` 分支解码。
-- **指标 IoU**：框架 `det/metric.py` 用多边形裁剪 IoU(`poly_iou_np`)；ultralytics OBB 指标多用 `probiou`。
-- **回归布局**：框架配置 `reg_layout: upstream`（`[reg(4), cls(nc), angle(ne)]`）与 ultralytics 兼容；
-  `obb_ours` 是自研手写布局（`[reg(4+ne), cls]`）。现配置都走 `upstream`。
+## OBB（旋转框）实现与 ultralytics 的差异（已部分对齐 ultralytics）
+- **旋转框 NMS 已替换为 ultralytics 原生方案**（`pytorchx/det/rbox.py::nms_rotated`）：
+  由原来 **O(N²) 纯 NumPy 逐对多边形裁剪**（2000 框要 87 秒）改为
+  **`batch_probiou`(ProbIoU 上三角矩阵) + `TorchNMS.fast_nms` 上三角抑制**，GPU 向量化，
+  2000 框降到约 **0.13 秒**；并加了 `max_candidates`（默认 3000，仿 ultralytics `max_nms`）
+  在密集图上按置信度截断候选，避免 `(N,N)` 矩阵 OOM。
+  **已验证：框架 `nms_rotated` 与 ultralytics `TorchNMS.fast_nms(boxes,scores,0.7,iou_func=batch_probiou)`
+  输出索引完全一致（200 框随机用例 maxdiff=0.0）。**
+- **`probiou` 高斯方差已改为 `w^2/12`**（之前是 `(w/2)^2`），与 ultralytics `batch_probiou`
+  数值完全一致（maxdiff=0.0）。注意返回值已去尾维（`(N,)`/`(B,A,M)`），调用方别多 squeeze。
+- **指标 IoU 改为 probiou**：`pytorchx/det/metric.py::_iou` 对 `box_format=xywhr` 用
+  `probiou`（原用多边形裁剪 `poly_iou_np`），与 ultralytics OBB 指标一致。
+- **仍存在的差异**：
+  - OBB 损失**不含单独的 angle loss**：`ObbLoss.forward` 只有 `box_gain*(1-probiou)+cls_gain*BCE`
+    （`angle_gain` 定义了但未参与）；ultralytics `v8OBBLoss` 有 box+cls+dfl+**angle loss**。
+  - 角度解码：框架 `dist2rbox` 用 `theta=atan(angle_raw)`；ultralytics 用 `angle` 分支解码。
 
-## 待办 / 已知问题
-- 框架 OBB 评估几乎不可行（NMS 太慢）。要真正对齐 ultralytics 精度，**先把 `nms_rotated` 换成
-  快速实现**（如 `torchvision.ops.nms` 的旋转版 / 批量化 poly IoU），再对比 dota128 mAP。
-- dota128 训练从零、imgsz=1024、batch=4 已验证能跑 1 步；现配置为 30 epoch（可再调）。
+## 待办 / 已知问题（重要）
+- **框架 OBB 从零训练 mAP 全程为 0、loss 至 epoch 21 起变 NaN**：初始 loss 巨大
+  （loss_cls ≥~500-1600），dota128 训练 30 epoch 未收敛。这是**框架自身训练管线/损失问题**，
+  在改造 NMS 前就存在（原始 also loss~1100）。要真正对齐 ultralytics 精度，需先定位并修复
+  OBB 损失/数据管线（含 `accumulate=nbs/batch` 较大导致 LR 调度/步数偏少、cls 分配异常）。
+- dota128 训练从零、imgsz=1024、batch=4 已验证能跑通 1 步 + 评估（eval fps ~40）；30 epoch 现配置可复现。
 
 ## git 约定
 - 仓库已在 `E:\PytorchOCR` 初始化。
