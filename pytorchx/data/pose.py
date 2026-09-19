@@ -71,7 +71,7 @@ class PoseDataset(Dataset):
         if not os.path.isfile(path):
             return (
                 np.zeros((0, 5), np.float32),
-                np.zeros((0, nk, self.kpt_dim), np.float32),
+                np.zeros((0, nk, 3), np.float32),
                 np.zeros((0,), np.float32),
             )
         with open(path, "r", encoding="utf-8") as f:
@@ -88,6 +88,12 @@ class PoseDataset(Dataset):
                 kp = np.array(
                     p[5 : 5 + nk * self.kpt_dim], dtype=np.float32
                 ).reshape(nk, self.kpt_dim)
+                if self.kpt_dim == 2:
+                    # ultralytics: append a visibility column (1 visible, 0 if x/y<0)
+                    vis = np.where(
+                        (kp[:, 0] < 0) | (kp[:, 1] < 0), 0.0, 1.0
+                    ).astype(np.float32)
+                    kp = np.concatenate([kp, vis[:, None]], axis=-1)
                 kp[:, 0] = kp[:, 0] * w * ratio + pad[0]
                 kp[:, 1] = kp[:, 1] * h * ratio + pad[1]
                 boxes.append([cls, x1, y1, x2, y2])

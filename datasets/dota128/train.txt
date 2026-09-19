@@ -1,4 +1,4 @@
-﻿images/train/P0012__682__1396___0.jpg
+images/train/P0012__682__1396___0.jpg
 images/train/P0020__682__1745___2094.jpg
 images/train/P0029__1024__524___0.jpg
 images/train/P0039__682__1745___2974.jpg

@@ -283,127 +283,144 @@ class SegPostProcess(DetPostProcess):
 
 
 class SegMetric(DetMetric):
-    """Box mAP (xyxy) + mask mAP, both 101-point interpolated."""
+    """Box mAP (xyxy) + mask mAP, both 101-point interpolated.
+
+    流式实现:每张图匹配后立即释放掩码,只累积 (score, tp) 计数,
+    避免在 conf 较低、检测数较多时把全部 (N,H,W) 掩码驻留内存导致 OOM。
+    """
 
     def __init__(self, iou_thresholds=None, main_indicator="mask_mAP50-95", **kwargs):
         super().__init__(
             iou_thresholds=iou_thresholds, main_indicator=main_indicator, box_format="xyxy"
         )
-        self.pred_masks = []
-        self.gt_masks = []
+        self.reset()
 
     def reset(self):
         super().reset()
-        self.pred_masks = []
-        self.gt_masks = []
-
-    def __call__(self, post_result, batch):
-        super().__call__(post_result, batch)
-        gt_masks = batch[3]
-        mask_valid = batch[2].detach().cpu().numpy().astype(bool)
-        idx_map = None
-        if torch.is_tensor(gt_masks) and gt_masks.dim() == 3:
-            idx_map = gt_masks.detach().cpu().numpy()  # (B,H,W) 实例索引图
-        for i, pred in enumerate(post_result):
-            m = pred.get("masks")
-            if m is not None and torch.is_tensor(m):
-                m = m.detach().cpu().numpy().astype(bool)
-            self.pred_masks.append(m)
-            if gt_masks is None:
-                self.gt_masks.append(None)
-            elif idx_map is not None:
-                inst = idx_map[i]
-                n = int(mask_valid[i].sum())
-                if n:
-                    gms = np.stack([inst == (k + 1) for k in range(n)], axis=0)
-                else:
-                    gms = np.zeros((0,) + inst.shape, dtype=bool)
-                self.gt_masks.append(gms)
-            else:
-                self.gt_masks.append(
-                    gt_masks[i].detach().cpu().numpy().astype(bool)[mask_valid[i]]
-                )
+        self._acc = {"box": {}, "mask": {}}
 
     @staticmethod
-    def _mask_iou(pred, gts):
-        if gts.shape[0] == 0:
-            return np.zeros((0,), dtype=np.float32)
-        p = pred.reshape(-1)
-        inter = (gts.reshape(gts.shape[0], -1) & p).sum(1).astype(np.float64)
-        union = (gts.reshape(gts.shape[0], -1) | p).sum(1).astype(np.float64)
+    def _box_iou_mat(pb, gt):
+        """(N,4) vs (M,4) xyxy -> (N,M) IoU matrix."""
+        if pb.shape[0] == 0 or gt.shape[0] == 0:
+            return np.zeros((pb.shape[0], gt.shape[0]), np.float32)
+        a = pb[:, None, :]
+        b = gt[None, :, :]
+        xx1 = np.maximum(a[:, :, 0], b[:, :, 0]); yy1 = np.maximum(a[:, :, 1], b[:, :, 1])
+        xx2 = np.minimum(a[:, :, 2], b[:, :, 2]); yy2 = np.minimum(a[:, :, 3], b[:, :, 3])
+        inter = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
+        area_a = np.maximum(0.0, a[:, :, 2] - a[:, :, 0]) * np.maximum(0.0, a[:, :, 3] - a[:, :, 1])
+        area_b = np.maximum(0.0, b[:, :, 2] - b[:, :, 0]) * np.maximum(0.0, b[:, :, 3] - b[:, :, 1])
+        return (inter / (area_a + area_b - inter + 1e-9)).astype(np.float32)
+
+    @staticmethod
+    def _mask_iou_mat(pm, gm):
+        """(N,H,W) vs (M,H,W) bool -> (N,M) mask IoU matrix."""
+        if pm.shape[0] == 0 or gm.shape[0] == 0:
+            return np.zeros((pm.shape[0], gm.shape[0]), np.float32)
+        pf = pm.reshape(pm.shape[0], -1).astype(np.float32)
+        gf = gm.reshape(gm.shape[0], -1).astype(np.float32)
+        inter = pf @ gf.T
+        union = pf.sum(1)[:, None] + gf.sum(1)[None, :] - inter
         return (inter / (union + 1e-9)).astype(np.float32)
 
-    def _ap_for(self, use_masks):
-        num_images = len(self.gts)
-        n_classes = 0
-        for g in self.gts:
-            if g.shape[0]:
-                n_classes = max(n_classes, int(g[:, 0].max()) + 1)
-        for p in self.preds:
-            if p["labels"].size:
-                n_classes = max(n_classes, int(p["labels"].max()) + 1)
+    @staticmethod
+    def _greedy(iou, order, thr):
+        """在未匹配 GT 中贪心匹配,返回逐个预测的 tp 列表(对齐 ultralytics)。"""
+        matches = np.zeros(iou.shape[1], dtype=bool)
+        t = []
+        for j in order:
+            row = iou[j]
+            if row.size:
+                row = row.copy()
+                row[matches] = -1.0
+                k = int(row.argmax())
+            else:
+                k = -1
+            if k >= 0 and row[k] > thr:
+                matches[k] = True
+                t.append(1)
+            else:
+                t.append(0)
+        return t
 
+    def __call__(self, post_result, batch):
+        targets = batch[1].detach().cpu().numpy()
+        valid = batch[2].detach().cpu().numpy().astype(bool)
+        gt_arr = batch[3]
+        is_inst = torch.is_tensor(gt_arr) and gt_arr.dim() == 3
+        inst_np = gt_arr.detach().cpu().numpy() if is_inst else None
+        for i, pred in enumerate(post_result):
+            g = targets[i][valid[i]].astype(np.float32)  # (N, 1+box_dim)
+            H, W = 0, 0
+            if is_inst:
+                instn = inst_np[i]
+                H, W = instn.shape
+                n = int(valid[i].sum())
+                if n:
+                    gm = np.stack([instn == (k + 1) for k in range(n)], axis=0).astype(bool)
+                else:
+                    gm = np.zeros((0, H, W), dtype=bool)
+            elif gt_arr is not None:
+                gm_arr = gt_arr[i].detach().cpu().numpy().astype(bool)
+                H, W = gm_arr.shape[1:]
+                gm = gm_arr[valid[i]]
+            else:
+                gm = np.zeros((0, H, W), dtype=bool)
+            pb = pred["bboxes"].detach().cpu().numpy().astype(np.float32)
+            ps = pred["scores"].detach().cpu().numpy().astype(np.float32)
+            pl = pred["labels"].detach().cpu().numpy().astype(np.int64)
+            pm = pred.get("masks")
+            pm_np = None
+            if pm is not None and torch.is_tensor(pm):
+                pm_np = pm.detach().cpu().numpy().astype(bool)
+                if pm_np.shape[0] != pl.shape[0]:
+                    pm_np = None
+            if pm_np is None and pl.size and pb.shape[0]:
+                H, W = pm.shape[-2:]
+                pm_np = np.zeros((pb.shape[0], H, W), dtype=bool)
+            n_pred = pb.shape[0]
+            if n_pred == 0:
+                continue
+            classes = set(int(x) for x in pl)
+            if g.shape[0]:
+                classes |= set(int(x) for x in g[:, 0])
+            for c in classes:
+                sel_p = pl == c
+                pb_c = pb[sel_p]; ps_c = ps[sel_p]
+                pm_c = pm_np[sel_p] if pm_np is not None and pm_np.shape[0] == pl.shape[0] else None
+                sel_gt = g[:, 0] == c if g.shape[0] else np.zeros((0,), dtype=bool)
+                gt_c = g[sel_gt][:, 1:5] if g.shape[0] else np.zeros((0, 4), np.float32)
+                gm_c = gm[sel_gt] if gm.shape[0] else np.zeros((0,) + gm.shape[1:], bool)
+                B = self._box_iou_mat(pb_c, gt_c)
+                M = self._mask_iou_mat(pm_c, gm_c) if pm_c is not None else B
+                order = np.argsort(-ps_c)
+                ngt = int(sel_gt.sum())
+                for thr in self.iou_thresholds:
+                    eb = self._acc["box"].setdefault(c, {}).setdefault(thr, {"s": [], "t": [], "n": 0})
+                    eb["n"] += ngt
+                    eb["s"].extend(ps_c.tolist())
+                    eb["t"].extend(self._greedy(B, order, thr))
+                    em = self._acc["mask"].setdefault(c, {}).setdefault(thr, {"s": [], "t": [], "n": 0})
+                    em["n"] += ngt
+                    em["s"].extend(ps_c.tolist())
+                    em["t"].extend(self._greedy(M, order, thr))
+
+    def _ap(self, kind):
         per_thr = {}
         for thr in self.iou_thresholds:
             aps = []
-            for c in range(n_classes):
-                scores, tps, n_gt = [], [], 0
-                for i in range(num_images):
-                    g = self.gts[i]
-                    sel_gt = g[:, 0] == c if g.shape[0] else np.zeros((0,), dtype=bool)
-                    gt_c = g[sel_gt][:, 1:5] if g.shape[0] else g.reshape(0, 4)
-                    n_gt += gt_c.shape[0]
-
-                    gt_masks_c = None
-                    if use_masks:
-                        gm = self.gt_masks[i]
-                        gt_masks_c = (
-                            gm[sel_gt]
-                            if gm is not None
-                            else np.zeros((0, 1, 1), dtype=bool)
-                        )
-
-                    p = self.preds[i]
-                    sel_p = p["labels"] == c
-                    if not sel_p.any():
-                        continue
-                    pb, ps = p["bboxes"][sel_p], p["scores"][sel_p]
-                    pm = None
-                    if use_masks:
-                        pm_all = self.pred_masks[i]
-                        if pm_all is not None and pm_all.shape[0] == p["labels"].shape[0]:
-                            pm = pm_all[sel_p]
-
-                    order = np.argsort(-ps)
-                    pb, ps = pb[order], ps[order]
-                    if pm is not None:
-                        pm = pm[order]
-
-                    matches = np.zeros(gt_c.shape[0], dtype=bool)
-                    for j in range(pb.shape[0]):
-                        if use_masks:
-                            ious = np.array(self._mask_iou(pm[j], gt_masks_c), dtype=np.float32)
-                        else:
-                            ious = np.array(self._iou(pb[j], gt_c), dtype=np.float32)
-                        # 对齐 ultralytics:只在未匹配 GT 中找最优
-                        if ious.size:
-                            ious[matches] = -1.0
-                            k = int(ious.argmax())
-                        else:
-                            k = -1
-                        if k >= 0 and ious[k] > thr:
-                            matches[k] = True
-                            tps.append(1)
-                        else:
-                            tps.append(0)
-                        scores.append(ps[j])
+            for c, d in self._acc[kind].items():
+                e = d.get(thr)
+                if e is None:
+                    continue
+                n_gt = e["n"]
                 if n_gt == 0:
                     continue
-                if not scores:
-                    aps.append(0.0)
-                    continue
-                order = np.argsort(-np.array(scores))
-                tp = np.array(tps, dtype=np.float32)[order]
+                s = np.array(e["s"], dtype=np.float32)
+                t = np.array(e["t"], dtype=np.float32)
+                order = np.argsort(-s)
+                tp = t[order]
                 cum_tp = np.cumsum(tp)
                 cum_fp = np.cumsum(1.0 - tp)
                 recall = cum_tp / max(n_gt, 1)
@@ -413,8 +430,8 @@ class SegMetric(DetMetric):
         return per_thr
 
     def get_metric(self):
-        box = self._ap_for(use_masks=False)
-        mask = self._ap_for(use_masks=True)
+        box = self._ap("box")
+        mask = self._ap("mask")
         metrics = {
             "box_mAP50": box.get(0.5, 0.0),
             "box_mAP50-95": float(np.mean(list(box.values()))) if box else 0.0,

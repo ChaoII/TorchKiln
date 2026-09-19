@@ -1,7 +1,15 @@
 """Pose (keypoints) components: loss / post-process / OKS-mAP metric.
 
-Keypoint convention: the head predicts per-anchor *grid-unit offsets*; decoding
-gives letterboxed pixel coordinates ``(x, y, vis)`` per keypoint.
+Aligned 1:1 with ultralytics (``v8PoseLoss`` / ``PoseValidator``):
+
+* keypoint decode (inference): ``x = (raw*2 + (anchor-0.5)) * stride``;
+* keypoint decode (loss): same but *without* the ``* stride`` (grid units);
+* ``KeypointLoss``: OKS-style ``e = d / ((2*sigma)^2 * area * 2)``, masked &
+  factor-normalised like cocoeval;
+* visibility loss: ``BCEWithLogits`` on raw visibility logits (only when
+  ``kpt_shape[1] == 3``);
+* metric: ``kpt_iou`` (OKS), ``area = w*h*0.53``, ``sigma = OKS_SIGMA/10`` for
+  COCO 17-kpt or ``ones(nk)/nk`` otherwise.
 """
 from __future__ import absolute_import
 
@@ -10,9 +18,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from pytorchx.det.loss import DetLoss
+from pytorchx.det.loss import DetLoss, df_loss
 from pytorchx.det.metric import _ap_101
-from pytorchx.det.ops import bbox_ciou, dist2bbox, make_anchors, nms, split_head
+from pytorchx.det.ops import (
+    bbox_ciou,
+    bbox2dist,
+    dfl_project,
+    dist2bbox,
+    make_anchors,
+    nms,
+    split_head,
+    xyxy2xywh,
+)
 from pytorchx.det.postprocess import DetPostProcess
 
 __all__ = [
@@ -22,30 +39,34 @@ __all__ = [
     "build_pose_loss",
     "build_pose_postprocess",
     "build_pose_metric",
-    "COCO_SIGMAS",
+    "OKS_SIGMA",
 ]
 
-# COCO 17-keypoint constants
-COCO_SIGMAS = np.array(
+# COCO 17-keypoint sigmas (scaled /10), matching ultralytics ``OKS_SIGMA``.
+OKS_SIGMA = np.array(
     [0.26, 0.25, 0.25, 0.35, 0.35, 0.79, 0.79, 0.72, 0.72, 0.62, 0.62, 1.07, 1.07, 0.87, 0.87, 0.89, 0.89],
     dtype=np.float32,
-)
+) / 10.0
 
 
 class PoseLoss(DetLoss):
+    """Keypoint loss ported from ``ultralytics.v8PoseLoss``."""
+
     def __init__(
         self,
         num_classes=80,
         kpt_shape=(17, 3),
-        kpt_gain=12.0,
-        vis_gain=1.0,
         strides=(8, 16, 32),
         topk=13,
         alpha=1.0,
         beta=6.0,
         cls_gain=0.5,
         box_gain=7.5,
+        dfl_gain=1.5,
         reg_max=1,
+        pose_gain=12.0,
+        kobj_gain=1.0,
+        kpt_oks_sigmas=None,
         **kwargs
     ):
         super().__init__(
@@ -56,18 +77,70 @@ class PoseLoss(DetLoss):
             beta=beta,
             cls_gain=cls_gain,
             box_gain=box_gain,
+            dfl_gain=dfl_gain,
             reg_max=reg_max,
         )
         self.nk = int(kpt_shape[0])
-        self.kpt_gain = float(kpt_gain)
-        self.vis_gain = float(vis_gain)
+        self.ndim = int(kpt_shape[1]) if len(kpt_shape) > 1 else 3
+        self.pose_gain = float(pose_gain)
+        self.kobj_gain = float(kobj_gain)
+        self.kpt_shape = [int(kpt_shape[0]), int(kpt_shape[1])]
+        if kpt_oks_sigmas is not None:
+            sigmas = torch.as_tensor(kpt_oks_sigmas, dtype=torch.float32).flatten()
+        elif self.kpt_shape == [17, 3]:
+            sigmas = torch.from_numpy(OKS_SIGMA).float()
+        else:
+            sigmas = torch.ones(self.nk) / self.nk
+        self.sigmas = sigmas
 
-    def _split_full(self, feats):
-        dist, cls, kpt = split_head(feats, self.num_classes, self.reg_max, "pose")
-        return dist, cls, kpt
+    def _split(self, feats):
+        return split_head(feats, self.num_classes, self.reg_max, "pose", project=False)
+
+    def _keypoint_loss(self, pred_kpt_extra, anchor_points, stride_tensor, fg, t_gt_idx,
+                       t_bboxes, gt_kpt, device):
+        """Returns ``(loss_pose, loss_kobj)`` aligned with ultralytics."""
+        B, A = fg.shape
+        if not bool(fg.any()):
+            z = pred_kpt_extra.sum() * 0.0
+            return z, z
+
+        raw = pred_kpt_extra.view(B, A, self.nk, self.ndim)
+        # decode to grid units (loss path): x*2 + (anchor - 0.5)
+        a = anchor_points.unsqueeze(0).unsqueeze(2)  # (1, A, 1, 2)
+        xy = raw[..., 0:2] * 2.0 + (a - 0.5)  # (B, A, nk, 2)
+
+        gt_kpt = gt_kpt.to(device).float()  # (B, M, nk, ndim) pixels
+        b_idx = torch.arange(B, device=device)[:, None].expand_as(fg)[fg]
+        tgt_kpt = gt_kpt[b_idx, t_gt_idx[fg]]  # (N, nk, ndim)
+        stride_fg = stride_tensor.squeeze(-1).unsqueeze(0).expand_as(fg)[fg]  # (N,)
+        tgt_xy = tgt_kpt[..., 0:2] / stride_fg[:, None, None]
+        area = xyxy2xywh(t_bboxes[fg])[:, 2:].prod(1, keepdim=True)  # (N, 1) pixels
+
+        pred_xy = xy[fg]  # (N, nk, 2) grid units
+        if self.ndim == 3:
+            kpt_mask = (tgt_kpt[..., 2] != 0).float()  # (N, nk)
+        else:
+            kpt_mask = torch.ones_like(tgt_kpt[..., 0])
+
+        d = (pred_xy[..., 0] - tgt_xy[..., 0]) ** 2 + (pred_xy[..., 1] - tgt_xy[..., 1]) ** 2  # (N, nk)
+        kpt_loss_factor = kpt_mask.shape[1] / (kpt_mask.sum(dim=1) + 1e-9)  # (N,)
+        sig = self.sigmas.to(device)
+        e = d / ((2.0 * sig).pow(2) * (area + 1e-9) * 2.0)  # (N, nk)
+        loss_pose = (kpt_loss_factor.unsqueeze(-1) * ((1.0 - torch.exp(-e)) * kpt_mask)).mean()
+
+        if self.ndim == 3:
+            vis = raw[..., 2:3][fg].squeeze(-1)  # raw logits
+            loss_kobj = F.binary_cross_entropy_with_logits(vis, kpt_mask)
+        else:
+            loss_kobj = pred_kpt_extra.sum() * 0.0
+
+        return loss_pose, loss_kobj
 
     def forward(self, preds, batch):
-        pred_distri, pred_scores, pred_kpt = self._split_full(preds)
+        pred_dist_raw, pred_scores, pred_kpt_extra = self._split(preds)
+        pred_distri = (
+            dfl_project(pred_dist_raw, self.reg_max) if self.reg_max > 1 else pred_dist_raw
+        )
         anchor_points, stride_tensor = make_anchors(preds, self.strides)
         anchors_px = anchor_points * stride_tensor
         pred_bboxes = dist2bbox(pred_distri, anchor_points, xywh=False) * stride_tensor
@@ -75,7 +148,6 @@ class PoseLoss(DetLoss):
         device = pred_scores.device
         targets = batch[1].to(device)
         mask_gt = batch[2].unsqueeze(-1).bool().to(device)
-        gt_kpt = batch[3].to(device)  # (B, M, K, 3) letterboxed px
         gt_labels = targets[..., 0:1]
         gt_bboxes = targets[..., 1:5]
 
@@ -91,58 +163,68 @@ class PoseLoss(DetLoss):
 
         scores_sum = max(float(t_scores.sum()), 1.0)
         loss_cls = self.bce(pred_scores, t_scores).sum() / scores_sum
+
         if bool(fg.any()):
             weight = t_scores.sum(-1)[fg].detach()
             loss_box = (bbox_ciou(pred_bboxes[fg], t_bboxes[fg]) * weight).sum() / scores_sum
+            if self.reg_max > 1:
+                b_sz, a_sz = fg.shape
+                pd = pred_dist_raw.view(b_sz, a_sz, 4, self.reg_max)[fg].reshape(-1, self.reg_max)
+                stride_fg = stride_tensor.squeeze(-1).unsqueeze(0).expand_as(fg)[fg]
+                tgt = (t_bboxes[fg] / stride_fg[:, None]).clamp(0, self.reg_max - 1.0 - 1e-3)
+                ap_fg = anchor_points.unsqueeze(0).expand(fg.shape[0], -1, -1)[fg]
+                target_ltrb = bbox2dist(ap_fg, tgt).clamp(0, self.reg_max - 1.0 - 1e-3)
+                per_side = df_loss(pd, target_ltrb.reshape(-1)).view(-1, 4).mean(-1)
+                loss_dfl = (per_side * weight).sum() / scores_sum
+            else:
+                loss_dfl = pred_dist_raw.sum() * 0.0
         else:
             loss_box = pred_bboxes.sum() * 0.0
+            loss_dfl = pred_dist_raw.sum() * 0.0
 
-        if bool(fg.any()):
-            b_idx = torch.arange(pred_scores.shape[0], device=device)[:, None].expand_as(fg)[fg]
-            tgt_kpt = gt_kpt[b_idx, t_gt_idx[fg]]  # (N, K, 3)
-            B = pred_scores.shape[0]
-            anchor_fg = anchor_points.unsqueeze(0).expand(B, -1, -1)[fg]  # (N, 2)
-            stride_fg = stride_tensor.unsqueeze(0).expand(B, -1, -1)[fg]  # (N, 1)
-            pred = pred_kpt[fg].view(-1, self.nk, 3)
-            # offsets -> pixel coords
-            xy = (anchor_fg.unsqueeze(1) + pred[..., 0:2]) * stride_fg.unsqueeze(1)
-            vis = pred[..., 2]
+        loss_pose, loss_kobj = self._keypoint_loss(
+            pred_kpt_extra, anchor_points, stride_tensor, fg, t_gt_idx, t_bboxes,
+            batch[3], device,
+        )
 
-            visible = (tgt_kpt[..., 2] > 0).float()
-            vis_target = tgt_kpt[..., 2].clamp(0, 1)
-            loss_vis = (
-                self.bce(vis, vis_target) * visible
-            ).sum() / max(float(visible.sum()), 1.0)
-            if float(visible.sum()) > 0:
-                loss_xy = (
-                    F.l1_loss(xy, tgt_kpt[..., 0:2], reduction="none").sum(-1) * visible
-                ).sum() / max(float(visible.sum()), 1.0)
-            else:
-                loss_xy = xy.sum() * 0.0
-            loss_kpt = self.kpt_gain * loss_xy + self.vis_gain * loss_vis
-        else:
-            loss_kpt = pred_kpt.sum() * 0.0
-
-        loss = self.box_gain * loss_box + self.cls_gain * loss_cls + loss_kpt
+        loss = (
+            self.box_gain * loss_box
+            + self.cls_gain * loss_cls
+            + self.dfl_gain * loss_dfl
+            + self.pose_gain * loss_pose
+            + self.kobj_gain * loss_kobj
+        )
         return {
-            "loss": loss,
+            "loss": loss * int(batch[0].shape[0]),
             "loss_box": loss_box.detach(),
             "loss_cls": loss_cls.detach(),
-            "loss_kpt": loss_kpt.detach(),
+            "loss_dfl": loss_dfl.detach(),
+            "loss_pose": loss_pose.detach(),
+            "loss_kobj": loss_kobj.detach(),
         }
 
 
+# placeholder, replaced by a module-level hook set in build_pose_loss
 class PosePostProcess(DetPostProcess):
-    def __init__(self, conf_thres=0.25, iou_thres=0.7, max_det=300, strides=(8, 16, 32),
-                 kpt_shape=(17, 3), reg_max=1, **kwargs):
+    def __init__(
+        self,
+        conf_thres=0.25,
+        iou_thres=0.7,
+        max_det=300,
+        strides=(8, 16, 32),
+        kpt_shape=(17, 3),
+        reg_max=1,
+        **kwargs
+    ):
         super().__init__(
             conf_thres=conf_thres, iou_thres=iou_thres, max_det=max_det,
             strides=strides, box_type="xyxy", reg_max=reg_max,
         )
         self.nk = int(kpt_shape[0])
+        self.ndim = int(kpt_shape[1]) if len(kpt_shape) > 1 else 3
 
     def __call__(self, preds):
-        num_classes = preds[0].shape[1] - self.reg_channels - self.nk * 3
+        num_classes = preds[0].shape[1] - 4 * self.reg_max - self.nk * self.ndim
         distri, scores, kpts_all = split_head(
             preds, num_classes, self.reg_max, "pose"
         )
@@ -150,12 +232,15 @@ class PosePostProcess(DetPostProcess):
         anchor_points, stride_tensor = make_anchors(preds, self.strides)
         boxes = dist2bbox(distri, anchor_points, xywh=False) * stride_tensor
 
-        # decode keypoints: anchor offset (grid units) -> pixels
-        raw = kpts_all.view(kpts_all.shape[0], -1, self.nk, 3)
-        xy = (anchor_points.unsqueeze(0).unsqueeze(2) + raw[..., 0:2]) * stride_tensor.view(
-            1, -1, 1, 1
-        )
-        kpts_all = torch.cat([xy, raw[..., 2:3]], dim=-1)
+        # decode keypoints: (raw*2 + (anchor-0.5)) * stride
+        raw = kpts_all.view(kpts_all.shape[0], -1, self.nk, self.ndim)
+        a = anchor_points.unsqueeze(0).unsqueeze(2)
+        xy = (raw[..., 0:2] * 2.0 + (a - 0.5)) * stride_tensor.view(1, -1, 1, 1)
+        if self.ndim == 3:
+            vis = raw[..., 2:3].sigmoid()
+            kpts_all = torch.cat([xy, vis], dim=-1)
+        else:
+            kpts_all = xy
 
         results = []
         for b in range(boxes.shape[0]):
@@ -166,7 +251,7 @@ class PosePostProcess(DetPostProcess):
             if bx.numel() == 0:
                 results.append(
                     {"bboxes": bx.reshape(0, 4), "scores": conf, "labels": labels,
-                     "kpts": kp.reshape(0, self.nk, 3)}
+                     "kpts": kp.reshape(0, self.nk, self.ndim)}
                 )
                 continue
             kept = []
@@ -186,11 +271,12 @@ class PosePostProcess(DetPostProcess):
 
 
 class PoseMetric(object):
-    """Keypoint mAP: AP over OKS thresholds (COCO-style), 101-point."""
+    """Keypoint mAP via ``kpt_iou`` (OKS), matching ultralytics ``PoseValidator``."""
 
-    def __init__(self, kpt_sigmas=None, iou_thresholds=None, main_indicator="mAP50-95", **kwargs):
-        sigmas = np.asarray(kpt_sigmas, dtype=np.float32) if kpt_sigmas is not None else None
-        self.sigmas = sigmas
+    def __init__(self, kpt_oks_sigmas=None, iou_thresholds=None, main_indicator="mAP50-95", **kwargs):
+        self.sigmas = None
+        if kpt_oks_sigmas is not None:
+            self.sigmas = np.asarray(kpt_oks_sigmas, dtype=np.float32).flatten()
         self.iou_thresholds = (
             list(iou_thresholds)
             if iou_thresholds is not None
@@ -207,8 +293,8 @@ class PoseMetric(object):
         if self.sigmas is not None and len(self.sigmas) == k:
             return self.sigmas
         if k == 17:
-            return COCO_SIGMAS
-        return np.full((k,), 0.1, dtype=np.float32)
+            return OKS_SIGMA
+        return np.ones(k, dtype=np.float32) / k
 
     def __call__(self, post_result, batch):
         targets = batch[1].detach().cpu().numpy()
@@ -231,14 +317,19 @@ class PoseMetric(object):
                 }
             )
 
-    @staticmethod
-    def _oks(pred_k, gt_k, area, sigmas):
-        vis = gt_k[:, 2] > 0
-        if vis.sum() == 0:
-            return 0.0
-        d = ((pred_k[:, 0:2] - gt_k[:, 0:2]) ** 2).sum(-1)
-        e = d / (2.0 * area * (sigmas**2) + 1e-9)
-        return float((np.exp(-e) * vis).sum() / vis.sum())
+    def _kpt_iou(self, gt_k, gt_area, pred_k):
+        """OKS of ``gt_k (N,nk,3)`` vs ``pred_k (M,nk,3)`` -> ``(N,M)``."""
+        N = gt_k.shape[0]
+        M = pred_k.shape[0]
+        if N == 0 or M == 0:
+            return np.zeros((N, M), dtype=np.float32)
+        sigma = self._sigma_for(gt_k.shape[1])
+        d = (gt_k[:, None, :, 0] - pred_k[None, :, :, 0]) ** 2 + (
+            gt_k[:, None, :, 1] - pred_k[None, :, :, 1]
+        ) ** 2  # (N, M, nk)
+        kpt_mask = gt_k[..., 2] != 0  # (N, nk)
+        e = d / ((2.0 * np.asarray(sigma)) ** 2 * (gt_area[:, None, None] + 1e-9) * 2.0)
+        return (np.exp(-e) * kpt_mask[:, None]).sum(-1) / (kpt_mask.sum(-1)[:, None] + 1e-9)
 
     def get_metric(self):
         n_cls = 0
@@ -260,6 +351,11 @@ class PoseMetric(object):
                     gt_k = g["kpts"][sel_g]
                     gt_b = g["boxes"][sel_g]
                     n_gt += int(sel_g.sum())
+                    if gt_b.shape[0]:
+                        # area = w*h*0.53 (COCO OKS convention, matching ultralytics)
+                        area = (gt_b[:, 2] - gt_b[:, 0]) * (gt_b[:, 3] - gt_b[:, 1]) * 0.53
+                    else:
+                        area = np.zeros((0,), dtype=np.float32)
                     p = self.preds[i]
                     sel_p = p["labels"] == c
                     if not sel_p.any():
@@ -269,18 +365,19 @@ class PoseMetric(object):
                     order = np.argsort(-ps)
                     pb_k, ps = pb_k[order], ps[order]
                     matches = np.zeros(gt_k.shape[0], dtype=bool)
+                    if gt_k.shape[0]:
+                        oks = self._kpt_iou(gt_k, area, pb_k)  # (N, M)
+                    else:
+                        oks = np.zeros((0, pb_k.shape[0]), dtype=np.float32)
                     for j in range(pb_k.shape[0]):
-                        best, best_i = 0.0, -1
-                        for gi in range(gt_k.shape[0]):
-                            w = gt_b[gi, 2] - gt_b[gi, 0]
-                            h = gt_b[gi, 3] - gt_b[gi, 1]
-                            area = float(max(w * h, 1.0))
-                            sig = self._sigma_for(gt_k.shape[1])
-                            oks = self._oks(pb_k[j], gt_k[gi], area, sig)
-                            if oks > best:
-                                best, best_i = oks, gi
-                        if best_i >= 0 and best >= thr and not matches[best_i]:
-                            matches[best_i] = True
+                        if gt_k.shape[0]:
+                            col = oks[:, j]
+                            col[matches] = -1.0
+                            k = int(col.argmax())
+                        else:
+                            k = -1
+                        if k >= 0 and oks[k, j] > thr:
+                            matches[k] = True
                             tps.append(1)
                         else:
                             tps.append(0)
@@ -304,7 +401,7 @@ class PoseMetric(object):
         }
 
 
-def build_pose_loss(loss_cfg, num_classes, kpt_shape=None, reg_max=None):
+def build_pose_loss(loss_cfg, num_classes, kpt_shape=None, reg_max=None, **kwargs):
     cfg = dict(loss_cfg or {})
     name = cfg.pop("name", "PoseLoss")
     if name not in ("PoseLoss", "KeypointLoss"):

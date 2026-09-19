@@ -1,4 +1,4 @@
-﻿images/val/P0008__682__461___553.jpg
+images/val/P0008__682__461___553.jpg
 images/val/P0041__682__1047___698.jpg
 images/val/P0254__682__349___698.jpg
 images/val/P0413__682__0___0.jpg
