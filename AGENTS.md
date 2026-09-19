@@ -54,8 +54,11 @@
   `yolo11n-obb` **参数完全一致（2,664,416）**，仅差 `model.23.dfl.conv.weight`（框架 DFL 是函数式）。
   把 `weights/yolo11n-obb.pt`（官方 DOTA 15 类预训练）去掉该键存为 `weights/yolo11n_obb_fw.pth`，
   框架 `load_state_dict` **missing=0 / unexpected=0**。
-- **预训练直接推理 mAP（dota128 val）**：框架 **mAP50-95 = 0.754**（mAP50=0.947）；
-  ultralytics **0.821**（mAP50=0.963）。**接近但差 ~0.067**，来自后处理/metric 细节（待继续排查）。
+- **预训练直接推理 mAP（dota128 val）**：框架 **mAP50-95 = 0.8005**（mAP50=0.950）；
+  ultralytics **0.821**（mAP50=0.963）。**已高度对齐（差 ~0.021）。**
+  - **关键修复：`poly2rbox` 改用 ultralytics 同款 `cv2.minAreaRect`**（`w` 为长边、`theta` 规范化到
+    `[-pi/4, 3pi/4)`），替换旧的 arctan2 + `(-pi/2, pi/2]` 约定——因 GT 与模型预测 theta 约定不一致，
+    mAP 从 0.754 提升到 **0.8005**。
   - 注：dota128 从零 30 epoch 只有 0.0008（数据集太小、从零难学），
     **微调/预训练才是正道**；dota128 上微调 30 epoch 反而过拟（ultralytics 微调后掉到 ~0.65）。
 

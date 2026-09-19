@@ -36,18 +36,21 @@ def _norm_angle(t):
 
 
 def poly2rbox(points):
-    """4 corner points (4, 2) -> ``(cx, cy, w, h, theta)``."""
-    pts = np.asarray(points, dtype=np.float64).reshape(4, 2)
-    cx, cy = pts[:, 0].mean(), pts[:, 1].mean()
-    e1 = pts[1] - pts[0]
-    e2 = pts[3] - pts[0]
-    w = float(np.hypot(*e1))
-    h = float(np.hypot(*e2))
-    theta = float(np.arctan2(e1[1], e1[0]))
+    """4+ corner points (P, 2) -> ``(cx, cy, w, h, theta)``.
+
+    Aligned with ultralytics ``xyxyxyxy2xywhr``: ``cv2.minAreaRect`` + canonical
+    parameterisation (``w`` is the longer side, ``theta`` in ``[-pi/4, 3pi/4)``).
+    """
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    (cx, cy), (w, h), angle = cv2.minAreaRect(pts)
+    theta = angle / 180.0 * np.pi
     if w < h:
         w, h = h, w
         theta += np.pi / 2
-    theta = float(_norm_angle(theta))
+    while theta >= 3 * np.pi / 4:
+        theta -= np.pi
+    while theta < -np.pi / 4:
+        theta += np.pi
     return np.array([cx, cy, w, h, theta], dtype=np.float32)
 
 
