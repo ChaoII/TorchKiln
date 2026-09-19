@@ -61,6 +61,17 @@
     mAP 从 0.754 提升到 **0.8005**。
   - 注：dota128 从零 30 epoch 只有 0.0008（数据集太小、从零难学），
     **微调/预训练才是正道**；dota128 上微调 30 epoch 反而过拟（ultralytics 微调后掉到 ~0.65）。
+- **训练（微调）对齐（关键）**：
+  - **BN momentum/eps 对齐 ultralytics**（`_set_bn_ultralytics` 设 `momentum=0.03, eps=1e-3`，即
+    ultralytics `initialize_weights`）。之前框架 BN 用 `0.1/1e-5`，微调**负优化**（val 从 0.80 降到 0.70）；
+    对齐后框架微调 **mAP50-95 = 0.809**（mAP50=0.957，mAP75=0.884），**超过预训练 0.80**。
+  - **dota128 训练配置原本未启用增广**（`DetDataset` 仅在配置带 `augment` 时才建 `TrainAugmenter`），
+    已补 `augment`（mosaic 1.0/hsv/affine/fliplr 0.5/close_mosaic 10，对齐 ultralytics 默认；
+    注：ultralytics 的 `erasing` 只用于分类模型，检测/OBB 不用）。
+  - 增广 `_corners_to_rbox` 改用 `cv2.minAreaRect`（θ→`[-pi/4, 3pi/4)`，含退化回退），对齐 ultralytics。
+  - **对比（正确列 mAP50-95，之前误取 val/box_loss 列导致假 0.87-0.94）**：
+    框架微调 **0.809** vs ultralytics 微调 **0.34/0.34/0.39**（ultralytics 微调反而严重过拟下降）。
+    **框架微调大幅优于 ultralytics 微调**（泛化更好）。
 
 ## Pose（关键点）与 ultralytics 的对齐（已完成并验证）
 - **数据管线**：`PoseDataset` 支持 `kpt_shape:[12,2]`（无可见性维），加载时若 `ndim==2` 会**补一列可见性**
