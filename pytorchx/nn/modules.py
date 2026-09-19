@@ -372,18 +372,20 @@ class SPP(nn.Module):
 
 @register
 class SPPF(nn.Module):
-    def __init__(self, c1, c2, k=5, n=3, *args, **kwargs):
+    def __init__(self, c1, c2, k=5, n=3, add=False, **kwargs):
         super().__init__()
         c_ = c1 // 2
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_ * (n + 1), c2, 1, 1)
         self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
         self.n = n
+        self.add = bool(add)
 
     def forward(self, x):
         y = [self.cv1(x)]
         y.extend(self.m(y[-1]) for _ in range(self.n))
-        return self.cv2(torch.cat(y, 1))
+        y = self.cv2(torch.cat(y, 1))
+        return y + x if self.add else y
 
 
 @register

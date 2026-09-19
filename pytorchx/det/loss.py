@@ -329,7 +329,7 @@ class DetLoss(nn.Module):
                 )
                 ap_fg = anchor_points.unsqueeze(0).expand(fg.shape[0], -1, -1)[fg]
                 target_ltrb = bbox2dist(ap_fg, tgt).clamp(
-                    0, self.reg_max - 1.0 - 1e-3
+                    0, self.reg_max - 1.0 - 0.01
                 )
                 w_dfl = weight
                 per_side = df_loss(pd, target_ltrb.reshape(-1)).view(-1, 4).mean(-1)
