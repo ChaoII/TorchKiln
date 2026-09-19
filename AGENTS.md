@@ -72,6 +72,14 @@
   - **对比（正确列 mAP50-95，之前误取 val/box_loss 列导致假 0.87-0.94）**：
     框架微调 **0.809** vs ultralytics 微调 **0.34/0.34/0.39**（ultralytics 微调反而严重过拟下降）。
     **框架微调大幅优于 ultralytics 微调**（泛化更好）。
+- **多版本/多尺寸 OBB 权重加载对齐（盘点）**：
+  - **yolo11-obb（n/s/m/l/x）：完全对齐**（missing=0/unexpected=0）。关键修复：
+    `graph.py::parse_model` 复刻 ultralytics 对 **C3k2 在 scale∈{m,l,x} 时设 `c3k=True`**（用 C3k 块），
+    之前框架 C3k2 恒用 Bottleneck(3×3)，导致 m/l/x backbone 通道不匹配（v11-n/s 本已对齐）。
+  - **yolo26-obb（n/s/m/l/x）**：头已对齐，但 `reg_max` 应为 **1（无 DFL，dfl=Identity）**，
+    非 v8/v11 的 16；剩余 backbone 特有模块（`model.22` 的 C3k2/A2C2f/C2fCIB 嵌套结构）未对齐（missing/unexpected）。
+  - **yolov8-obb（n/s/m/l/x）**：OBB 头 `cv3`（cls 分支）结构不同——框架用 v11 风格 `_dw_cls_branch`（DWConv），
+    ultralytics v8 用普通 [Conv,Conv,Conv2d]，仅最末卷积 `cv3.*.2` 通道不匹配。
 
 ## Pose（关键点）与 ultralytics 的对齐（已完成并验证）
 - **数据管线**：`PoseDataset` 支持 `kpt_shape:[12,2]`（无可见性维），加载时若 `ndim==2` 会**补一列可见性**
@@ -134,9 +142,9 @@
   评估时**临时恢复 BN eps=1e-5**（评估完还原，不影响训练 forward）——修复后 backbone/logits/softmax 全部对齐。
 - **评估流程冒烟**：`configs/_parity/pkg_cls_demo.yml`（cls_demo 3 类，imgsz=224）评估跑通（top1/top5 正常输出）。
 - **训练对齐（同权重同输入同标签，向前+反向）**：loss 公式与 ultra `v8ClassificationLoss`（`F.cross_entropy(preds, cls, reduction="mean")`）
-  完全一致（框架 `ClsLoss` = `nn.CrossEntropyLoss`, label_smoothing=0）。用 yolo11n-cls 同权重、同 `(2,3,224,224)` 输入、
-  同标签（[3,885]）各做一步：**loss 框架=ultra=8.159525（diff=0.00000000）**；119 层参数梯度全部匹配（无漏层），
-  **总体梯度 maxdiff=0.00017**（最大在首层 `model.0.conv.weight`，为 cuDNN 卷积反向的算子级微差，非逻辑 bug）。
+  完全一致（框架 `ClsLoss` = `nn.CrossEntropyLoss`, label_smoothing=0）。对**全部 15 个权重**（yolov8/yolo11/yolo26 × n/s/m/l/x）
+  各用同权重、同 `(2,3,224,224)` 输入、同标签（[3,885]）做一步：**loss diff 均 ≤5.7e-6**（几乎逐位一致，yolo11n=0）；
+  每模型梯度**全部层匹配（无漏层）**，**梯度 maxdiff 均 ≤0.00017**（最大为首层 `model.0.conv.weight`，cuDNN 卷积反向的算子级微差，非逻辑 bug）。
   → 分类的前向（推理）与训练（loss+梯度）均与 ultralytics 对齐，残差仅算子级。
 - 注：cls_demo（3 类 96×96）是 toy 数据，与 1000 类预训练权重不匹配；核心对齐验证用 ImageNet 预训练权重完成。
 

@@ -39,6 +39,10 @@ from pytorchx.nn.modules import (
     make_divisible,
     REGISTRY,
 )
+
+# Legacy (v3/v5/v8/v9) heads use the old Conv classifier tower (legacy=True);
+# latest families (yolo11/12/26) use the new DWConv tower (see `SegmentU` etc).
+LEGACY_HEAD = {"Detect": Detect, "Segment": Segment, "OBB": OBB, "Pose": Pose}
 from pytorchx.nn.modules import (  # noqa: F401  (import side effects: registry)
     C1,
     C2,
@@ -213,6 +217,8 @@ def parse_model(d, ch=3, verbose=False):
 
         if module_name in HEAD_CLASSES:
             head_cls = HEAD_CLASSES[module_name]
+            if d.get("_legacy") and module_name in LEGACY_HEAD:
+                head_cls = LEGACY_HEAD[module_name]
             ch_list = [_chan(x, i) for x in f_list]
             kwargs = {}
             extra = list(args)
@@ -470,6 +476,8 @@ def _load_yaml_spec(arch):
 def build_from_arch(arch):
     """Build a graph model from ``Architecture`` (``yaml_file``/``yaml_text``)."""
     spec = _load_yaml_spec(arch)
+    fp = str(arch.get("yaml_file", ""))
+    spec["_legacy"] = any(x in fp for x in ("/v8/", "/v9/", "/v5/", "/v3/", "yolov8", "yolov9", "yolov5", "yolov3"))
     head = arch.get("Head") or {}
     nc = head.get("num_classes") or arch.get("nc") or spec.get("nc", 80)
     spec["nc"] = int(nc)
