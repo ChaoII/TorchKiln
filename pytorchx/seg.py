@@ -203,6 +203,7 @@ class SegPostProcess(DetPostProcess):
         nm=32,
         mask_thres=0.5,
         reg_max=1,
+        end2end=False,
         **kwargs
     ):
         super().__init__(
@@ -212,6 +213,7 @@ class SegPostProcess(DetPostProcess):
             strides=strides,
             box_type="xyxy",
             reg_max=reg_max,
+            end2end=end2end,
         )
         self.nm = int(nm)
         self.mask_thres = float(mask_thres)
@@ -250,7 +252,7 @@ class SegPostProcess(DetPostProcess):
             kept = []
             for cls in labels.unique():
                 idx = (labels == cls).nonzero(as_tuple=True)[0]
-                sel = nms(bx[idx], conf[idx], self.iou_thres)
+                sel = self._nms(bx[idx], conf[idx])
                 kept.append(idx[sel])
             kept = torch.cat(kept) if kept else torch.empty(0, dtype=torch.long)
             if kept.numel() > self.max_det:

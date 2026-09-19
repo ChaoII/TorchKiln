@@ -583,7 +583,7 @@ class OBB(_BaseHead):
     ``cls_extra``/``layout='upstream'``; our own head keeps ``[reg, angle, cls]``.
     """
 
-    def __init__(self, nc=80, ch=(), ne=1, hidden=None, reg_max=1, layout="upstream", legacy=True):
+    def __init__(self, nc=80, ch=(), ne=1, hidden=None, reg_max=1, layout="upstream", legacy=True, end2end=False):
         self.ne = int(ne)
         self.layout = layout
         self.legacy = bool(legacy)
@@ -598,6 +598,13 @@ class OBB(_BaseHead):
         )
         for m in self.cv4:
             nn.init.constant_(m[-1].bias, 0.0)
+        import copy as _copy
+
+        self.end2end = bool(end2end)
+        if self.end2end:
+            self.one2one_cv2 = nn.ModuleList(_copy.deepcopy(a) for a in self.cv2)
+            self.one2one_cv3 = nn.ModuleList(_copy.deepcopy(b) for b in self.cv3)
+            self.one2one_cv4 = nn.ModuleList(_copy.deepcopy(m) for m in self.cv4)
         self.reg_max = int(reg_max)
         self.stride = torch.zeros(self.nl)
 
@@ -1171,6 +1178,14 @@ class Segment26(nn.Module):
         self.stride = torch.zeros(self.nl)
 
     def forward(self, x):
+        if self.end2end and not self.training:
+            outs = [
+                torch.cat(
+                    (self.one2one_cv2[i](x[i]), self.one2one_cv3[i](x[i]), self.one2one_cv4[i](x[i])), 1
+                )
+                for i in range(self.nl)
+            ]
+            return outs, self.proto(x, return_semantic=False)
         outs = [
             torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i]), self.cv4[i](x[i])), 1)
             for i in range(self.nl)

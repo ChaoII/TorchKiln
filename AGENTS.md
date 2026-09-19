@@ -169,8 +169,9 @@
   - `yolo26-seg` n/s/m/l/x：`missing=0 / unexpected=0`，参数差 ~0.1%（`reg_max=1` + 新 `Segment26`+`Proto26`）。
   - 说明：验证时 `Architecture.scale` 需指定档位、`num_classes=80`；yolo26 头 `reg_max=1`（无 DFL）。
 - **前向 smoke**：yolo26n-seg 加载官方权重后 `model(img)` 产出 `{"feats"(3 层), "protos"}`，`SegPostProcess` 解码正常。
-  - 注：框架推理目前走 one2many + NMS；ultra yolo26 为 end2end（one2one/NMS-free）。权重已对齐；若需
-    NMS-free 端到端推理，需在框架推理路径切换到 `one2one_*` 分支（后续可加）。
+- **端到端（NMS-free）推理已接通**：`Segment26.forward` 按 `self.end2end and not self.training` 选择分支——
+  `end2end=True` 用 `one2one_cv2/cv3/cv4`，`SegPostProcess` 的 `_nms` 对 end2end 也返回全部索引（无 NMS）。
+  - 注：ultra 重载模型推理是 `end2end=False`（one2many + NMS），checkpoint 训练态含 `one2one_*`（end2end）。两种路径框架都支持，按配置 `PostProcess.end2end`/`Head.end2end` 决定。
 
 ## 仍存在的小差异（不影响 mAP 对齐，后续可改进）
 - **`loss_cls` 框架偏高**（约 100~200 vs ultra ~4.8）：源于从零初始化时的分类校准差异，
