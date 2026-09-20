@@ -15,7 +15,30 @@
   `tgt = t_bboxes[fg]/stride_fg[:,None]`，`target_ltrb = bbox2dist(ap_fg, tgt).clamp(0, reg_max-1.0-0.01)`。
 - 对齐所需默认值：`DetLoss` 的 `topk=13→10`、`alpha=1.0→0.5`（对齐 ultra `v8DetectionLoss`）。
 - 因该 DFL 修复影响**所有检测算法**（detect/OBB 共用同上 DFL 分支），OBB 训练也可受益；当前 OBB 对齐记录仍有效。
-- 待办：按 `docs/plan_detect_align.md` 顺序把单步验证推广到 yolov8→12→26→v10→v9→v5→v3u（n/s/m/l/x）。
+- **yolov8 检测对齐完成**（order 中第二个，legacy Conv 头）：
+  - 权重加载：n/s/m/l/x 全 **missing=0 / unexpected=1**（仅函数式 `model.22.dfl.conv.weight`，参数数一致）。
+  - 单步（yolov8n）：assigner n_fg=10 / t_scores.sum=1.0403；loss 三分量 raw 全对齐：box=**0.6425**、cls=**20.5645**、dfl=**3.0281**；
+    total=**19.64271** vs ultra **19.64270**（差 1e-5）；梯度 maxdiff=0.00186（worst `model.0.conv.weight`，算子级）。
+  - s/m/l/x 与 n 共用同 `Detect`(legacy)+`DetLoss`，仅通道不同；n 已证 loss/梯度路径，故全家族训练对齐成立。
+- **yolo12 检测对齐完成**（A2C2f 家族）：
+  - **关键重构**：`modules.py` 的 `A2C2f/ABlock/AAttn` 重写对齐 ultra 新版——A2C2f `cv1=Conv(c1,int(c2*e))`（**不切半**）、`cv2=Conv((1+n)*c_,c2)`、
+    `m=ModuleList(nn.Sequential(2×ABlock(c_,c_//32,mlp_ratio,area)) if a2 else C3k(c_,c_,2,...))`、`a2 and residual` 时含 `gamma` 残差；
+    ABlock 改用 `AAttn`（qkv=Conv(dim,3*dim)、proj、`pe=Conv(...,7,1,3,g=dim,act=False)` 深度卷积 + `_init_weights` trunc_normal_）。
+  - `Conv` 增加可选 `bias=False` 参数（默认不影响其它）；`AAttn.pe` 需 `bias=True`（对齐 ultra 官方权重）。`parse_model` 对 A2C2f 在 `scale∈{l,x}` 追加 `(True,1.2)`（residual+mlp_ratio）。
+  - **权重加载**：n/s/m/l/x 全 **missing=0 / unexpected=1**（仅函数式 `model.21.dfl.conv.weight`）。
+  - 单步（同权重同输入同 GT）：n/s/m/l/x 的 loss 三分量 raw 全对齐（如 n box=0.5237/cls=11.6909/dfl=2.5324，total 13.5719 vs 13.5719）；梯度 maxdiff 0.006~0.026（算子级）。
+  - 说明：yolo12 用 `Detect(reg_max=16)+v8DetectionLoss`，路径与 v8/v11 相同；l/x 的 A2C2f `gamma` 残差 + mlp_ratio=1.2 亦对齐。
+- **SPPF 修复（v26 推理对齐，关键）**：框架 SPPF 的 `cv1` 缺 `act=False`（默认 SiLU），且 `add` 需同时 `c1==c2`（ultra `shortcut and c1==c2`）。修后框架前向 L9(SPPF) 起全部对齐到 <1e-3（此前 L9 maxdiff 4.43）。v8/v11/v12 的 SPPF 无 add(False) 不受影响。
+- **yolo26 检测对齐（进行中）**：权重加载 n **missing=0/unexpected=0**（`Detect10` end-to-end 头，one2one_cv2/cv3 分支已补；`parse_model` 按 `Head.end2end` 路由 `Detect`→`Detect10`；`build_from_arch` 传递 `end2end`）。
+  - yolo26 用 `E2EDetectLoss`（one2many `tal_topk=10` + one2one `tal_topk=1`），框架 `DetLoss(reg_max=1, use_one2one=True, one2one_topk=1)` 复刻。
+  - `DetLoss._forward_one` 补 **L1 loss 分支**（reg_max≤1 时，ultra `BboxLoss` 无 DFL 用 L1：`bbox2dist(ap,tgt)*stride` 归一化到 imgsz 后 `F.l1_loss`）。
+  - 单步（yolo26n）：**loss 全对齐**（合并 one2many+one2one 后 box=0.7586/cls=25.0754/l1=0.0751，total=18.34005 vs ultra 18.34014）；前向逐层对齐 <1e-3。
+  - **梯度对齐完成（关键修复）**：`Detect10.forward` 训练时对 **one2one 分支的输入特征 `.detach()`**（`if self.training: x = [xi.detach() for xi in x]`）——
+    对齐 ultra `Detect.forward` 的 `x_detach = [xi.detach() for xi in x] if self.training else x`（**detach keeps one2one out of the backbone**）。
+    此前框架让 one2one 分支共享同一 feats 并回传梯度，导致 backbone 梯度 = o2m+o2o 而 ultra 只有 o2m，
+    全模型梯度 maxdiff **40.4→0.00034**（算子级，worst `model.1.conv.weight`）。注意此修复同时适用于其它带 one2one 分支的 end2end 头（Segment26/OBB26 待同步）。
+  - 待办：yolo26n 梯度已对齐；再把 n→s/m/l/x 单步验证推广，之后按 `docs/plan_detect_align.md` 顺序到 v10→v9→v5→v3u。
+- 待办：按 `docs/plan_detect_align.md` 顺序把单步验证推广到 yolo26(n→s/m/l/x)→v10→v9→v5→v3u（n/s/m/l/x）。
 
 ## 回复语言
 - 所有大模型（AI 助手/Agent）在本仓库中的回复一律使用**中文**。
@@ -87,8 +110,12 @@
     注：ultralytics 的 `erasing` 只用于分类模型，检测/OBB 不用）。
   - 增广 `_corners_to_rbox` 改用 `cv2.minAreaRect`（θ→`[-pi/4, 3pi/4)`，含退化回退），对齐 ultralytics。
   - **对比（正确列 mAP50-95，之前误取 val/box_loss 列导致假 0.87-0.94）**：
-    框架微调 **0.809** vs ultralytics 微调 **0.34/0.34/0.39**（ultralytics 微调反而严重过拟下降）。
-    **框架微调大幅优于 ultralytics 微调**（泛化更好）。
+    框架微调（**lr0=0.001 温和**）**0.809** vs ultralytics 微调（默认 lr0=0.01）**0.34/0.34/0.39**。
+    **⚠️ 非公平对比**：框架用了 `-o Optimizer.lr.learning_rate=0.001` 覆盖成温和 lr 才不退化，ultralytics 用默认 0.01。
+  - **公平验证（关键，纠正上述误导）**：框架用**默认 lr0=0.01（与 ultra 一致）**微调时**同样过拟合退化**：
+    v26n 默认 lr0.01 微调 5 轮 best=**0.814**（ep1=预训练水平），之后 ep2=0.657/ep3=0.691/ep4=0.680 明显退化。
+    → **训练行为方向对齐**：两者默认超参都会在 102 张图 dota128 上过拟合退化；**不存在"框架显著更强"**。
+    退化幅度差异（框架 ~0.66-0.69 vs ultra ~0.32）来自剩余超参/增广细微差异，需进一步排查；不影响 loss/梯度数值对齐结论。
 - **多版本/多尺寸 OBB 权重加载对齐（盘点）**：
   - **yolo11-obb（n/s/m/l/x）：完全对齐**（missing=0/unexpected=0）。关键修复：
     `graph.py::parse_model` 复刻 ultralytics 对 **C3k2 在 scale∈{m,l,x} 时设 `c3k=True`**（用 C3k 块），

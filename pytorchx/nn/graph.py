@@ -214,6 +214,9 @@ def parse_model(d, ch=3, verbose=False):
         if module_name == "Detect" and (d.get("kpt_label") or d.get("anchors")):
             # yolov5-face style checkpoint: `Detect` carries landmark channels
             module_name = "PlateDetect"
+        if module_name == "Detect" and d.get("end2end"):
+            # YOLO26-style end-to-end (NMS-free) detection: one-to-many + one-to-one
+            module_name = "Detect10"
 
         if module_name in HEAD_CLASSES:
             head_cls = HEAD_CLASSES[module_name]
@@ -287,6 +290,9 @@ def parse_model(d, ch=3, verbose=False):
             if module_name == "C3k2" and scale in ("m", "l", "x"):
                 # ultralytics: C3k2 uses C3k blocks for M/L/X sizes
                 args[2] = True
+            if module_name == "A2C2f" and scale in ("l", "x"):
+                # ultralytics: A2C2f adds residual & mlp_ratio for L/X sizes
+                args.extend((True, 1.2))
             layer = module_cls(c1, *args)
             this_c2 = out_ch
         elif module_name in ("nn.ConvTranspose2d", "nn.Conv2d"):
@@ -490,6 +496,8 @@ def build_from_arch(arch):
         spec["obb_layout"] = str(head["reg_layout"])
     if head.get("legacy") is not None:
         spec["legacy"] = bool(head["legacy"])
+    if head.get("end2end") is not None:
+        spec["end2end"] = bool(head["end2end"])
     spec["scale"] = arch.get("scale", spec.get("scale", "n"))
     ch = int(arch.get("in_channels", arch.get("ch", 3)))
     model, save, last = parse_model(spec, ch=ch)

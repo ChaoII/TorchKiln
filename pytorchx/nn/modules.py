@@ -98,12 +98,12 @@ class Conv(nn.Module):
 
     default_act = nn.SiLU()
 
-    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True):
+    def __init__(self, c1, c2, k=1, s=1, p=None, g=1, d=1, act=True, bias=False):
         super().__init__()
         if isinstance(g, bool):  # YAMLs may use ``g: true`` meaning "default"
             g = 1 if g else 1
         self.conv = nn.Conv2d(
-            c1, c2, k, s, autopad(k, p, d), groups=int(g), dilation=d, bias=False
+            c1, c2, k, s, autopad(k, p, d), groups=int(g), dilation=d, bias=bias
         )
         self.bn = nn.BatchNorm2d(c2)
         if act is True:
@@ -375,11 +375,11 @@ class SPPF(nn.Module):
     def __init__(self, c1, c2, k=5, n=3, add=False, **kwargs):
         super().__init__()
         c_ = c1 // 2
-        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv1 = Conv(c1, c_, 1, 1, act=False)
         self.cv2 = Conv(c_ * (n + 1), c2, 1, 1)
         self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k // 2)
         self.n = n
-        self.add = bool(add)
+        self.add = bool(add) and c1 == c2
 
     def forward(self, x):
         y = [self.cv1(x)]
@@ -566,6 +566,8 @@ class Detect10(Detect26):
         one2many = [
             torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1) for i in range(self.nl)
         ]
+        if self.training:
+            x = [xi.detach() for xi in x]  # 对齐 ultra：one2one 不向 backbone 回传梯度
         one2one = [
             torch.cat(
                 (self.one2one_cv2[i](x[i]), self.one2one_cv3[i](x[i])), 1
@@ -797,69 +799,103 @@ class SPPELAN(nn.Module):
         return self.cv5(torch.cat(y, 1))
 
 
-class AreaAttention(nn.Module):
-    """Area attention: view the feature map as ``area`` stacked strips and attend within."""
+class AAttn(nn.Module):
+    """Area-attention module (ultralytics AAttn)."""
 
-    def __init__(self, dim, num_heads=8, area=4, kv_per_win=4, attn_ratio=0.5):
+    def __init__(self, dim, num_heads, area=1):
+        """Initialize the module, computing head dims and qkv/proj/pe convs."""
         super().__init__()
-        self.dim = dim
-        self.num_heads = max(1, int(num_heads))
-        self.area = int(area)
-        self.head_dim = dim // self.num_heads
-        self.key_dim = max(1, int(self.head_dim * attn_ratio))
-        self.scale = self.key_dim ** -0.5
-        h = dim + self.key_dim * 2 * self.num_heads
-        self.qkv = Conv(dim, h, 1, act=False)
-        self.proj = Conv(dim, dim, 1, act=False)
+        self.area = area
+        self.num_heads = num_heads
+        self.head_dim = head_dim = dim // num_heads
+        self.all_head_dim = all_head_dim = head_dim * self.num_heads
+        self.qkv = Conv(dim, all_head_dim * 3, 1, act=False)
+        self.proj = Conv(all_head_dim, dim, 1, act=False)
+        self.pe = Conv(all_head_dim, all_head_dim, 7, 1, 3, g=all_head_dim, act=False, bias=True)
+
+    def __setstate__(self, state):
+        """Add missing all_head_dim attribute to old checkpoints."""
+        super().__setstate__(state)
+        if not hasattr(self, "all_head_dim"):
+            self.all_head_dim = self.head_dim * self.num_heads
 
     def forward(self, x):
-        b, c, h, w = x.shape
-        a = self.area if (h % self.area == 0 and self.area > 1) else 1
-        y = x.view(b, c, a, h // a, w).permute(0, 2, 1, 3, 4).reshape(b * a, c, h // a, w)
-        qkv = self.qkv(y)
-        ba, hc, hh, ww = qkv.shape
-        n = hh * ww
-        qkv = qkv.view(ba, self.num_heads, hc // self.num_heads, n)
-        q, k, v = qkv.split([self.key_dim, self.key_dim, self.head_dim], dim=2)
-        attn = ((q.transpose(-2, -1) @ k) * self.scale).softmax(dim=-1)
-        out = (v @ attn.transpose(-2, -1)).reshape(ba, self.num_heads * self.head_dim, hh, ww)
-        out = self.proj(out)
-        out = out.view(b, a, c, h // a, w).permute(0, 2, 1, 3, 4).reshape(b, c, h, w)
-        return out
+        """Apply area-attention: qkv split, softmax attention, pe, proj."""
+        B, _, H, W = x.shape
+        N = H * W
+        qkv = self.qkv(x).flatten(2).transpose(1, 2)
+        if self.area > 1:
+            qkv = qkv.reshape(B * self.area, N // self.area, self.all_head_dim * 3)
+            B, N, _ = qkv.shape
+        q, k, v = (
+            qkv.view(B, N, self.num_heads, self.head_dim * 3)
+            .permute(0, 2, 3, 1)
+            .split([self.head_dim, self.head_dim, self.head_dim], dim=2)
+        )
+        attn = (q * (self.head_dim**-0.5)).transpose(-2, -1) @ k
+        attn = attn.softmax(dim=-1)
+        x = v @ attn.transpose(-2, -1)
+        x = x.permute(0, 3, 1, 2)
+        v = v.permute(0, 3, 1, 2)
+        if self.area > 1:
+            x = x.reshape(B // self.area, N * self.area, self.all_head_dim)
+            v = v.reshape(B // self.area, N * self.area, self.all_head_dim)
+            B, N, _ = x.shape
+        x = x.reshape(B, H, W, self.all_head_dim).permute(0, 3, 1, 2).contiguous()
+        v = v.reshape(B, H, W, self.all_head_dim).permute(0, 3, 1, 2).contiguous()
+        x = x + self.pe(v)
+        return self.proj(x)
 
 
 class ABlock(nn.Module):
-    def __init__(self, dim, num_heads=8, area=4, mlp_ratio=2.0, attn_ratio=0.5):
+    """Area-attention block (ultralytics ABlock)."""
+
+    def __init__(self, dim, num_heads, mlp_ratio=1.2, area=1):
         super().__init__()
-        self.attn = AreaAttention(dim, num_heads=num_heads, area=area, attn_ratio=attn_ratio)
-        hid = int(dim * mlp_ratio)
-        self.mlp = nn.Sequential(Conv(dim, hid, 1), Conv(hid, dim, 1, act=False))
+        self.attn = AAttn(dim, num_heads=num_heads, area=area)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = nn.Sequential(Conv(dim, mlp_hidden_dim, 1), Conv(mlp_hidden_dim, dim, 1, act=False))
+        self.apply(self._init_weights)
+
+    @staticmethod
+    def _init_weights(m):
+        """Initialize weights using a truncated normal distribution."""
+        if isinstance(m, nn.Conv2d):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
+        """Apply area-attention and feed-forward to input tensor."""
         x = x + self.attn(x)
         return x + self.mlp(x)
 
 
 @register
 class A2C2f(nn.Module):
-    """Area-attention C2f (YOLOv12)."""
+    """Area-attention C2f (ultralytics YOLOv12)."""
 
-    def __init__(self, c1, c2, n=1, a2=True, area=4, residual=False, mlp_ratio=2.0, e=0.5, g=1, shortcut=True):
+    def __init__(self, c1, c2, n=1, a2=True, area=1, residual=False, mlp_ratio=2.0, e=0.5, g=1, shortcut=True):
         super().__init__()
-        self.c = int(c2 * e)
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)
+        c_ = int(c2 * e)
+        assert c_ % 32 == 0, "Dimension of ABlock must be a multiple of 32."
+        self.cv1 = Conv(c1, c_, 1, 1)
+        self.cv2 = Conv((1 + n) * c_, c2, 1)
+        self.gamma = nn.Parameter(0.01 * torch.ones(c2), requires_grad=True) if a2 and residual else None
         self.m = nn.ModuleList(
-            ABlock(self.c, num_heads=max(1, self.c // 64), area=area, mlp_ratio=mlp_ratio)
+            nn.Sequential(*(ABlock(c_, c_ // 32, mlp_ratio, area) for _ in range(2)))
             if a2
-            else Bottleneck(self.c, self.c, shortcut, g)
+            else C3k(c_, c_, 2, shortcut, g)
             for _ in range(n)
         )
 
     def forward(self, x):
-        y = list(self.cv1(x).chunk(2, 1))
+        y = [self.cv1(x)]
         y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+        y = self.cv2(torch.cat(y, 1))
+        if self.gamma is not None:
+            return x + self.gamma.view(-1, self.gamma.shape[0], 1, 1) * y
+        return y
 
 
 # # ------------------------------------------- ghost / v8-ghost / v9e / v10 / v12 extra

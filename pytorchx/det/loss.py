@@ -333,7 +333,21 @@ class DetLoss(nn.Module):
                 per_side = df_loss(pd, target_ltrb.reshape(-1)).view(-1, 4).mean(-1)
                 loss_dfl = (per_side * w_dfl).sum() / scores_sum
             else:
-                loss_dfl = pred_dist_raw.sum() * 0.0
+                # L1 loss for reg_max<=1 (YOLO26 end-to-end), matching ultralytics BboxLoss l1 branch
+                b_sz, a_sz = fg.shape
+                stride_fg = stride_tensor.squeeze(-1).unsqueeze(0).expand_as(fg)[fg]
+                ap_fg = anchor_points.unsqueeze(0).expand(fg.shape[0], -1, -1)[fg]
+                tgt = t_bboxes[fg] / stride_fg[:, None]
+                target_ltrb = bbox2dist(ap_fg, tgt) * stride_fg[:, None]
+                imgsz = batch[0].shape[-2:]
+                target_ltrb[..., 0::2] /= imgsz[1]
+                target_ltrb[..., 1::2] /= imgsz[0]
+                pd_l = pred_dist_raw.view(b_sz, a_sz, 4)[fg] * stride_fg[:, None]
+                pd_l[..., 0::2] /= imgsz[1]
+                pd_l[..., 1::2] /= imgsz[0]
+                loss_dfl = (
+                    F.l1_loss(pd_l, target_ltrb, reduction="none").mean(-1) * weight
+                ).sum() / scores_sum
         else:
             loss_box = pred_bboxes.sum() * 0.0
             loss_dfl = pred_dist_raw.sum() * 0.0

@@ -189,6 +189,7 @@ class BaseTrainer:
         self.print_batch_step = int(gcfg.get("print_batch_step", 10))
         self.eval_batch_step = gcfg.get("eval_batch_step", [0, 1500])
         self.save_epoch_step = int(gcfg.get("save_epoch_step", 10))
+        self.eval_epoch_step = max(1, int(gcfg.get("eval_epoch_step", 1)))
         self.use_ema = bool(gcfg.get("use_ema", False))
         self.ema_decay = float(gcfg.get("ema_decay", 0.9998))
         self.ema_decay_type = gcfg.get("ema_decay_type", "threshold")
@@ -966,7 +967,7 @@ class BaseTrainer:
             if (epoch + 1) % self.save_epoch_step == 0:
                 self.save_checkpoint("epoch_{}".format(epoch + 1))
                 self.logger.info("saved epoch_%d checkpoint", epoch + 1)
-            if self.eval_loader is not None:
+            if self.eval_loader is not None and (epoch + 1) % self.eval_epoch_step == 0:
                 self.evaluate_and_save()
             # ultralytics 风格早停:连续 patience 个 epoch 主指标无提升则停
             if self.best_metric > _last_best + 1e-12:
