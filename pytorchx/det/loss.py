@@ -522,7 +522,21 @@ class ObbLoss(DetLoss):
                 per_side = df_loss(pd, target_ltrb[fg].reshape(-1)).view(-1, 4).mean(-1)
                 loss_dfl = (per_side * weight).sum() / scores_sum
             else:
-                loss_dfl = dist_raw.sum() * 0.0
+                img_h = preds[0].shape[2] * self.strides[0]
+                img_w = preds[0].shape[3] * self.strides[0]
+                target_ltrb = rbox2dist(
+                    t_bboxes[..., :4].contiguous(),
+                    anchor_points,
+                    t_bboxes[..., 4:5],
+                )
+                target_ltrb = target_ltrb * stride_tensor
+                target_ltrb[..., 0::2] = target_ltrb[..., 0::2] / img_w
+                target_ltrb[..., 1::2] = target_ltrb[..., 1::2] / img_h
+                pd_l1 = dist_raw * stride_tensor
+                pd_l1[..., 0::2] = pd_l1[..., 0::2] / img_w
+                pd_l1[..., 1::2] = pd_l1[..., 1::2] / img_h
+                l1 = F.l1_loss(pd_l1[fg], target_ltrb[fg], reduction="none").mean(-1)
+                loss_dfl = (l1 * weight).sum() / scores_sum
 
             # angle loss (v8OBBLoss.calculate_angle_loss)
             w_gt = t_bboxes[..., 2]

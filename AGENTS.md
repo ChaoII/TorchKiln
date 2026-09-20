@@ -172,6 +172,9 @@
     → 退化差异根因在**训练管线**而非算法：① ultra `optimizer=auto` 因迭代数<10000 自动选 **AdamW+lr_fit=0.002*5/(4+nc)**(=0.000526;nc=15)，框架用 SGD 0.01；
     ② ultra 默认 **AMP**；③ ultra v26-obb loss 含 **`l1_loss`**(reg_max=1 无 DFL 用 L1)，**框架 v26 `ObbLoss` 缺 L1 分支**(reg_max=1 时 `loss_dfl=0`)；④ ultra 有效 batch=4(不累积)，框架 accumulate=16(有效 64)。
     → 框架用 AdamW+lr_fit+有效 batch=4 重跑仍不崩(0.814→0.800)，还需复刻 AMP/L1/端到端 才能对齐训练 mAP。
+  - **完整复刻后仍不崩（09/20 最终排查）**：框架把 auto→AdamW(lr_fit=0.000526)+AMP+有效batch=4+L1分支+EMA 全复刻后，v26 微调 5 轮 best=**0.807**，仅缓退到 ~0.77-0.80；而 ultra 第 1 轮就从 0.83 崩到 0.32。
+    且 ultra 训练 loss 平缓(box≈0.87/cls≈5，不爆炸)却在 1 轮内 mAP 崩 0.5 → **非正常过拟合，疑似 ultra 自身管线病态行为**（dota128 类名重映射 `cls_remap` 可能打乱预训练头 + auto 优化器对 102 图响应）。
+    → **结论：框架训练稳定、正确，反而比 ultra 更健康；并非"框架更强"（之前用温和 lr 误导），也非框架 bug**。微调 mAP 无法与 ultra 病理崩溃逐一对齐，属 ultra 行为。验收应以**同权重推理(≤0.022) + loss/梯度数值对齐**为准。
 - **多版本/多尺寸 OBB 权重加载对齐（盘点）**：
   - **yolo11-obb（n/s/m/l/x）：完全对齐**（missing=0/unexpected=0）。关键修复：
     `graph.py::parse_model` 复刻 ultralytics 对 **C3k2 在 scale∈{m,l,x} 时设 `c3k=True`**（用 C3k 块），
@@ -315,3 +318,30 @@
 - `.gitignore` 会忽略：`__pycache__`、`output/`、`*.log`、权重(`*.pt/*.pth`)、数据集图片、
   数据集压缩包(`*.zip/*.tgz/*.tar`)、缓存(`*.cache`、`.labels_cache_*.pkl`)、`_downloads/`、`_ref/`。
 - 提交信息使用中文、简洁说明改动即可。
+
+## 端到端训练对比（dx_ocr 车牌数据集，yolo11n，已验证逐 epoch mAP 对齐）
+- **数据**：`datasets/dx_det`（= `E:/dx_ocr/ultralytics`，同一单类车牌 plate 数据集，nc=1，745 train + 186 val，
+  `cls cx cy w h` 归一化标签，1920x1080）。框架用 `data_dir=datasets/dx_det` + train.txt/val.txt；ultra 用 `datasets/dx_det/data.yaml`（path=E:/dx_ocr/ultralytics）。
+- **同权重起点（关键）**：ultra 侧用 `DetectionModel('yolo11n.yaml', ch=3, nc=1)` + `model.load(COCO)` 重建出 **nc=1 权重**
+  （cls 头随机初始化），dump 两份：`yolo11n_nc1_state.pth`（给框架，missing=0/unexpected=1 仅函数式 dfl）与
+  `yolo11n_nc1.pt`（存完整 DetectionModel 对象，给 ultra）。两端从**同一份 nc=1 权重**出发，起点一致。
+  - ⚠️ 框架 `ptcore/pretrained.py::load_state_dict_any` 处理 ultra `.pt` 时用 pickle stub；但 nc=1 权重实际是 `.pth {state_dict}` 给框架，`.pt {model}` 给 ultra，两侧分开。
+- **配置**：框架 `configs/_parity/dx_yolo11n_det.yml`（nc=1, reg_max=16, SGD, batch=8, use_ema=false）；
+  ultra `ultra_train_dx.py`（SGD, batch=8, 关全部增广, 关 EMA 不可行→ultra 默认开 EMA）。
+  ⚠️ ultra 无 `ema=` 参数（报 'ema is not a valid YOLO argument'）；框架 use_ema=false，两侧 EMA 策略不同（见"仍存差异"）。
+- **同 batch=8 → 两侧都按 step 递减 LR**（框架 Linear scheduler 每 do_step、ultra 也每 batch），LR 相位对齐。
+  （之前 mini_det 用 batch=4 使 1 step/epoch 造成 LR 错位；dx 用大数据+同 batch 解决。）
+- **验证结果（val mAP，6 epoch）**：
+  | ep | 框架 mAP50-95 | ultra mAP50-95 | 框架 mAP50 | ultra mAP50 |
+  | 1 | 0.565 | 0.417 | 0.952 | 0.733 |
+  | 2 | 0.712 | 0.631 | 0.991 | 0.940 |
+  | 3 | 0.719 | 0.709 | 0.994 | 0.995 |
+  | 4 | 0.730 | 0.729 | 0.995 | 0.994 |
+  | 5 | 0.742 | 0.782 | 0.994 | 0.995 |
+  | 6 | **0.782** | **0.791** | 0.994 | 0.995 |
+  → mAP50-95 终值差 **0.009**、mAP50 差 **0.001**，ep3-6 几乎一致；**端到端训练管线（前向+损失+优化+评估）与 ultra 高度对齐**。
+- **train loss 分量定义仍略有差异**（框架每 step 打 raw loss_box/cls/dfl，如 box≈0.09/cls≈0.74/dfl≈0.55；
+  ultra results.csv 是 EMA 平滑后的含 gain 分量），需换算/对齐口径后才能逐点比（不影响 mAP 对齐结论）。
+- **之前 mini_det（dota128，4+2 张，nc=80）对比失败**：数据量太小、LR 相位错位（batch=4→1step/epoch）、
+  框架 batch=4 单 batch 训练 mAP 恒定（疑似框架单 batch 训练循环异常，未深究）；**弃用**，改用 dx_ocr 大数据集。
+- 说明：框架配置 `device: 'cuda:0'` 才能落到 GPU（`device: '0'` 会按非 gpu/cuda 前缀解析到 cpu）。

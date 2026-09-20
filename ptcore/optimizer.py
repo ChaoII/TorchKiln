@@ -90,6 +90,15 @@ def _build_base_lr_scheduler(lr_config, epochs, step_each_epoch, optimizer):
     raise NotImplementedError("lr scheduler {} not supported yet".format(lr_name))
 
 
+def _head_nc(model):
+    """Return ``num_classes`` from the detection/head module (ultralytics ``nc``)."""
+    for m in model.modules():
+        nc = getattr(m, "nc", None)
+        if isinstance(nc, int) and nc > 0 and getattr(m, "cv2", None) is not None:
+            return nc
+    return None
+
+
 def build_optimizer(config, epochs, step_each_epoch, model):
     """Build ``(optimizer, lr_scheduler)``.
 
@@ -100,6 +109,21 @@ def build_optimizer(config, epochs, step_each_epoch, model):
     config = copy.deepcopy(config)
     lr_config = config.pop("lr")
     base_lr = float(lr_config.get("learning_rate", 0.001))
+
+    # ---- ultralytics ``optimizer=auto``:按迭代数选 MuSGD(0.01) / AdamW(lr_fit) ----
+    if str(config.get("name", "")).lower() == "auto":
+        nc = _head_nc(model)
+        lr_fit = round(0.002 * 5 / (4 + int(nc or 10)), 6)  # lr0 fit equation (align ultra)
+        iterations = int(epochs) * int(step_each_epoch)
+        if iterations > 10000:
+            config["name"] = "MuSGD"
+            base_lr = 0.01
+            config["momentum"] = 0.9
+        else:
+            config["name"] = "AdamW"
+            base_lr = lr_fit
+            config["momentum"] = 0.9
+        lr_config["warmup_bias_lr"] = 0.0  # no higher than 0.01 for Adam (align ultra)
 
     # regularization (L2 weight decay)
     weight_decay = 0.0
@@ -161,7 +185,7 @@ def build_optimizer(config, epochs, step_each_epoch, model):
         optimizer = torch.optim.AdamW(
             param_groups, lr=base_lr, betas=(beta1, beta2), eps=eps, weight_decay=weight_decay
         )
-    elif optim_name in ("SGD", "sgd"):
+    elif optim_name in ("SGD", "sgd", "MuSGD", "musgd"):
         optimizer = torch.optim.SGD(
             param_groups,
             lr=base_lr,
