@@ -1,0 +1,6 @@
+path: E:\PytorchOCR\datasets\package-seg
+train: train_abs.txt
+val: val_abs.txt
+nc: 1
+names:
+  0: package

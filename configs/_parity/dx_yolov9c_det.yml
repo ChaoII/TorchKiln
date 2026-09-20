@@ -1,5 +1,5 @@
-Global:
-  model_name: dx_yolo11n
+﻿Global:
+  model_name: dx_yolov9c_det
   debug: false
   use_gpu: true
   device: 'cuda:0'
@@ -10,7 +10,7 @@ Global:
   save_epoch_step: 1
   eval_batch_step: [0, 0]
   eval_epoch_step: 1
-  pretrained_model: C:/Users/ADMINI~1/AppData/Local/Temp/1/opencode/yolo11n_nc1_state.pth
+  pretrained_model: C:/Users/ADMINI~1/AppData/Local/Temp/1/opencode/yolov9c_nc1_state.pth
   checkpoints: null
   output: null
   distributed: false
@@ -25,9 +25,9 @@ Global:
 Architecture:
   model_family: yolo
   task: detect
-  algorithm: yolo11
-  yaml_file: pytorchx/cfg/models/11/yolo11.yaml
-  scale: n
+  algorithm: yolov9
+  yaml_file: pytorchx/cfg/models/v9/yolov9.yaml
+  scale: c
   in_channels: 3
   Head:
     num_classes: 1
@@ -94,3 +94,4 @@ Eval:
     drop_last: false
     num_workers: 0
     prefetch_factor: 4
+

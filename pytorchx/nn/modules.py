@@ -576,7 +576,9 @@ class Detect10(Detect26):
         ]
         if self.training:
             return one2many, one2one
-        return one2one
+        # 对齐 ultralytics：yolo26 等 end2end 检测头在推理/评估时用 one2many+NMS
+        # （模型权重虽含 one2one 分支，但 ultralytics 重载后 end2end=False 走 one2many）。
+        return one2one if self.end2end else one2many
 
 
 @register
@@ -842,7 +844,7 @@ class AAttn(nn.Module):
         self.all_head_dim = all_head_dim = head_dim * self.num_heads
         self.qkv = Conv(dim, all_head_dim * 3, 1, act=False)
         self.proj = Conv(all_head_dim, dim, 1, act=False)
-        self.pe = Conv(all_head_dim, all_head_dim, 7, 1, 3, g=all_head_dim, act=False, bias=True)
+        self.pe = Conv(all_head_dim, all_head_dim, 7, 1, 3, g=all_head_dim, act=False)
 
     def __setstate__(self, state):
         """Add missing all_head_dim attribute to old checkpoints."""

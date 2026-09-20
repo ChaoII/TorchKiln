@@ -812,11 +812,23 @@ class BaseTrainer:
         _old_bn = [(m, m.eps) for m in _bns]
         for _m in _bns:
             _m.eps = 1e-5
+        # 对齐 ultralytics：end2end 检测头（如 yolo26 的 Detect10）评估时走 one2many+NMS，
+        # 而非 one2one 分支（ultra 加载权重后 end2end=False）。按 PostProcess.end2end 决定。
+        import pytorchx.nn.modules as _pmod
+
+        _swapped = []
+        _pp_end2end = bool(getattr(self.post_process, "end2end", False))
+        for _head in model.modules():
+            if isinstance(_head, _pmod.Detect10) and getattr(_head, "end2end", False):
+                _swapped.append(_head)
+                _head.end2end = _pp_end2end
         try:
             return self._evaluate_loop(model, tic=time.time())
         finally:
             for _m, _eps in _old_bn:
                 _m.eps = _eps
+            for _head in _swapped:
+                _head.end2end = True
 
     def _evaluate_loop(self, model, tic):
         self.metric.reset()

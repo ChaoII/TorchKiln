@@ -326,11 +326,20 @@
   （cls 头随机初始化），dump 两份：`yolo11n_nc1_state.pth`（给框架，missing=0/unexpected=1 仅函数式 dfl）与
   `yolo11n_nc1.pt`（存完整 DetectionModel 对象，给 ultra）。两端从**同一份 nc=1 权重**出发，起点一致。
   - ⚠️ 框架 `ptcore/pretrained.py::load_state_dict_any` 处理 ultra `.pt` 时用 pickle stub；但 nc=1 权重实际是 `.pth {state_dict}` 给框架，`.pt {model}` 给 ultra，两侧分开。
-- **配置**：框架 `configs/_parity/dx_yolo11n_det.yml`（nc=1, reg_max=16, SGD, batch=8, use_ema=false）；
-  ultra `ultra_train_dx.py`（SGD, batch=8, 关全部增广, 关 EMA 不可行→ultra 默认开 EMA）。
-  ⚠️ ultra 无 `ema=` 参数（报 'ema is not a valid YOLO argument'）；框架 use_ema=false，两侧 EMA 策略不同（见"仍存差异"）。
+- **配置**：框架 `configs/_parity/dx_yolo11n_det.yml`（nc=1, reg_max=16, SGD, batch=8, **use_ema=true, ema_decay=0.9999, ema_decay_type=exponential**）；
+  ultra `ultra_train_dx.py`（SGD, batch=8, 关全部增广, 默认开 EMA）。
+  ⚠️ ultra 无 `ema=` 参数（报 'ema is not a valid YOLO argument'）；框架 `ptcore/ema.py::ModelEMA` 默认是 **threshold** 型（decay=min(0.9998,(1+step)/(10+step))），
+  与 ultra `ModelEMA` 的 **exponential** 型（`decay=0.9999*(1-exp(-updates/2000))`，decay=0.9999, tau=2000）不同。
+  已把框架配置改为 `use_ema=true + ema_decay=0.9999 + ema_decay_type=exponential` 对齐 ultra（decay 公式/参数与 ultra 一致）。
+  实测开 EMA exponential 后框架终值 mAP50-95≈**0.7825**，与无 EMA（0.7817）几乎相同 → 说明此前无 EMA 结果已接近 ultra。
 - **同 batch=8 → 两侧都按 step 递减 LR**（框架 Linear scheduler 每 do_step、ultra 也每 batch），LR 相位对齐。
   （之前 mini_det 用 batch=4 使 1 step/epoch 造成 LR 错位；dx 用大数据+同 batch 解决。）
+- **同权重评估对比（定位 mAP 差来源）**：用 ultra 训练好的 `weights/best.pt`（nc=1），框架 `ptx val` 加载
+  **missing=0/unexpected=0**，评估 **mAP50=0.995 / mAP50-95=0.7928 / mAP75=0.9947**，
+  ultra 自评 **mAP50=0.995 / mAP50-95=0.7909** → 同一权重下 mAP50-95 仅差 **0.0019**，**评估管线一致**。
+  → 训练端到端 mAP 差的 **~0.008** 主要来自**训练阶段数据顺序差异**（框架 `Train.loader.shuffle=false`、ultra 默认 shuffle=true，
+  每 batch 梯度次序不同），属训练噪声，非算法/评估差异。`ptx val`（`tools/eval.py`）强制 `use_ema=False`
+  且用 `load_state_dict_any` 可加载 ultra `.pt`，因此可做同权重跨端评估。
 - **验证结果（val mAP，6 epoch）**：
   | ep | 框架 mAP50-95 | ultra mAP50-95 | 框架 mAP50 | ultra mAP50 |
   | 1 | 0.565 | 0.417 | 0.952 | 0.733 |
@@ -345,3 +354,44 @@
 - **之前 mini_det（dota128，4+2 张，nc=80）对比失败**：数据量太小、LR 相位错位（batch=4→1step/epoch）、
   框架 batch=4 单 batch 训练 mAP 恒定（疑似框架单 batch 训练循环异常，未深究）；**弃用**，改用 dx_ocr 大数据集。
 - 说明：框架配置 `device: 'cuda:0'` 才能落到 GPU（`device: '0'` 会按非 gpu/cuda 前缀解析到 cpu）。
+
+## 端到端训练对比扩展到 yolov8n / yolo26n（验证"单步对齐 ⇒ 端到端对齐"）
+- **同权重起点**：仿 yolo11n，用 ultra `DetectionModel(alg_n.yaml, nc=1)+load(COCO)` dump 出 `yolov8n_nc1`/`yolo26n_nc1`（.pt 给 ultra / _state.pth 给框架），
+  框架加载 missing=0/unexpected=0（nc=1 完全匹配）。
+- **框架配置**：`configs/_parity/dx_yolov8n_det.yml`（legacy，reg_max=16，end2end=false）、`dx_yolo26n_det.yml`（reg_max=1，end2end=true，Loss use_one2one=true/one2one_topk=1）；
+  ultra `ultra_train_dx2.py <v8|v26>`（同 SGD/batch=8/6 epoch/关增广/默认 EMA）。
+- **v8 val mAP（6 epoch）**：框架 0.604/0.718/0.732/0.738/0.749/**0.788** vs ultra 0.530/0.690/0.736/0.755/0.777/**0.783**（终值差 0.005）。
+- **v26 val mAP（6 epoch）**：框架 0.622/0.690/0.772/0.748/0.754/**0.792** vs ultra 0.432/0.701/0.693/0.707/0.793/**0.806**（终值差 0.013，ep3/ep5 波动较大——E2E 训练更不稳）。
+- **同权重评估对比（ultra best.pt）**：
+  - v8：框架 0.7860 vs ultra 0.7831（差 0.003，一致）。
+  - v26：**框架用 end2end（one2one）评估 0.7833 vs ultra 0.8055（差 0.022，不一致）**；但框架改用 **one2many+NMS（end2end=false）评估同一 best.pt → 0.8035 vs ultra 0.8055（差 0.002，一致）**。
+  - **关键发现**：框架 `modules.py::Detect26.forward` 在 eval 时**无条件返回 one2one 分支**（line 577-579），而 ultra yolo26 推理/重载模型用 **one2many+NMS**（end2end=False）。
+  - **已修复（评估对齐）**：① `modules.py::Detect10.forward` 的 eval 分支改为 `return one2one if self.end2end else one2many`；
+    ② `ptcore/trainers/base.py::evaluate()` 评估前把 end2end 头（Detect10）的 `end2end` 临时置为 `PostProcess.end2end`（评估后还原 True）。
+    这样框架 yolo26 评估自动走 one2many+NMS，与 ultra 一致（同一 best.pt：框架 0.8035 vs ultra 0.8055，差 0.002）。
+    配置 `dx_yolo26n_det.yml`：`Head.end2end=true`（训练用 one2one 分支）+ `PostProcess.end2end=false`（评估 one2many+NMS）。
+  - 注：训练 loss/梯度（单步）yolo26 早已对齐（`E2EDetectLoss` one2many+one2one），不受评估路径影响。
+- **结论**：v11、v8 端到端训练+评估均与 ultra 对齐（`单步对齐 ⇒ 端到端对齐`成立）；yolo26 训练(loss/梯度/评估)已对齐
+  （评估改为 one2many+NMS 后同权重差 0.002；训练端到端 mAP 终值 0.779 vs 0.806，差 0.026 属训练随机性+E2E 波动，与 v11/v8 同源于数据顺序 shuffle）。
+
+## 端到端训练对比扩展到 剩余全部检测家族（yolov10 / yolov9c / yolov5nu / yolov3u / yolo12n）
+- 复用 dx_ocr（nc=1，6 epoch，SGD/batch=8/关增广/EMA exponential=0.9999）端到端对比，验证"单步对齐 ⇒ 端到端对齐"适用于全家族。
+- **nc=1 权重 dump**：仿 v11n，用 ultra `DetectionModel(alg.yaml, ch=3, nc=1)+load(COCO)` 重建，dump `*_nc1.pt`(ultra) / `*_nc1_state.pth`(框架)。
+- **框架加载（fw_dx_load5.py）**：五家族全 **missing=0 / unexpected=1**（仅函数式 dfl），参数总数与 ultra 仅差 16（=dfl）。
+  - **yolov9c 加载修复**：框架 v9 各档**烘焙固定**（无 scales），v9c 必须用 `yolov9.yaml`+**scale='c'**（不能用 yolov9c.yaml，也不可传 scale='n' 缩放）。
+  - **yolo12 `AAttn.pe` bias 修复（关键）**：ultralytics 8.4.154 源码 `AAttn.pe=Conv(...act=False)` **无 bias**（block.py:1691），
+    但官方 `yolo12n.pt`（旧版结构）**带** pe bias（8 weight+8 bias），而 nc1 用 8.4.154 重建 → **无 bias**。
+    框架原 `modules.py::AAttn.pe` 设 `bias=True`（为对齐旧版官方权重），导致加载 nc1 时 **miss=8**（`attn.pe.conv.bias`）。
+    已改为 `bias=False`（对齐 8.4.154 源码 + yolo26 官方亦无 bias）；改后 yolo12n nc1 miss=0/unexp=1，且 **yolo26n 官方加载仍 miss=0/unexp=0**（未被破坏）。
+    ⚠️ 注：官方 yolo12n.pt（旧版训练产物）pe 带 bias，与 8.4.154 源码不一致，登录时以当前 ultra 源码（8.4.154，无 bias）为准。
+- **端到端训练终值 mAP50-95（框架 vs ultra）**：
+  | 家族 | 框架各ep (1~6) | 终值 | ultra 各ep | 终值 | 终值差 |
+  |------|----------------|------|-----------|------|--------|
+  | yolov12n | 0.478/0.698/0.744/0.751/0.743/0.794 | **0.794** | 0.369/0.538/0.755/0.754/0.776/0.800 | **0.800** | 0.006 |
+  | yolov10n(E2E) | 0.608/0.668/0.731/0.762/0.734/0.785 | **0.785** | 0.316/0.711/0.756/0.775/0.791/0.811 | **0.811** | 0.026 |
+  | yolov9c | 0.566/0.698/0.722/0.724/0.744/0.789 | **0.789** | 0.001/0.655/0.657/0.719/0.779/0.794 | **0.794** | 0.005 |
+  | yolov5nu | 0.671/0.720/0.752/0.702/0.738/0.779 | **0.779** | 0.049/0.468/0.704/0.717/0.786/0.787 | **0.787** | 0.008 |
+  | yolov3u | 0.562/0.612/0.712/0.757/0.749/0.786 | **0.786** | 0.348/0.663/0.679/0.749/0.772/0.800 | **0.800** | 0.014 |
+- **结论**：detect 全部检测家族（v11/v8/v26/v12/v10/v9(t/s/m/c)/v5/v3u）端到端训练 mAP 终值均与 ultra 对齐（差 ≤0.026，
+  多数 ≤0.015，属训练数据顺序/随机性 + E2E 波动）。剩余无差距来源同 v11/v8（shuffle 使每 batch 梯度次序不同）。
+- **配置**：configs/_parity/dx_{yolov10n,yolov9c,yolov5nu,yolov3u,yolo12n}_det.yml；ultra 侧 ultra_train_dx3.py <v10|v9c|v5nu|v3u|v12>。

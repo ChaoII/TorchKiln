@@ -170,17 +170,39 @@ def probiou(box1, box2, eps=1e-7, floor=0.0):
     return _probiou_pairwise(box1.unsqueeze(2), box2.unsqueeze(1), eps, floor)
 
 
+def xywhr2xyxyxyxy(x):
+    """``(...,5)`` xywhr -> ``(...,4,2)`` corners (matches ultralytics)."""
+    cos, sin, cat, stack = torch.cos, torch.sin, torch.cat, torch.stack
+    ctr = x[..., :2]
+    w, h, angle = (x[..., i : i + 1] for i in range(2, 5))
+    cos_value, sin_value = cos(angle), sin(angle)
+    vec1 = [w / 2 * cos_value, w / 2 * sin_value]
+    vec2 = [-h / 2 * sin_value, h / 2 * cos_value]
+    vec1 = cat(vec1, -1)
+    vec2 = cat(vec2, -1)
+    pt1 = ctr + vec1 + vec2
+    pt2 = ctr + vec1 - vec2
+    pt3 = ctr - vec1 - vec2
+    pt4 = ctr - vec1 + vec2
+    return stack([pt1, pt2, pt3, pt4], -2)
+
+
 def points_in_rboxes(points, boxes, margin=0.0):
-    """``points (A,2)`` inside ``boxes (B,M,5)`` xywhr -> bool ``(B,A,M)``."""
-    dx = points[None, :, None, 0] - boxes[:, None, :, 0]
-    dy = points[None, :, None, 1] - boxes[:, None, :, 1]
-    cos = torch.cos(boxes[:, None, :, 4])
-    sin = torch.sin(boxes[:, None, :, 4])
-    local_x = dx * cos + dy * sin
-    local_y = -dx * sin + dy * cos
-    return (local_x.abs() <= boxes[:, None, :, 2] / 2 + margin) & (
-        local_y.abs() <= boxes[:, None, :, 3] / 2 + margin
-    )
+    """``points (A,2)`` inside ``boxes (B,M,5)`` xywhr -> bool ``(B,A,M)``.
+
+    Uses ultralytics' poly-vector method (``xywhr2xyxyxyxy`` + edge dot-products)
+    so the candidate set matches ``RotatedTaskAlignedAssigner`` exactly.
+    """
+    corners = xywhr2xyxyxyxy(boxes)             # (B,M,4,2)
+    a, b, _, d = corners.split(1, dim=-2)       # (B,M,1,2)
+    ab = (b - a)[:, :, 0, :]                    # (B,M,2)
+    ad = (d - a)[:, :, 0, :]
+    ap = points[None, :, None, :] - a[:, None, :, 0, :]  # (B,A,M,2)
+    dot_ab = (ap * ab[:, None, :, :]).sum(-1)   # (B,A,M)
+    dot_ad = (ap * ad[:, None, :, :]).sum(-1)
+    norm_ab = (ab * ab).sum(-1)[:, None, :]
+    norm_ad = (ad * ad).sum(-1)[:, None, :]
+    return (dot_ab >= 0) & (dot_ab <= norm_ab) & (dot_ad >= 0) & (dot_ad <= norm_ad)
 
 
 # ----------------------------------------------------------------------- polygon
