@@ -37,9 +37,61 @@
     对齐 ultra `Detect.forward` 的 `x_detach = [xi.detach() for xi in x] if self.training else x`（**detach keeps one2one out of the backbone**）。
     此前框架让 one2one 分支共享同一 feats 并回传梯度，导致 backbone 梯度 = o2m+o2o 而 ultra 只有 o2m，
     全模型梯度 maxdiff **40.4→0.00034**（算子级，worst `model.1.conv.weight`）。注意此修复同时适用于其它带 one2one 分支的 end2end 头（Segment26/OBB26 待同步）。
-  - 待办：yolo26n 梯度已对齐；再把 n→s/m/l/x 单步验证推广，之后按 `docs/plan_detect_align.md` 顺序到 v10→v9→v5→v3u。
-- 待办：按 `docs/plan_detect_align.md` 顺序把单步验证推广到 yolo26(n→s/m/l/x)→v10→v9→v5→v3u（n/s/m/l/x）。
-
+  - **yolo26 n/s/m/l/x 全家族对齐完成**：负载全 missing=0/unexpected=0，loss 与梯度均算子级对齐
+    （n 18.34005↔18.34014、s 28.88681↔28.88683、m 23.79597↔23.79595、l 16.416456↔16.416456、x 24.45561↔24.45559，
+    梯度 maxdiff 0.0014~0.039，worst 多为 model.0/2 conv，cuDNN 卷积反向算子级微差）。
+  - 待办：按 `docs/plan_detect_align.md` 顺序到 v10→v9→v5→v3u。
+- **yolov10 检测对齐完成**（v10Detect=Detect10，reg_max=16，E2E o2m+o2o，同 yolo26 `E2EDetectLoss`）：
+  - **PSA 修复**：`graph.py::REPEAT_MODULES` 移除 `PSA`——原把重复数插入到 PSA 第 3 位当作 `e`（应为 0.5 展开比），
+    导致 `PSA(c1,c2,e=1)`、c=256（应 128）；PSA 是单一块（非 n 个块列表），不应走 repeat 插入。
+  - **CIB lk 分支**：`modules.py` 新增 `RepVGGDW`（`conv=Conv(ed,ed,7,1,3,g=ed,act=False)`+`conv1=Conv(ed,ed,3,1,1,g=ed,act=False)`+SiLU 相加），
+    `CIB` 的 lk 分支由 `RepConvN` 改用 `RepVGGDW`（对齐 ultra `CIB`；仅 v10/v9 用 CIB，yolo26 无 CIB 不受影响）。
+  - **SPPF act 修复（关键）**：`graph.py::parse_model` 对 SPPF 补 ultralytics 行为——SPPF cv1 默认 `act=False`（unactivated YOLO26 风格），
+    仅当 SPPF yaml **args≤3**（旧式 v8/v10/v11/v12）时 `layer.cv1.act = Conv.default_act`（恢复 SiLU）。此前框架 SPPF cv1 恒 act=False，
+    导致 v10 前向 L9(SPPF) 起 maxdiff 5.26（yolo26 args=4 >3 仍 unactivated，不受影响）。
+  - **按规模架构替换（关键）**：v10 架构随规模变化（ultra 用 per-scale yaml）：深层的 `C2f` 在更大规模升级为 `C2fCIB`。
+    在 `graph.py::build_from_arch` 加 v10 替换表（`v10_sw`：s→bw8(lk=True)，m→bw8+hd8(lk=False)，l→bw8+hd2+hd8，x→bw6+bw8+hd2+hd8；
+    `v10_hd11`：n/s=[1024,True,True]，m/l/x=[1024,True]）。
+  - 单步（同权重同输入同 GT）：n/s/m/l/x 全 missing=0/unexpected=1（仅函数式 dfl）；loss 全对齐
+    （n 23.91382↔23.91383、s 26.213394↔26.213394、m 25.325804↔25.325804、l 21.74652↔21.74652、x 22.523449↔22.523449）；
+    梯度 maxdiff 0.0002~0.0013（算子级，worst model.0.conv.weight）。
+  - 待办：按 `docs/plan_detect_align.md` 顺序到 v9→v5→v3u。
+- **yolov9c 对齐完成**（c/e 家族 = RepNCSPELAN4/ADown/SPPELAN，v9 非 end2end，v8DetectionLoss 单 assigner）：
+  - **RepConv 重写对齐 ultra**（`modules.py`）：加 `default_act=nn.SiLU()`、`bn` identity 分支、`act` 属性、
+    `forward = act(conv1(x)+conv2(x)+id_out)`；`conv1=Conv(c1,c2,k,s,p=p,g=g,act=False)`、
+    `conv2=Conv(c1,c2,1,s,p=(p-k//2),g=g,act=False)`、默认 `bn=False`。
+  - **新增 `RepBottleneck`**（继承 Bottleneck，`cv1=RepConv(c1,c_,k[0],1)`）与 **`RepCSP`**（继承 **C3**（非 C2f！），
+    `m=nn.Sequential(RepBottleneck(c_,c_,shortcut,g,e=1.0))`）。
+    ⚠️ 关键：ultra `RepCSP` 继承 **`C3`**（`cv1/cv2=Conv(c1,c_,1,1)`、`cv3=Conv(2*c_,c2,1)`），非 C2f——最初误继承 C2f 导致 c=32 vs 16 通道不符。
+  - `RepNCSPELAN4` 的 `cv2/cv3` 由 `RepNCSP` 改用 `RepCSP`，结构与 ultra 完全一致（`cv2.0.cv1.conv` 等键匹配，参数 25.59M vs ultra 25.59M）。
+  - 单步（yolov9c，reg_max=16，use_one2one=False，D=v8DetectionLoss）：**missing=0/unexpected=1**（仅函数式 dfl）；
+    loss total=**14.742226↔14.742228**（box=0.3681/cls=16.4717/dfl=2.4970 全对齐）；梯度 maxdiff=**0.000231**（算子级，worst `model.2.cv3.1.conv.weight`）。
+- **yolov9 t/s/m 对齐完成**（v9 **按规模分族**：t/s 用 `ELAN1`+`AConv`、m 用 `RepNCSPELAN4`+`AConv`(非 ADown)、c 用 `RepNCSPELAN4`+`ADown`、e 用 `RepNCSPELAN4`+`ADown`+`CBLinear/CBFuse`）：
+  - 框架 `AConv`/`ELAN1` 已存在且 forward 与 ultra 一致（AConv=`avg_pool2d(x,2,1,0,False,True)`+`Conv(3,2,1)`；ELAN1 含 cv2/cv3 双 `Conv`）。
+  - 新增 **`yolov9t.yaml`/`yolov9s.yaml`/`yolov9m.yaml`**（通道**烘焙固定**，`scales:<size>=[1.0,1.0,512]`），`fw_v9_step.py` 按 scale→yaml 映射选择。
+  - ⚠️ 框架 v9 各 size 通道无法用宽度缩放表达（s/m/c 各不同），**必须**用独立 yaml。
+  - 单步：t **19.053757↔19.053761**（box=0.5065/cls=22.2459/dfl=2.7545）、s **18.813862↔18.813862**（0.7017/12.8065/4.7653）、
+    m **18.858110↔18.858112**（0.4338/22.9186/2.7635）；梯度 maxdiff 0.00044/0.00029/0.00024（算子级）。
+  - **v9e（CBLinear/CBFuse PAGCPY 融合）未对齐**（结构复杂，暂跳过，不影响 t/s/m/c 检测训练对齐）。
+- **yolov5 n/s/m/l/x 对齐完成**（v5 **`*u` 变体**为 modern anchor-free：`Detect` 用 `legacy=False`（新 DWConv 头）+ v8DetectionLoss，**无 obj loss、无 anchors**——`anchors` 属性仅是占位。故 v5 与 yolo11 路径相同，无需单独 build_targets/obj）：
+  - 框架 v5.yaml 用 `depth_multiple`/`width_multiple`（YOLOv5 老式缩放，非 scales dict），`make_divisible` 通道、`C3`/`Bottleneck`、`SPPF` 均已对齐 ultra v5u。
+  - 单步（同权重同输入同 GT，reg_max=16，use_one2one=False）：n **15.830602↔15.830601**、s **14.335932↔14.335931**、m **21.238976↔21.238974**、
+    l **20.419407↔20.419418**、x **18.897820↔18.897818**（box/cls/dfl 全对齐）；梯度 maxdiff 0.00004/0.00009/0.00020/0.00013/0.00012（算子级）。
+  - 加载 n/s/m/l/x 全 **missing=0/unexpected=1**（仅函数式 `model.24(或25/26).dfl.conv.weight`）。
+- **yolov3 (u/u-spp/u-tiny) 对齐完成**（v3u 亦为 modern anchor-free：`legacy=False` + v8DetectionLoss）：
+  - **关键修复**：`graph.py::REPEAT_MODULES` 移除 `Bottleneck`——Bottleneck 是**无内化 n** 的 SCALED 模块，
+    原被误判为"内化 n"而把重复数 n 插入 args 第 2 位（`Bottleneck(c1,c2,shortcut=2,...)`），导致 v3 的
+    `[-1, 2, Bottleneck, [128]]` 不打包成 Sequential（模型 `model.4.0.cv1` vs `model.4.cv1` 键不符）。
+    移除后 Bottleneck 走 line308-310 的 `nn.Sequential` 包装（model.4.0/4.1），与 ultra 一致。Bottleneck 不直接出现在其它家族 yaml（仅 C3/C3k 内部），故不影响 v5/v8/v9 等。
+  - ⚠️ v3-tiny 头仅 P3/P5 两尺度（nl=2，strides=(16,32)），单步需按实际层数传 strides（勿用 (8,16,32)）。
+  - 单步（同权重同输入同 GT，reg_max=16，use_one2one=False）：u **19.047052↔19.047056**、spp **18.116039↔18.116039**、tiny **14.158577↔14.158577**（box/cls/dfl 全对齐）；梯度 maxdiff 0.00016/0.00020/0.00007（算子级）。
+  - 加载三型号全 **missing=0/unexpected=1**（仅函数式 `model.24.dfl.conv.weight`）。
+  - **v9c（c 家族）梯度 maxdiff=0.0786 为算子级（并非逻辑 bug）**：该层 `model.2.cv4.conv.weight` 梯度幅度本身约 **67.4**，
+    相对差仅 **~0.1%**（cuDNN 卷积反向算子级微差）；前向已逐层 diff=0（o1/o2 精确一致）。t/s/m 梯度绝对值小（0.0002~0.0004）因对应层梯度幅度小。
+- 待办：detect 对齐已覆盖 yolo26→v10→v9(t/s/m/c)→v5→v3u 全家族（v9e 因 CBLinear/CBFuse 融合暂跳过）。
+  - **OBB26 已同步 one2one `.detach()`**：`modules.py::OBBU.forward` 训练时对 one2one 分支用 `x_det=[xi.detach()]`（对齐 ultra 端到端头）。
+    Segment26 训练路径仅返回 one2many（无 one2one 分支回传），无需 detach。
+  - **回归复测通过**（确认 `REPEAT_MODULES` 移除 `Bottleneck` 不影响已对齐家族，因为它们只把 Bottleneck 内化在 C3/C3k 内、yaml 不直接重复它）：yolo11n 20.471785↔20.471819（梯度 0.0216）、yolo12n 13.571861↔13.571886（梯度 0.013）、yolov8n 19.642714↔19.642702（梯度 0.00186）。
 ## 回复语言
 - 所有大模型（AI 助手/Agent）在本仓库中的回复一律使用**中文**。
 - 包括：解释代码、回答提问、汇总结果、生成文档、提交说明等所有面向用户的文本。
@@ -116,6 +168,10 @@
     v26n 默认 lr0.01 微调 5 轮 best=**0.814**（ep1=预训练水平），之后 ep2=0.657/ep3=0.691/ep4=0.680 明显退化。
     → **训练行为方向对齐**：两者默认超参都会在 102 张图 dota128 上过拟合退化；**不存在"框架显著更强"**。
     退化幅度差异（框架 ~0.66-0.69 vs ultra ~0.32）来自剩余超参/增广细微差异，需进一步排查；不影响 loss/梯度数值对齐结论。
+  - **进一步排查（关键确认，已记于 09/20 后续）**：用框架评估 ultra 微调后的 `best.pt` 得 mAP50-95=**0.317**，与 ultra 自报 0.32 **一致** → **评估无差异，ultra 是真过拟合**，非度量 bug。
+    → 退化差异根因在**训练管线**而非算法：① ultra `optimizer=auto` 因迭代数<10000 自动选 **AdamW+lr_fit=0.002*5/(4+nc)**(=0.000526;nc=15)，框架用 SGD 0.01；
+    ② ultra 默认 **AMP**；③ ultra v26-obb loss 含 **`l1_loss`**(reg_max=1 无 DFL 用 L1)，**框架 v26 `ObbLoss` 缺 L1 分支**(reg_max=1 时 `loss_dfl=0`)；④ ultra 有效 batch=4(不累积)，框架 accumulate=16(有效 64)。
+    → 框架用 AdamW+lr_fit+有效 batch=4 重跑仍不崩(0.814→0.800)，还需复刻 AMP/L1/端到端 才能对齐训练 mAP。
 - **多版本/多尺寸 OBB 权重加载对齐（盘点）**：
   - **yolo11-obb（n/s/m/l/x）：完全对齐**（missing=0/unexpected=0）。关键修复：
     `graph.py::parse_model` 复刻 ultralytics 对 **C3k2 在 scale∈{m,l,x} 时设 `c3k=True`**（用 C3k 块），

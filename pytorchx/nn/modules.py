@@ -726,16 +726,27 @@ class ADown(nn.Module):
 
 @register
 class RepConv(nn.Module):
-    """Reparameterisable 3x3 + 1x1 conv block (YOLOv9)."""
+    """Reparameterisable 3x3 + 1x1 conv block (YOLOv9), aligned with ultralytics.
+
+    ``forward`` applies ``act(conv1(x) + conv2(x) + identity)`` in training.
+    """
+
+    default_act = nn.SiLU()
 
     def __init__(self, c1, c2, k=3, s=1, p=1, g=1, d=1, act=True, bn=False, deploy=False):
         super().__init__()
+        assert k == 3 and p == 1
         self.g = g
-        self.conv1 = Conv(c1, c2, 3, s, 1, g=g, d=d, act=act)
-        self.conv2 = Conv(c1, c2, 1, s, 0, g=g, d=d, act=act)
+        self.c1 = c1
+        self.c2 = c2
+        self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
+        self.bn = nn.BatchNorm2d(num_features=c1) if bn and c2 == c1 and s == 1 else None
+        self.conv1 = Conv(c1, c2, k, s, p=p, g=g, act=False)
+        self.conv2 = Conv(c1, c2, 1, s, p=(p - k // 2), g=g, act=False)
 
     def forward(self, x):
-        return self.conv2(x) + self.conv1(x)
+        id_out = 0 if self.bn is None else self.bn(x)
+        return self.act(self.conv1(x) + self.conv2(x) + id_out)
 
 
 @register
@@ -763,15 +774,35 @@ class RepNCSP(nn.Module):
 
 
 @register
+class RepBottleneck(Bottleneck):
+    """Bottleneck whose cv1 is a RepConv (ultralytics RepBottleneck)."""
+
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        super().__init__(c1, c2, shortcut, g, k, e)
+        c_ = int(c2 * e)
+        self.cv1 = RepConv(c1, c_, k[0], 1)
+
+
+@register
+class RepCSP(C3):
+    """RepCSP: C3 whose bottlenecks are RepBottleneck (ultralytics RepCSP)."""
+
+    def __init__(self, c1, c2, n=1, shortcut=True, g=1, e=0.5):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)
+        self.m = nn.Sequential(*(RepBottleneck(c_, c_, shortcut, g, e=1.0) for _ in range(n)))
+
+
+@register
 class RepNCSPELAN4(nn.Module):
-    """GELAN block used by YOLOv9."""
+    """GELAN block used by YOLOv9 (aligned with ultralytics RepNCSPELAN4)."""
 
     def __init__(self, c1, c2, c3, c4, c5=1):
         super().__init__()
         self.c = c3 // 2
         self.cv1 = Conv(c1, c3, 1, 1)
-        self.cv2 = nn.Sequential(RepNCSP(c3 // 2, c4, c5), Conv(c4, c4, 3, 1))
-        self.cv3 = nn.Sequential(RepNCSP(c4, c4, c5), Conv(c4, c4, 3, 1))
+        self.cv2 = nn.Sequential(RepCSP(c3 // 2, c4, c5), Conv(c4, c4, 3, 1))
+        self.cv3 = nn.Sequential(RepCSP(c4, c4, c5), Conv(c4, c4, 3, 1))
         self.cv4 = Conv(c3 + 2 * c4, c2, 1, 1)
 
     def forward(self, x):
@@ -950,7 +981,7 @@ class CIB(nn.Module):
         self.cv1 = nn.Sequential(
             Conv(c1, c1, 3, 1, g=c1),
             Conv(c1, 2 * c_, 1),
-            Conv(2 * c_, 2 * c_, 3, 1, g=2 * c_) if not lk else RepConvN(2 * c_, 2 * c_, 3, 1, 1, 2 * c_),
+            Conv(2 * c_, 2 * c_, 3, 1, g=2 * c_) if not lk else RepVGGDW(2 * c_),
             Conv(2 * c_, c2, 1),
             Conv(c2, c2, 3, 1, g=c2),
         )
@@ -958,6 +989,21 @@ class CIB(nn.Module):
 
     def forward(self, x):
         return x + self.cv1(x) if self.add else self.cv1(x)
+
+
+@register
+class RepVGGDW(nn.Module):
+    """RepVGG depthwise block (YOLOv10 CIB large-kernel branch)."""
+
+    def __init__(self, ed):
+        super().__init__()
+        self.conv = Conv(ed, ed, 7, 1, 3, g=ed, act=False)
+        self.conv1 = Conv(ed, ed, 3, 1, 1, g=ed, act=False)
+        self.dim = ed
+        self.act = nn.SiLU()
+
+    def forward(self, x):
+        return self.act(self.conv(x) + self.conv1(x))
 
 
 @register
@@ -1280,12 +1326,13 @@ class OBBU(nn.Module):
         ]
         if not self.end2end:
             return one2many
+        x_det = [xi.detach() for xi in x] if self.training else x
         one2one = [
             torch.cat(
                 (
-                    self.one2one_cv2[i](x[i]),
-                    self.one2one_cv3[i](x[i]),
-                    self.one2one_cv4[i](x[i]),
+                    self.one2one_cv2[i](x_det[i]),
+                    self.one2one_cv3[i](x_det[i]),
+                    self.one2one_cv4[i](x_det[i]),
                 ),
                 1,
             )

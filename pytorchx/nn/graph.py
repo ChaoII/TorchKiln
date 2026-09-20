@@ -130,7 +130,6 @@ DEFAULT_SCALES = {
 # insert the layer count at that position and then build a single block (the
 # repetition lives inside the module, not as an ``nn.Sequential`` wrapper).
 REPEAT_MODULES = {
-    "Bottleneck",
     "C1",
     "C2",
     "C2f",
@@ -140,7 +139,6 @@ REPEAT_MODULES = {
     "C3Ghost",
     "C3k",
     "C3k2",
-    "PSA",
     "C2PSA",
     "A2C2f",
     "RepNCSP",
@@ -294,6 +292,10 @@ def parse_model(d, ch=3, verbose=False):
                 # ultralytics: A2C2f adds residual & mlp_ratio for L/X sizes
                 args.extend((True, 1.2))
             layer = module_cls(c1, *args)
+            if module_name == "SPPF" and len(args) <= 3:
+                # ultralytics: legacy SPPF yaml rows (len(args)<=3) predate the
+                # unactivated YOLO26 SPPF -> restore SiLU on cv1
+                layer.cv1.act = Conv.default_act
             this_c2 = out_ch
         elif module_name in ("nn.ConvTranspose2d", "nn.Conv2d"):
             layer = module_cls(c1, *args)
@@ -485,6 +487,29 @@ def build_from_arch(arch):
     spec = _load_yaml_spec(arch)
     fp = str(arch.get("yaml_file", ""))
     spec["_legacy"] = any(x in fp for x in ("/v8/", "/v9/", "/v5/", "/v3/", "yolov8", "yolov9", "yolov5", "yolov3"))
+    if "/v10/" in fp and arch.get("scale", "n"):
+        # YOLOv10 adopts C2fCIB in deeper blocks as the model scales up
+        # (per-scale YAML; n stays C2f everywhere except the fixed C2fCIB head).
+        vsc = arch.get("scale", "n")
+        # (section, index, channels, lk) lists -> C2f replaced by C2fCIB
+        v10_sw = {
+            "n": [],
+            "s": [("bw", 8, 1024, True)],
+            "m": [("bw", 8, 1024, False), ("hd", 8, 512, False)],
+            "l": [("bw", 8, 1024, False), ("hd", 2, 512, False), ("hd", 8, 512, False)],
+            "x": [("bw", 6, 512, False), ("bw", 8, 1024, False), ("hd", 2, 512, False), ("hd", 8, 512, False)],
+        }
+        v10_hd11 = {"n": [1024, True, True], "s": [1024, True, True],
+                    "m": [1024, True], "l": [1024, True], "x": [1024, True]}
+        sec = {"bw": spec.get("backbone", []), "hd": spec.get("head", [])}
+        for section, idx, ch, lk in v10_sw.get(vsc, []):
+            cur = sec[section][idx]
+            if cur and len(cur) >= 4 and cur[2] == "C2f":
+                n = cur[1]
+                args = [ch, True, True] if lk else [ch, True]
+                sec[section][idx] = [cur[0], n, "C2fCIB", args]
+        if len(spec.get("head", [])) > 11 and len(spec["head"][11]) >= 4:
+            spec["head"][11][3] = v10_hd11.get(vsc, [1024, True])
     head = arch.get("Head") or {}
     nc = head.get("num_classes") or arch.get("nc") or spec.get("nc", 80)
     spec["nc"] = int(nc)
