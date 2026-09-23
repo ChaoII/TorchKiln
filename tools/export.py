@@ -14,9 +14,9 @@ import torch.nn as nn
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
-from pytorchx.ocr.modeling.architectures.base_model import BaseModel
-from pytorchx.ocr.postprocess import build_post_process
-from pytorchx.ocr.utils.config import flatten_opts, load_config, parse_args_to_config
+from torchkiln.ocr.modeling.architectures.base_model import BaseModel
+from torchkiln.ocr.postprocess import build_post_process
+from torchkiln.ocr.utils.config import flatten_opts, load_config, parse_args_to_config
 
 
 class ExportWrapper(nn.Module):
@@ -68,7 +68,7 @@ def build_model(config):
     """Build the model for whatever ``Architecture.model_family`` says."""
     family = (config.get("Architecture") or {}).get("model_family", "ocr")
     if family == "yolo":
-        from pytorchx.trainer import build_task
+        from torchkiln.trainer import build_task
 
         task = build_task(config)
         post = task.build_post_process(config)
@@ -103,7 +103,7 @@ def fuse_model(model):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PyTorchOCR export")
+    parser = argparse.ArgumentParser(description="TorchKiln export")
     parser.add_argument("-c", "--config", required=True)
     parser.add_argument(
         "-o", "--opt", nargs="*", action="append", default=None,
@@ -143,7 +143,7 @@ def main():
         config.setdefault("Global", {}).setdefault("character_dict_path", None)
 
     model = build_model(config)
-    from pytorchx.ocr.utils.pretrained import resolve_pretrained
+    from torchkiln.ocr.utils.pretrained import resolve_pretrained
 
     weights_path = resolve_pretrained(args.weights)
     if not weights_path:

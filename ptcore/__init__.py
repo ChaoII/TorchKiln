@@ -1,1 +1,1 @@
-﻿"""ptcore: task-agnostic building blocks shared by pytorchx (multi-task) / pytorchx.ocr."""
+"""ptcore: task-agnostic building blocks shared by torchkiln (multi-task) / torchkiln.ocr."""

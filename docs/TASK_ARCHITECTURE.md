@@ -11,9 +11,9 @@
 configs/xxx.yml
   └─ Architecture.model_family / task ──► ptcore.trainers.build_trainer()
         ├─ "ocr"(或无 family/task) ──► ptcore.trainers.ocr.OcrTrainer
-        │                                  └─ pytorchx.ocr.task.OcrTask(det/rec 内部分派)
+        │                                  └─ torchkiln.ocr.task.OcrTask(det/rec 内部分派)
         └─ task=detect/segment/... ──► ptcore.trainers.<task>.XxxTrainer
-                                           └─ pytorchx.tasks.get_task(task) ──► TaskAdapter 实例
+                                           └─ torchkiln.tasks.get_task(task) ──► TaskAdapter 实例
 ```
 
 `ptcore/trainers/base.py::BaseTrainer` 负责**与任务无关的一切**:设备/种子、按 family 建模型、
@@ -59,12 +59,12 @@ configs/xxx.yml
 | `plate_rec` | `plate_rec.py::PlateRecTask` | `data/plate.py::PlateRecDataset` | `plate_rec.py` 内的 `PlateRecLoss/PostProcess/Metric` | `models/plate.py::build_rec_model` |
 | `attribute` | `attr.py::AttributeTask` | `attr.py::AttributeDataset` | `attr.py` 内的 `MultiLabelLoss/AttrMetric/PostProcess` | `nn/attribute.py::AttributeNet` |
 
-OCR 侧是**单适配器多任务**:`pytorchx/ocr/task.py::OcrTask` 内部再按 `task`(det/rec/cls/e2e/sr/table...)
+OCR 侧是**单适配器多任务**:`torchkiln/ocr/task.py::OcrTask` 内部再按 `task`(det/rec/cls/e2e/sr/table...)
 分派到 `modeling/*`、`losses/*`、`metrics/*`、`postprocess/*`,因为 OCR 各任务共用同一套数据管线与训练细节。
 
 ## 4. 现状的三个不一致(建议调整的点)
 
-1. **适配器位置不统一**:6 个任务在 `pytorchx/task.py`,车牌/属性在各自模块
+1. **适配器位置不统一**:6 个任务在 `torchkiln/task.py`,车牌/属性在各自模块
    (`plate_det.py` / `plate_rec.py` / `attr.py`)。
 2. **组件粒度不统一**:det/obb 把损失/指标/后处理放在 `det/` 子包;**其他任务**把它们和被适配器放在同一个文件,
    或拆成 `seg.py / pose.py / sem.py / depth.py` 三个 `build_*` 函数。
@@ -76,7 +76,7 @@ OCR 侧是**单适配器多任务**:`pytorchx/ocr/task.py::OcrTask` 内部再按
 ## 5. 建议的统一结构(改动是纯搬迁 + 重导出,零功能变化)
 
 ```
-pytorchx/
+torchkiln/
 ├─ tasks/
 │  ├─ __init__.py        # TASK_REGISTRY = {"detect": YoloDetTask, ...} + get_task(name)
 │  ├─ _base.py           # 任务共用工具:_class_weights_from_config + 重导出 num_classes_of
@@ -89,32 +89,32 @@ pytorchx/
 ├─ det/                  # 仍然保留:检测族的**公共**算子/损失/指标(det、obb、seg、pose 都用)
 ├─ data/                 # 各任务数据集(位置不变)
 ├─ nn/ models/           # 各任务模型(位置不变)
-└─ task.py               # 变成兼容层:`from pytorchx.tasks import *` + 旧名字别名
+└─ task.py               # 变成兼容层:`from torchkiln.tasks import *` + 旧名字别名
 ```
 
 迁移映射(纯移动,类名不变):
 
 | 现在 | 调整后 |
 |---|---|
-| `pytorchx/task.py::YoloClsTask/YoloDetTask/YoloObbTask/YoloSegTask/YoloPoseTask/YoloSemTask/YoloDepthTask` | `pytorchx/tasks/{classify,detect,obb,segment,pose,semantic,depth}.py::<同名>Task` |
-| `pytorchx/plate_det.py` | `pytorchx/tasks/plate_det.py` |
-| `pytorchx/plate_rec.py` | `pytorchx/tasks/plate_rec.py` |
-| `pytorchx/attr.py` + `attr_randaug.py` | `pytorchx/tasks/attribute.py`(+ 内部 import RandAugment) |
-| `pytorchx/trainer.py::build_task()` 的长 if-链 | `tasks/__init__.py::get_task(task)` 查表 |
-| `pytorchx/seg.py / pose.py / sem.py / depth.py` | 保留(作为公共 Loss/Metric/PostProcess 实现),被 `tasks/*.py` 引用 |
+| `torchkiln/task.py::YoloClsTask/YoloDetTask/YoloObbTask/YoloSegTask/YoloPoseTask/YoloSemTask/YoloDepthTask` | `torchkiln/tasks/{classify,detect,obb,segment,pose,semantic,depth}.py::<同名>Task` |
+| `torchkiln/plate_det.py` | `torchkiln/tasks/plate_det.py` |
+| `torchkiln/plate_rec.py` | `torchkiln/tasks/plate_rec.py` |
+| `torchkiln/attr.py` + `attr_randaug.py` | `torchkiln/tasks/attribute.py`(+ 内部 import RandAugment) |
+| `torchkiln/trainer.py::build_task()` 的长 if-链 | `tasks/__init__.py::get_task(task)` 查表 |
+| `torchkiln/seg.py / pose.py / sem.py / depth.py` | 保留(作为公共 Loss/Metric/PostProcess 实现),被 `tasks/*.py` 引用 |
 
-对外接口保持不变:`configs/*.yml` 不动、`Architecture.task` 取值不动、`pytorchx.task` 仍可 import。
+对外接口保持不变:`configs/*.yml` 不动、`Architecture.task` 取值不动、`torchkiln.task` 仍可 import。
 
 ## 6. 新增一个任务的标准流程(以 "动作识别" 为例)
 
 1. **定契约**:输入是什么、输出几个张量、指标是什么(`docs/MODEL_ZOO.md` 的表里加一行)。
-2. **数据**:`pytorchx/data/action.py::ActionDataset` + `train_collate/eval_collate`
+2. **数据**:`torchkiln/data/action.py::ActionDataset` + `train_collate/eval_collate`
    (`__getitem__` 返回 `[img, ...targets]`;单样本失败返回 `[]`,平台会自动跳过)。
-3. **模型**:`pytorchx/models/action.py::build_model(arch)`;若是 YAML 图模型,把 yaml 放
-   `pytorchx/cfg/models/<family>/` 并在 `nn/modules.py` 注册新模块(或复用现有头)。
-4. **损失/指标/后处理**:`pytorchx/action.py`(或并入 `tasks/action.py`)实现三个类,
+3. **模型**:`torchkiln/models/action.py::build_model(arch)`;若是 YAML 图模型,把 yaml 放
+   `torchkiln/cfg/models/<family>/` 并在 `nn/modules.py` 注册新模块(或复用现有头)。
+4. **损失/指标/后处理**:`torchkiln/action.py`(或并入 `tasks/action.py`)实现三个类,
    并提供 `build_action_{loss,metric,postprocess}`。
-5. **适配器**:`pytorchx/tasks/action.py::ActionTask(TaskAdapter)`,实现 §2 的 11 个钩子
+5. **适配器**:`torchkiln/tasks/action.py::ActionTask(TaskAdapter)`,实现 §2 的 11 个钩子
    (最省事的模板:照抄 `tasks/attribute.py`,它同时覆盖了"图像 + 多标签"和"自定义数据集"两种形态)。
 6. **注册**:`tasks/__init__.py::TASK_REGISTRY["action"] = ActionTask`(一行)。
 7. **配置 + 自检**:`configs/action/xxx.yml`(照抄同族配置)→ `python tools/smoke_all.py`
@@ -130,40 +130,40 @@ pytorchx/
 现状(§3)是"适配器散在多处",目标是把**每个任务做成一个自包含子包**,命令行也按
 `yolo <task> <mode>` 暴露。**任务列表与目录一一对应**:
 
-### 7.1 命令行(已实现:`python -m pytorchx <task> <mode> ...`)
+### 7.1 命令行(已实现:`python -m torchkiln <task> <mode> ...`)
 
 ```powershell
-python -m pytorchx detect    train  -c configs/yolo/yolov8_graph.yml -o Global.epoch_num=100
-python -m pytorchx obb       val    -c configs/yolo/yolov8-obb_graph.yml --weights output/x/best_accuracy.pth
-python -m pytorchx segment   export -c configs/yolo/yolov8-seg_graph.yml  --weights ... --onnx
-python -m pytorchx pose      predict -c configs/yolo/yolov8-pose_graph.yml --weights ... --input imgs
-python -m pytorchx classify  train  -c configs/yolo/yolo11-cls_graph.yml
-python -m pytorchx semantic  train  -c configs/yolo/yolo26-sem_graph.yml
-python -m pytorchx depth     train  -c configs/yolo/yolo26-depth_graph.yml
-python -m pytorchx plate_det train  -c configs/plate/plate_det.yml
-python -m pytorchx plate_rec train  -c configs/plate/plate_rec.yml
-python -m pytorchx attribute train  -c configs/attr/vehicle_attribute.yml
-python -m pytorchx ocr_det   train  -c configs/det/PP-OCRv5_mobile_det.yml
-python -m pytorchx ocr_rec   train  -c configs/rec/PP-OCRv5_mobile_rec.yml
+python -m torchkiln detect    train  -c configs/yolo/yolov8_graph.yml -o Global.epoch_num=100
+python -m torchkiln obb       val    -c configs/yolo/yolov8-obb_graph.yml --weights output/x/best_accuracy.pth
+python -m torchkiln segment   export -c configs/yolo/yolov8-seg_graph.yml  --weights ... --onnx
+python -m torchkiln pose      predict -c configs/yolo/yolov8-pose_graph.yml --weights ... --input imgs
+python -m torchkiln classify  train  -c configs/yolo/yolo11-cls_graph.yml
+python -m torchkiln semantic  train  -c configs/yolo/yolo26-sem_graph.yml
+python -m torchkiln depth     train  -c configs/yolo/yolo26-depth_graph.yml
+python -m torchkiln plate_det train  -c configs/plate/plate_det.yml
+python -m torchkiln plate_rec train  -c configs/plate/plate_rec.yml
+python -m torchkiln attribute train  -c configs/attr/vehicle_attribute.yml
+python -m torchkiln ocr_det   train  -c configs/det/PP-OCRv5_mobile_det.yml
+python -m torchkiln ocr_rec   train  -c configs/rec/PP-OCRv5_mobile_rec.yml
 
-python -m pytorchx detect    check  -c configs/yolo/yolov8_graph.yml   # 只构建 + 打印摘要(不训练)
-python -m pytorchx --help
+python -m torchkiln detect    check  -c configs/yolo/yolov8_graph.yml   # 只构建 + 打印摘要(不训练)
+python -m torchkiln --help
 ```
 
 * `mode ∈ {train, val, export, predict, check}`;`<task>` 只做**命名空间与一致性校验**
   (真正的任务由配置里 `Architecture.task` 决定,不一致时会打印提示),其余参数**原样透传**给
   `tools/{train,eval,export}.py` / `tools/infer/predict_{yolo,det,rec}.py`。
-* 实现:`pytorchx/cli.py` + `pytorchx/__main__.py`(别名表 `TASK_ALIASES`、`MODEL_FAMILY`、`MODES`)。
+* 实现:`torchkiln/cli.py` + `torchkiln/__main__.py`(别名表 `TASK_ALIASES`、`MODEL_FAMILY`、`MODES`)。
 * 想做 `yolo` 这样的短命令,给 `setup.py`/`pyproject.toml` 加
-  `console_scripts = yolo = pytorchx.cli:main` 即可(非必须,`python -m` 已可用)。
+  `console_scripts = yolo = torchkiln.cli:main` 即可(非必须,`python -m` 已可用)。
 
 ### 7.2 目标目录(每任务一个子包,内部自包含)
 
 ```
-pytorchx/
+torchkiln/
 ├─ cli.py                  # yolo <task> <mode> 入口(已实现)
 ├─ engine/                 # 平台侧适配(与 ptcore 对接,任务无关)
-│  ├─ trainer.py           #   (现 pytorchx/trainer.py:Trainer + 任务注册表查找)
+│  ├─ trainer.py           #   (现 torchkiln/trainer.py:Trainer + 任务注册表查找)
 │  └─ predictors/          #   yolo / ocr_det / ocr_rec 三种推理器(现 tools/infer/*)
 ├─ tasks/                  # ★ 按任务分家:每任务一个文件/子包
 │  ├─ __init__.py          #   TASK_REGISTRY = {"detect": DetectTask, ...};get_task(name)
@@ -188,12 +188,12 @@ pytorchx/
 
 | 现在 | 目标 |
 |---|---|
-| `pytorchx/task.py`(7 个 `Yolo*Task`) | 拆到 `tasks/{classify,detect,obb,segment,pose,semantic,depth}.py`(类名不变)|
-| `pytorchx/plate_det.py` / `plate_rec.py` / `attr.py` / `attr_randaug.py` | `tasks/plate_det.py` / `tasks/plate_rec.py` / `tasks/attribute.py` |
+| `torchkiln/task.py`(7 个 `Yolo*Task`) | 拆到 `tasks/{classify,detect,obb,segment,pose,semantic,depth}.py`(类名不变)|
+| `torchkiln/plate_det.py` / `plate_rec.py` / `attr.py` / `attr_randaug.py` | `tasks/plate_det.py` / `tasks/plate_rec.py` / `tasks/attribute.py` |
 | `seg.py` / `pose.py` / `sem.py` / `depth.py` 的 `build_*` | 就近并入对应 `tasks/*.py`(或保留在 `det/` 同级作为公共实现)|
 | `trainer.py::build_task()` 的 if-链 | `tasks/__init__.py::get_task(task)` |
 | `task_head()`(task.py)/ `_head_of()`(plate_det.py)重复实现 | `tasks/_base.py` 单份 |
-| `pytorchx/task.py` | 兼容层:`from pytorchx.tasks import *`,旧 import 不破 |
+| `torchkiln/task.py` | 兼容层:`from torchkiln.tasks import *`,旧 import 不破 |
 
 步骤:① 建 `tasks/` 与 `_base.py` → ② 逐个搬适配器并改 `build_task` 查表 → ③ `task.py` 变兼容层 →
 ④ 跑三条基线复绿(`smoke_all` 80 OK / `check_graph_build` 53 OK / `check_plate_models`)→

@@ -11,13 +11,13 @@ import paddle
 import yaml
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-PADDLE_REPO = r"E:\PytorchOCR\_downloads\PaddleOCR"
+PADDLE_REPO = r"E:\TorchKiln\_downloads\PaddleOCR"
 sys.path.insert(0, PADDLE_REPO)
 
 from ppocr.modeling.architectures.base_model import BaseModel  # noqa: E402
 
 OFFICIAL = os.path.join(ROOT, "_downloads", "official")
-UTILS = os.path.join(ROOT, "pytorchx/ocr", "utils")
+UTILS = os.path.join(ROOT, "torchkiln/ocr", "utils")
 
 
 def char_dict_for(name):

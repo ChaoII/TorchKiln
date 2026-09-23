@@ -22,8 +22,8 @@ import torch
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..", "..")))
 
-from pytorchx.ocr.modeling.architectures.base_model import BaseModel
-from pytorchx.ocr.utils.config import load_config
+from torchkiln.ocr.modeling.architectures.base_model import BaseModel
+from torchkiln.ocr.utils.config import load_config
 
 
 def rename(k):

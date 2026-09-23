@@ -39,10 +39,10 @@ Train / Eval    dataset + loader
 
 | 字段 | 说明 |
 |---|---|
-| `model_family` | `ocr` → `pytorchx.ocr.Trainer`;`yolo` → `pytorchx.Trainer`(车牌/属性也用 `yolo`)|
+| `model_family` | `ocr` → `torchkiln.ocr.Trainer`;`yolo` → `torchkiln.Trainer`(车牌/属性也用 `yolo`)|
 | `task` | OCR:`det/rec/cls/e2e/sr/table...`;YOLO:`detect/segment/obb/pose/classify/semantic/depth/plate_det/plate_rec/attribute` |
 | `algorithm` | 模型名(手写模型构建器按名分派;仅日志/兼容用)|
-| `yaml_file` / `yaml_text` | 给定时走 **YAML 图模型**(`pytorchx/cfg/models/**`) |
+| `yaml_file` / `yaml_text` | 给定时走 **YAML 图模型**(`torchkiln/cfg/models/**`) |
 | `scale` | `n/s/m/l/x`,按 YAML `scales` 自动缩放 |
 | `in_channels` | 输入通道(默认 3)|
 | `Backbone` | 部分任务的结构块:`name`/`scale`(属性)/`dropout_prob` |

@@ -25,7 +25,7 @@ Architecture:
     num_classes: 26
     class_expand: 1280
     dropout_prob: 0.5
-    label_list: pytorchx/utils/pedestrian_attribute_label_list.txt
+    label_list: torchkiln/utils/pedestrian_attribute_label_list.txt
 Optimizer:
   name: SGD          # PaddleClas "Momentum" == SGD + momentum
   momentum: 0.9

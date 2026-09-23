@@ -1,6 +1,6 @@
 # 检测(Detect)模型与 ultralytics 全量对齐计划
 
-> 目标：把**本仓库(pytorchx)的检测(detect)任务**在**推理**与**训练**两方面与原版 ultralytics 完全对齐。
+> 目标：把**本仓库(torchkiln)的检测(detect)任务**在**推理**与**训练**两方面与原版 ultralytics 完全对齐。
 > 范围：权重库 `\\tsclient\D\项目资料\ultralytics_models` 中所有**检测**权重的「版本 × 规模」。
 
 ## 一、范围与清单

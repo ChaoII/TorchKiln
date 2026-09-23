@@ -18,7 +18,7 @@ Architecture:
   model_family: yolo
   task: detect
   algorithm: yolov8-ghost-p2
-  yaml_file: pytorchx/cfg/models/v8/yolov8-ghost-p2.yaml
+  yaml_file: torchkiln/cfg/models/v8/yolov8-ghost-p2.yaml
   scale: n
   in_channels: 3
   Head:

@@ -1,5 +1,19 @@
 # FAQ / 环境与坑位
 
+## 改名（PytorchOCR → TorchKiln）
+
+**Q:`ptx` / `pytorchx` 找不到了?**
+2026-09 起仓库已改名,对照见下(详见 [AGENTS.md](../AGENTS.md) 改名节):
+
+| 旧 | 新 |
+|---|---|
+| `E:\PytorchOCR` | `E:\TorchKiln` |
+| `pytorchx` 包 / `python -m pytorchx` | `torchkiln` / `python -m torchkiln` |
+| `ptx` / `ptx.bat` | **`tkiln` / `tkiln.bat`** |
+
+**刻意不改的**:ModelScope 外部 URL `ChaoII0987/PytorchOCR`、环境变量 `PYTORCHOCR_*`、兼容包 `pytorchocr`、conda 环境 `ptocr`。
+旧缓存 `~/.pytorchocr` 仍会自动回退查找,可不迁移。
+
 ## 环境
 
 **Q:需要哪几个 conda 环境?**
@@ -13,8 +27,8 @@
 GitHub / huggingface 在本机不可达;`paddle-model-ecology.bj.bcebos.com`(Paddle 官方权重)
 与 ModelScope 可达。所以:预训练权重走 Paddle 站点,上游 YOLO `.pt` 需手动放到 `_downloads/upstream/`。
 
-**Q:`~/.pytorchx/ocr/pretrained` 是空的?**
-那不是 bug:加载器会优先复用仓库内 `~/.pytorchocr/pretrained/` 的同名权重。
+**Q:`~/.torchkiln/ocr/pretrained` 是空的?**
+那不是 bug:加载器会优先复用仓库内 `~/.torchkiln/pretrained/` 的同名权重。
 
 ## Windows / 数据加载
 
@@ -38,7 +52,7 @@ OCR 数据管线的 `seed` 必须为 `None`(Paddle 语义),否则增广序列被
 ## 模型 / 权重
 
 **Q:上游 YAML 全部支持吗?**
-`pytorchx/cfg/models/**` 共 60 个 YAML(可训练 53 个)全部支持:
+`torchkiln/cfg/models/**` 共 60 个 YAML(可训练 53 个)全部支持:
 `python tools/check_graph_build.py` → `53 configs: 53 OK, 0 FAIL`。
 不支持/跳过:`rt-detr`(RT-DETR)、`yoloe-*`、`yolov8-world*`、`sam*`、`*-cls-resnet*`(不支持训练或不在范围内)。
 

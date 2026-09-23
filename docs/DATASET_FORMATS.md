@@ -140,7 +140,7 @@ Train.dataset.transform.image_size: 256
 ```
 images/plate_0001.jpg 5 53 52 60 49 45 43 1
 ```
-* 前 7 个是**字符表下标**(`pytorchx/nn/plate.py::PLATE_CHARSET`,78 项,`0` = CTC blank),
+* 前 7 个是**字符表下标**(`torchkiln/nn/plate.py::PLATE_CHARSET`,78 项,`0` = CTC blank),
   最后一个是**颜色号**(`['黑色','蓝色','绿色','白色','黄色']` 的下标 0..4);
 * 双层车牌可设 `Train.dataset.double_plate: true`(自动上下拼接成单行)。
 

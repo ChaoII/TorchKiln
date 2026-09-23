@@ -36,7 +36,7 @@ def run_ours(args):
     ds_rel = args.data.replace("\\", "/").rstrip("/")
     if os.path.isabs(ds_rel):
         ds_rel = os.path.relpath(ds_rel, ROOT).replace("\\", "/")
-    cmd = [sys.executable, "-m", "pytorchx", args.task, "train", "-c", args.config,
+    cmd = [sys.executable, "-m", "torchkiln", args.task, "train", "-c", args.config,
            "-o", "Train.dataset.data_dir=%s" % ds_rel,
            "-o", "Eval.dataset.data_dir=%s" % ds_rel,
            "-o", "Architecture.Head.num_classes=%d" % args.nc,
@@ -115,7 +115,7 @@ def main():
     print("训练对齐对照  data=%s  epochs=%d  imgsz=%d  batch=%d" %
           (args.data, args.epochs, args.imgsz, args.batch))
     print("%-28s %10s %12s" % ("", "mAP50", "mAP50-95"))
-    for name, r in (("ultralytics(原版)", ultra), ("pytorchx(我们)", ours)):
+    for name, r in (("ultralytics(原版)", ultra), ("torchkiln(我们)", ours)):
         if r:
             print("%-28s %10s %12s" % (name, r["mAP50"], r["mAP50-95"]))
     if ours and ultra and ours["mAP50-95"] and ultra["mAP50-95"]:

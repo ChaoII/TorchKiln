@@ -14,10 +14,10 @@ import torch
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..", "..")))
 
-from pytorchx.ocr.modeling.architectures.base_model import BaseModel
-from pytorchx.ocr.postprocess import build_post_process
-from pytorchx.ocr.utils.config import flatten_opts, parse_args_to_config
-from pytorchx.ocr.utils.precision import enable_paddle_like_precision
+from torchkiln.ocr.modeling.architectures.base_model import BaseModel
+from torchkiln.ocr.postprocess import build_post_process
+from torchkiln.ocr.utils.config import flatten_opts, parse_args_to_config
+from torchkiln.ocr.utils.precision import enable_paddle_like_precision
 
 enable_paddle_like_precision()
 
@@ -37,7 +37,7 @@ def resize_norm_img(img, image_shape):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PyTorchOCR recognition inference")
+    parser = argparse.ArgumentParser(description="TorchKiln recognition inference")
     parser.add_argument("-c", "--config", required=True)
     parser.add_argument(
         "-o", "--opt", nargs="*", action="append", default=None,
@@ -59,7 +59,7 @@ def main():
             "NRTRLabelDecode": char_num + 4,
         }
     model = BaseModel(arch)
-    from pytorchx.ocr.utils.pretrained import resolve_pretrained
+    from torchkiln.ocr.utils.pretrained import resolve_pretrained
 
     resolved = resolve_pretrained(args.weights)
     if not resolved:

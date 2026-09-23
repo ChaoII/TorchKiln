@@ -18,7 +18,7 @@ Architecture:
   model_family: yolo
   task: segment
   algorithm: yolov8-seg-p6
-  yaml_file: pytorchx/cfg/models/v8/yolov8-seg-p6.yaml
+  yaml_file: torchkiln/cfg/models/v8/yolov8-seg-p6.yaml
   scale: n
   in_channels: 3
   Head:

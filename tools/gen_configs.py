@@ -1,8 +1,8 @@
-"""Generate PyTorchOCR configs from the official PaddleOCR configs.
+"""Generate TorchKiln configs from the official PaddleOCR configs.
 
 Run with the PyTorch interpreter. Reads the official PaddleOCR configs from
-E:\\PytorchOCR\\_downloads\\PaddleOCR\\configs and emits adapted configs into
-E:\\PytorchOCR\\configs, pointing at the local example datasets.
+E:\\TorchKiln\\_downloads\\PaddleOCR\\configs and emits adapted configs into
+E:\\TorchKiln\\configs, pointing at the local example datasets.
 
 Usage:
     python tools/gen_configs.py
@@ -132,7 +132,7 @@ def gen_det(rel_src, name):
     g["model_name"] = name
     g["save_model_dir"] = "./output/{}".format(name)
     # Full ModelScope URL (same style as PaddleOCR configs). Downloaded into
-    # ~/.pytorchx/ocr/pretrained on first use, then reused from cache.
+    # ~/.torchkiln/ocr/pretrained on first use, then reused from cache.
     # Use `-o Global.pretrained_model=null` to train from scratch.
     g["pretrained_model"] = _pretrained_url(name)
     g["distributed"] = False
@@ -166,7 +166,7 @@ def gen_rec(rel_src, name):
     g["model_name"] = name
     g["save_model_dir"] = "./output/{}".format(name)
     # Full ModelScope URL (same style as PaddleOCR configs). Downloaded into
-    # ~/.pytorchx/ocr/pretrained on first use, then reused from cache.
+    # ~/.torchkiln/ocr/pretrained on first use, then reused from cache.
     # Use `-o Global.pretrained_model=null` to train from scratch.
     g["pretrained_model"] = _pretrained_url(name)
     g["distributed"] = False

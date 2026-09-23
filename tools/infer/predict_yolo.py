@@ -25,10 +25,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..", "..")))
 
 from ptcore.precision import enable_paddle_like_precision  # noqa: E402
 from ptcore.pretrained import resolve_pretrained  # noqa: E402
-from pytorchx.trainer import build_task  # noqa: E402
-from pytorchx.det.ops import letterbox  # noqa: E402
-from pytorchx.det.rbox import rbox2poly_np  # noqa: E402
-from pytorchx.ocr.utils.config import flatten_opts, parse_args_to_config  # noqa: E402
+from torchkiln.trainer import build_task  # noqa: E402
+from torchkiln.det.ops import letterbox  # noqa: E402
+from torchkiln.det.rbox import rbox2poly_np  # noqa: E402
+from torchkiln.ocr.utils.config import flatten_opts, parse_args_to_config  # noqa: E402
 
 enable_paddle_like_precision()
 

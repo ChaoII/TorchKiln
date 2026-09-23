@@ -1,8 +1,8 @@
 # 数据集清单(供 tools/download_dataset.py / 文档使用)
 #
 # 仓库只入库 label 文本;图片打包在 ModelScope。填好 url 后:
-#     ptx data list            # 查看状态
-#     ptx data get <name>      # 下载 + 解包到 datasets/<name>/
+#     tkiln data list            # 查看状态
+#     tkiln data get <name>      # 下载 + 解包到 datasets/<name>/
 #
 # layout: 解包后期望的目录结构
 #   images/ + train.txt + val.txt       (常规)

@@ -12,9 +12,9 @@ import torch
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
-from pytorchx.ocr.modeling.architectures.base_model import BaseModel
-from pytorchx.ocr.postprocess import build_post_process
-from pytorchx.ocr.utils.config import load_config
+from torchkiln.ocr.modeling.architectures.base_model import BaseModel
+from torchkiln.ocr.postprocess import build_post_process
+from torchkiln.ocr.utils.config import load_config
 
 
 def out_channels_list(config, post):

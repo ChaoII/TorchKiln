@@ -13,10 +13,10 @@ import torch
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..", "..")))
 
-from pytorchx.ocr.modeling.architectures.base_model import BaseModel
-from pytorchx.ocr.postprocess import build_post_process
-from pytorchx.ocr.utils.config import load_config
-from pytorchx.ocr.utils.precision import enable_paddle_like_precision
+from torchkiln.ocr.modeling.architectures.base_model import BaseModel
+from torchkiln.ocr.postprocess import build_post_process
+from torchkiln.ocr.utils.config import load_config
+from torchkiln.ocr.utils.precision import enable_paddle_like_precision
 
 enable_paddle_like_precision()
 
@@ -28,7 +28,7 @@ class TextDetector:
             device if (device.startswith("cuda") and torch.cuda.is_available()) else "cpu"
         )
         self.model = BaseModel(self.config["Architecture"]).to(self.device)
-        from pytorchx.ocr.utils.pretrained import resolve_pretrained
+        from torchkiln.ocr.utils.pretrained import resolve_pretrained
 
         resolved = resolve_pretrained(weights_path)
         if not resolved:
@@ -93,7 +93,7 @@ def draw_det_res(img, boxes, save_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PyTorchOCR detection inference")
+    parser = argparse.ArgumentParser(description="TorchKiln detection inference")
     parser.add_argument("-c", "--config", required=True)
     parser.add_argument(
         "-o", "--opt", nargs="*", action="append", default=None,
@@ -105,7 +105,7 @@ def main():
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args()
 
-    from pytorchx.ocr.utils.config import flatten_opts, parse_args_to_config
+    from torchkiln.ocr.utils.config import flatten_opts, parse_args_to_config
 
     config = parse_args_to_config(args.config, flatten_opts(args.opt))
     detector = TextDetector(args.config, args.weights, args.device)

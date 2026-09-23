@@ -1,4 +1,4 @@
-﻿path: E:\PytorchOCR\datasets\mini_det
+path: E:\TorchKiln\datasets\mini_det
 train: images/train
 val: images/val
 nc: 80

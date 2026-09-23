@@ -1,4 +1,4 @@
-﻿"""Smoke-test every config end-to-end: model + dataset + 1 train step + 1 eval step.
+"""Smoke-test every config end-to-end: model + dataset + 1 train step + 1 eval step.
 
 Usage:
     python tools/smoke_all.py [--pretrained-dir _downloads/official]
@@ -15,9 +15,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
 from ptcore.factory import build_trainer
-from pytorchx.ocr.utils.config import load_config
+from torchkiln.ocr.utils.config import load_config
 
-UTILS = os.path.join(ROOT, "pytorchx/ocr", "utils")
+UTILS = os.path.join(ROOT, "torchkiln/ocr", "utils")
 
 
 def char_dict_for(name):
@@ -69,7 +69,7 @@ def one_eval_step(trainer):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pretrained-dir", default=os.path.join(os.path.expanduser("~"), ".pytorchocr", "pretrained"))
+    ap.add_argument("--pretrained-dir", default=os.path.join(os.path.expanduser("~"), ".torchkiln", "pretrained"))
     args = ap.parse_args()
 
     ok, fail = 0, 0

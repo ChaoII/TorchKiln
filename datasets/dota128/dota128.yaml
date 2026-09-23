@@ -1,6 +1,6 @@
 # DOTA128 OBB dataset (split from G:\迅雷下载\dota128.zip)
-# Path is relative to this repo root when running from E:\PytorchOCR.
-path: E:/PytorchOCR/datasets/dota128
+# Path is relative to this repo root when running from E:\TorchKiln.
+path: E:/TorchKiln/datasets/dota128
 train: images/train
 val: images/val
 nc: 15

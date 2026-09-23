@@ -1,11 +1,11 @@
-"""Compatibility shim: the OCR package moved to :mod:pytorchx.ocr."""
+"""Compatibility shim: the OCR package moved to :mod:torchkiln.ocr."""
 import importlib
 import importlib.abc
 import importlib.util
 import sys
 
 _PREFIX = "pytorchocr"
-_TARGET = "pytorchx.ocr"
+_TARGET = "torchkiln.ocr"
 
 
 class _AliasLoader(importlib.abc.Loader):
@@ -33,4 +33,4 @@ class _AliasFinder(importlib.abc.MetaPathFinder):
 if not any(isinstance(f, _AliasFinder) for f in sys.meta_path):
     sys.meta_path.insert(0, _AliasFinder())
 
-from pytorchx.ocr import *  # noqa: F401,F403
+from torchkiln.ocr import *  # noqa: F401,F403

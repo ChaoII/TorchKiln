@@ -18,7 +18,7 @@ Architecture:
   model_family: yolo
   task: semantic
   algorithm: yolo26-sem
-  yaml_file: pytorchx/cfg/models/26/yolo26-sem.yaml
+  yaml_file: torchkiln/cfg/models/26/yolo26-sem.yaml
   scale: n
   in_channels: 3
   Head:

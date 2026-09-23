@@ -1,25 +1,26 @@
 # 项目结构
 
-> **2026-09 结构变更(重要)**
-> * 多任务包 pytorchyolo/ → **pytorchx/**(含 YOLO 七任务、上游 YAML 图模型、车牌、属性);
-> * OCR 包 pytorchocr/ → **pytorchx/ocr/**;顶层 pytorchocr/ 仅保留**兼容 shim**(pytorchocr.* 自动别名到 pytorchx.ocr.*);
-> * 任务适配器按任务分家:**pytorchx/tasks/<task>.py**(classify/detect/obb/segment/pose/semantic/depth/plate_det/plate_rec/attribute)
->   + pytorchx/tasks/__init__.py::TASK_REGISTRY / get_task();pytorchx/task.py 变成兼容重导出层;
-> * 命令行:python -m pytorchx <task> <mode> [args](	rain|val|export|predict|check)。
+> **2026-09 结构与改名(重要)**
+> * 仓库/包/CLI 改名：**PytorchOCR → TorchKiln**、**pytorchx → torchkiln**、**ptx → tkiln**（外部 ModelScope URL `ChaoII0987/PytorchOCR` 与 `PYTORCHOCR_*` 环境变量**不改**）;
+> * 多任务包 pytorchyolo/ → **torchkiln/**(含 YOLO 七任务、上游 YAML 图模型、车牌、属性);
+> * OCR 包 pytorchocr/ → **torchkiln/ocr/**;顶层 pytorchocr/ 仅保留**兼容 shim**(pytorchocr.* 自动别名到 torchkiln.ocr.*);
+> * 任务适配器按任务分家:**torchkiln/tasks/<task>.py**(classify/detect/obb/segment/pose/semantic/depth/plate_det/plate_rec/attribute)
+>   + torchkiln/tasks/__init__.py::TASK_REGISTRY / get_task();torchkiln/task.py 变成兼容重导出层;
+> * 命令行:python -m torchkiln <task> <mode> [args](train|val|export|predict|check)，或根目录 `tkiln` / `tkiln.bat`。
 > 下面树中标注的 pytorchyolo/、pytorchocr/ 路径请按上述映射阅读(树本身待下一轮刷新)。
 
-`E:\PytorchOCR` 是一个**统一的 PyTorch 训练/推理平台**,同时承载三条产品线:
+`E:\TorchKiln` 是一个**统一的 PyTorch 训练/推理平台**,同时承载三条产品线:
 
 | 产品线 | 包 | 说明 |
 |---|---|---|
-| OCR(文本检测/识别) | `pytorchx/ocr/` | PaddleOCR 复现:PP-OCRv2~v6 共 17 个模型 |
-| YOLO 家族(7 任务) | `pytorchx/` | 自研 YOLO 实现(det/seg/obb/pose/cls/sem/depth)+ 上游 YAML 图模型(53 个配置) |
-| 车牌 / 属性识别 | `pytorchx/`(plate\_\*, attr) | 上游车牌原版复刻(检测+识别)与 PaddleX 行人/车辆属性识别 |
+| OCR(文本检测/识别) | `torchkiln/ocr/` | PaddleOCR 复现:PP-OCRv2~v6 共 17 个模型 |
+| YOLO 家族(7 任务) | `torchkiln/` | 自研 YOLO 实现(det/seg/obb/pose/cls/sem/depth)+ 上游 YAML 图模型(53 个配置) |
+| 车牌 / 属性识别 | `torchkiln/`(plate\_\*, attr) | 上游车牌原版复刻(检测+识别)与 PaddleX 行人/车辆属性识别 |
 
 三者共用平台层 `ptcore/`(配置、优化器、EMA、精度、训练循环、任务抽象、工厂)。
 
 ```
-E:\PytorchOCR
+E:\TorchKiln
 ├─ README.md                    总入口文档(含 OCR/YOLO/车牌/属性全部说明)
 ├─ docs/                        详细文档(本目录)
 │  ├─ STRUCTURE.md              本文件:目录树 + 模块职责
@@ -35,7 +36,7 @@ E:\PytorchOCR
 │  ├─ precision.py              AMP(fp16/bf16)+ GradScaler
 │  ├─ ema.py                    EMA 权重
 │  ├─ batch_sampler.py          与 Paddle 一致的乱序采样(含多卡分片)
-│  ├─ task.py                   TaskAdapter 抽象(pytorchx / pytorchocr 各自实现)
+│  ├─ task.py                   TaskAdapter 抽象(torchkiln / pytorchocr 各自实现)
 │  ├─ trainers/                 每个任务一个 trainer(共享 base 训练循环)
 │  │  ├─ base.py                BaseTrainer:训练循环/评估/EMA/断点续训/多卡/日志/保存
 │  │  ├─ detect.py segment.py pose.py classify.py obb.py semantic.py depth.py
@@ -46,7 +47,7 @@ E:\PytorchOCR
 │  ├─ factory.py                build_trainer(config):按 model_family/task 分派
 │  └─ __init__.py
 │
-├─ pytorchx/ocr/                  OCR 产品线(PaddleOCR 复现)
+├─ torchkiln/ocr/                  OCR 产品线(PaddleOCR 复现)
 │  ├─ base_ocr_v20.py           模型基类
 │  ├─ task.py                   OCR 任务的 TaskAdapter(det/rec/cls/e2e/sr/table...)
 │  ├─ trainer.py                OCR Trainer(基于 ptcore.BaseTrainer)
@@ -71,7 +72,7 @@ E:\PytorchOCR
 │  ├─ optimizer/                兼容 shim(实现已移入 ptcore.optimizer)
 │  └─ utils/                    config、pretrained、ema、precision(均为 ptcore 的兼容 shim)+ dict/ 字符集
 │
-├─ pytorchx/                 YOLO 家族 + 车牌 + 属性
+├─ torchkiln/                 YOLO 家族 + 车牌 + 属性
 │  ├─ trainer.py                Trainer + build_task(task → TaskAdapter 分派)
 │  ├─ task.py                   YOLO 各任务的 TaskAdapter(cls/det/obb/seg/pose/sem/depth)
 │  ├─ det/                      检测核心
@@ -161,16 +162,16 @@ configs/*.yml ──> ptcore.config ──> ptcore.factory ──> ptcore.traine
                    (共享 ptcore.trainers.base.BaseTrainer)              (共享 ptcore.trainers.base.BaseTrainer)
                               │                                                    │
                               ▼                                                    ▼
-                   pytorchx.tasks.<task>.Yolo<Task>Task                pytorchx.ocr.task.OcrTask
+                   torchkiln.tasks.<task>.Yolo<Task>Task                torchkiln.ocr.task.OcrTask
                               │                                                    │
                               ▼                                                    ▼
-       pytorchx.{nn,models,det,data,plate_*,attr}            pytorchx.ocr.{modeling,losses,metrics,...}
+       torchkiln.{nn,models,det,data,plate_*,attr}            torchkiln.ocr.{modeling,losses,metrics,...}
                               │                                                    │
                               └──────────► ptcore 共享能力(precision/optimizer/ema/pretrained)◄──────────┘
 ```
 
 * `ptcore` **不反向依赖**任何产品线(OCR/YOLO 均可独立替换)。
-* `pytorchx/ocr/utils/*` 与 `pytorchx/ocr/optimizer/` 是从旧路径保留下来的**兼容 shim**,真实现在 `ptcore/`,新代码请直接用 `ptcore.*`。
+* `torchkiln/ocr/utils/*` 与 `torchkiln/ocr/optimizer/` 是从旧路径保留下来的**兼容 shim**,真实现在 `ptcore/`,新代码请直接用 `ptcore.*`。
 
 ## 命名与约定
 
@@ -178,7 +179,7 @@ configs/*.yml ──> ptcore.config ──> ptcore.factory ──> ptcore.traine
 |---|---|
 | 配置文件 | `configs/<family>/<name>.yml`;`Architecture.model_family ∈ {ocr, yolo}` 决定用哪个 Trainer |
 | 任务名 | `Architecture.task`:`det/rec/cls/...`(OCR);`detect/segment/obb/pose/classify/semantic/depth/plate_det/plate_rec/attribute`(YOLO 系)|
-| 图模型 | `Architecture.yaml_file` 指向 `pytorchx/cfg/models/**`;没有则走手写模型构建器 |
+| 图模型 | `Architecture.yaml_file` 指向 `torchkiln/cfg/models/**`;没有则走手写模型构建器 |
 | 权重格式 | 统一为 `torch.save({'state_dict': ...})` 或纯张量 dict;加载按**名字+形状**匹配 |
 | 输出目录 | `Global.save_model_dir`,内含 `best_accuracy.pth`、`latest.pth`、`train.log`、`config.yml` |
 | 导出 | `tools/export.py` 产出 `inference.pth / inference.yml / model.pt / model.onnx / model_slim.onnx` |

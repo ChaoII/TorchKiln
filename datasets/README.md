@@ -14,8 +14,8 @@
 
 ```powershell
 # ① 从 ModelScope 下载(在 manifest 里填好 url 后)
-ptx data list                                  # 看有哪些数据集、缺什么
-ptx data get plate_det_demo                    # 下载并解包到 datasets/plate_det_demo/
+tkiln data list                                  # 看有哪些数据集、缺什么
+tkiln data get plate_det_demo                    # 下载并解包到 datasets/plate_det_demo/
 
 # ② 本地生成"占位图片"(仅用于自检 smoke_all,不含真实标注语义)
 python tools/make_demo_data.py --all
@@ -34,7 +34,7 @@ python tools/make_demo_data.py --dataset plate_det_demo
 | `sem_demo` | semantic | 掩码 PNG(像素=类别索引)| 80/20 | *(待填)* |
 | `depth_demo` | depth | 深度图(16bit PNG/npy)| 80/20 | *(待填)* |
 | `plate_det_demo` | plate_det | `cls cx cy w h p1x p1y ... p4x p4y`(kpt_shape [4,2])| 24/8 | *(待填)* |
-| `plate_rec_demo` | plate_rec | `路径 c1..c7 颜色号`(字符表见 `pytorchx/nn/plate.py`)| 32/8 | *(待填)* |
+| `plate_rec_demo` | plate_rec | `路径 c1..c7 颜色号`(字符表见 `torchkiln/nn/plate.py`)| 32/8 | *(待填)* |
 | `pedestrian_attribute_demo` | attribute | `路径 v1..v26`(多热)| 24/8 | *(待填)* |
 | `vehicle_attribute_demo` | attribute | `路径 v1..v19`(多热)| 24/8 | *(待填)* |
 | `ocr_det_dataset_examples` | OCR det | PaddleOCR 格式(四点 + 文本)| 250 | *(待填)* |

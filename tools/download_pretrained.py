@@ -5,7 +5,7 @@ Usage:
     python tools/download_pretrained.py PP-OCRv6_tiny_det PP-OCRv5_mobile_rec
     python tools/download_pretrained.py --list          # show where each name resolves
 
-The cache lives in ``~/.pytorchx/ocr/pretrained`` (override with
+The cache lives in ``~/.torchkiln/ocr/pretrained`` (override with
 ``PYTORCHOCR_HOME`` / ``PYTORCHOCR_PRETRAINED_DIR``).  Unlike training, this
 tool always fills the *cache*: it will not silently reuse the weights that may
 already sit in ``_downloads/official`` inside this repo.
@@ -21,7 +21,7 @@ import sys
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
-from pytorchx.ocr.utils.pretrained import (  # noqa: E402
+from torchkiln.ocr.utils.pretrained import (  # noqa: E402
     download_pretrained,
     pretrained_dir,
     resolve_pretrained,

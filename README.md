@@ -1,4 +1,7 @@
-﻿# PyTorchOCR / PyTorchYOLO —— 统一 PyTorch 训练平台
+# TorchKiln —— 统一 PyTorch 训练平台
+
+> 原名 **PytorchOCR**（仓库/包/CLI 已于 2026-09 改为 TorchKiln / `torchkiln` / `tkiln`，详见 [AGENTS.md](AGENTS.md) 改名节）。
+> 命令入口：仓库根目录 `tkiln.bat` / `tkiln`，或 `python -m torchkiln`，或 `pip install -e .` 后的 `tkiln`。
 
 一个平台、四条产品线,**不依赖 PaddleOCR / PaddleX / ultralytics 的运行时**(仅用它们的权重做对齐与初始化):
 
@@ -35,6 +38,9 @@
 conda activate ptocr
 $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"     # Windows 建议设置
 
+# 0) 统一 CLI（等价于 python -m torchkiln / python tools/*.py）
+.\tkiln.bat --help                                             # 或 pip install -e . 后直接用 tkiln
+
 # 1) 用命令行指向你自己的数据集并训练（不改 yml；每个覆盖项一个 -o）
 python tools/train.py -c configs/det/PP-OCRv5_mobile_det.yml -o Train.dataset.data_dir=D:/mydata/det -o Train.dataset.label_file_list=D:/mydata/det/train.txt -o Eval.dataset.data_dir=D:/mydata/det -o Eval.dataset.label_file_list=D:/mydata/det/val.txt -o Global.save_model_dir=./output/my_det
 
@@ -54,7 +60,7 @@ python tools/train.py -c configs/yolo/yolov8_graph.yml                 # YOLO(59
 python tools/train.py -c configs/plate/plate_det.yml `                 # 车牌检测(上游权重微调)
   -o Global.pretrained_model=_downloads/plate/plate_detect_state.pth
 python tools/train.py -c configs/attr/vehicle_attribute.yml `          # 车辆属性
-  -o Global.pretrained_model=~/.pytorchocr/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
+  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
 
 # 改完代码先自检(全量:每配置 1 步训练 + 1 步评估)
 python tools/smoke_all.py          # 期望 80 OK, 0 FAIL
@@ -78,7 +84,7 @@ python tools/check_graph_build.py  # 期望 53 configs: 53 OK, 0 FAIL
 11. [配置项全解](#11-配置项全解)（详见 `docs/CONFIG_REFERENCE.md`）
 12. [常见问题 FAQ](#12-常见问题-faq)（详见 `docs/FAQ.md`）
 13. [附：模型结构详解](#13-附模型结构详解)
-14. [YOLO 七任务](#14-yolo-任务pytorchx)
+14. [YOLO 七任务](#14-yolo-任务torchkiln)
 15. [YAML 图模型 + ultralytics 兼容](#15-yaml-图模型--ultralytics-生态兼容)
 16. [车牌(检测 + 识别)](#16-车牌检测--识别)
 17. [属性识别(行人 / 车辆)](#17-属性识别行人--车辆)
@@ -187,7 +193,7 @@ OpenBLAS error: Memory allocation still failed after 10 retries, giving up.
 > 下面只展开 OCR 侧结构。
 
 ```
-PytorchOCR/
+TorchKiln/
 ├─ configs/
 │  ├─ det/*.yml              # 9 个检测配置（可直接训练）
 │  ├─ rec/*.yml              # 8 个识别配置
@@ -199,7 +205,7 @@ PytorchOCR/
 │     ├─ detect.py segment.py pose.py classify.py obb.py semantic.py depth.py
 │     ├─ plate_det.py plate_rec.py attribute.py pose_action.py video_cls.py ocr.py
 │     └─ __init__.py         #   TRAINER_REGISTRY / get_trainer() / build_trainer()
-├─ pytorchx/              # YOLO 家族（7 任务） + YAML 图模型
+├─ torchkiln/              # YOLO 家族（7 任务） + YAML 图模型
 │  ├─ nn/modules.py          # 模块库 + 注册表（Conv/C2f/C3k2/Detect/OBB/Segment/... 60+）
 │  ├─ nn/graph.py            # YAML 解析器 + GraphModel（负数索引/Concat/缩放/多尺度）
 │  ├─ cfg/models/            # 50 个上游 YAML（v3/v5/v6/v8/v9/v10/11/12/26）
@@ -207,7 +213,7 @@ PytorchOCR/
 │  ├─ tasks/                 # 每任务一个文件(classify/detect/obb/segment/pose/semantic/depth/
 │  │                         #   plate_det/plate_rec/attribute/pose_action/video_cls + _base/_cls)
 │  └─ det/ seg.py pose.py sem.py depth.py task.py trainer.py
-├─ pytorchx/ocr/
+├─ torchkiln/ocr/
 │  ├─ modeling/              # 网络定义（与 Paddle 权重键对齐）
 │  │  ├─ backbones/          # PPLCNetV3/V4, MobileNetV3, ResNet_vd, PPHGNet(_V2), MobileNetV1Enhance...
 │  │  ├─ necks/              # RSEFPN, LKPAN, RepLKFPN, RepLKPAN, DBFPN, SVTR/LightSVTR
@@ -243,7 +249,7 @@ PytorchOCR/
 │     ├─ dump_ultralytics.py # (ultralytics 环境) 把上游 .pt 导出为纯张量 state_dict
 │     └─ convert_all.py      # (ptocr 环境) pickle -> torch .pth
 ├─ datasets/                 # 示例数据集（det / rec）
-├─ ~/.pytorchocr/pretrained/      # 官方 .pdparams + 转换后的 *_ptocr.pth
+├─ ~/.torchkiln/pretrained/      # 官方 .pdparams + 转换后的 *_ptocr.pth
 └─ output/                   # 训练/评估/导出产物
 ```
 
@@ -296,7 +302,7 @@ images/word_1.png	Genaxis Theatre
 images/word_2.png	[06]
 ```
 **字典文件**（字符集）：每行一个字符。本项目官方模型配套字典放在
-`pytorchx/ocr/utils/ppocr_keys_v1.txt`（6623 字符）、`pytorchx/ocr/utils/dict/ppocrv5_dict.txt`、`ppocrv6_dict.txt`、`ppocrv6_tiny_dict.txt`。
+`torchkiln/ocr/utils/ppocr_keys_v1.txt`（6623 字符）、`torchkiln/ocr/utils/dict/ppocrv5_dict.txt`、`ppocrv6_dict.txt`、`ppocrv6_tiny_dict.txt`。
 
 配置里：
 ```yaml
@@ -567,19 +573,19 @@ Global:
 首次训练时：
 
 ```
-Downloading pretrained weights to C:\Users\<你>\.pytorchocr\pretrained\PP-OCRv6_tiny_det_ptocr.pth
-Saved pretrained weights to C:\Users\<你>\.pytorchocr\pretrained\PP-OCRv6_tiny_det_ptocr.pth
-Pretrained source: https://.../PP-OCRv6_tiny_det_ptocr.pth -> C:\Users\<你>\.pytorchocr\pretrained\PP-OCRv6_tiny_det_ptocr.pth
+Downloading pretrained weights to C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det_ptocr.pth
+Saved pretrained weights to C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det_ptocr.pth
+Pretrained source: https://.../PP-OCRv6_tiny_det_ptocr.pth -> C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det_ptocr.pth
 Loaded pretrained: ... (missing=0 unexpected=0)
 ```
 
 第二次及以后：
 
 ```
-Pretrained weights already cached: C:\Users\<你>\.pytorchocr\pretrained\PP-OCRv6_tiny_det_ptocr.pth
+Pretrained weights already cached: C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det_ptocr.pth
 ```
 
-> 参考实现：PaddleOCR 的 `ppocr/utils/network.py::maybe_download_params()` 也是把 URL 下到 `~/.paddleocr/models/`（带进度条、3 次重试）。本项目等价实现见 `pytorchx/ocr/utils/pretrained.py`，缓存目录为 `~/.pytorchx/ocr/pretrained/`（Windows 下自动隐藏）。多卡时只由 rank0 下载，其余 rank 等待文件出现。
+> 参考实现：PaddleOCR 的 `ppocr/utils/network.py::maybe_download_params()` 也是把 URL 下到 `~/.paddleocr/models/`（带进度条、3 次重试）。本项目等价实现见 `torchkiln/ocr/utils/pretrained.py`，缓存目录为 `~/.torchkiln/ocr/pretrained/`（Windows 下自动隐藏）。多卡时只由 rank0 下载，其余 rank 等待文件出现。
 
 `pretrained_model` 支持的写法：
 
@@ -628,15 +634,15 @@ python tools/train.py -c configs/det/PP-OCRv6_tiny_det.yml -o Global.pretrained_
 
 | 变量 | 作用 |
 |---|---|
-| `PYTORCHOCR_HOME` | 改缓存根目录（默认 `~/.pytorchocr`） |
+| `PYTORCHOCR_HOME` | 改缓存根目录（默认 `~/.torchkiln`） |
 | `PYTORCHOCR_PRETRAINED_DIR` | 直接指定权重目录（默认 `<home>/pretrained`） |
 | `PYTORCHOCR_AUTO_DOWNLOAD=0` | 关掉自动下载（只查本地，找不到就从零训练） |
-| `PYTORCHOCR_ALLOW_LOCAL_REPO=0` | 不复用仓库内 `~/.pytorchocr/pretrained/` 的同名权重 |
+| `PYTORCHOCR_ALLOW_LOCAL_REPO=0` | 不复用仓库内 `~/.torchkiln/pretrained/` 的同名权重 |
 
-- Windows 下 `~/.pytorchocr` 会被**自动设为隐藏文件夹**（资源管理器里默认看不到）。
-- **缓存为空 ≠ 出错**：配置里虽然写的是 URL，但若 `~/.pytorchx/ocr/pretrained/` **或仓库的 `~/.pytorchocr/pretrained/`** 里已有同名 `.pth`，就直接用它、不重复下载。这就是为什么在开发目录里跑训练时缓存可能是空的：
+- Windows 下 `~/.torchkiln` 会被**自动设为隐藏文件夹**（资源管理器里默认看不到）。
+- **缓存为空 ≠ 出错**：配置里虽然写的是 URL，但若 `~/.torchkiln/ocr/pretrained/` **或仓库的 `~/.torchkiln/pretrained/`** 里已有同名 `.pth`，就直接用它、不重复下载。这就是为什么在开发目录里跑训练时缓存可能是空的：
   ```
-  Using local pretrained weights: E:\PytorchOCR\_downloads\official\PP-OCRv6_tiny_rec_ptocr.pth
+  Using local pretrained weights: E:\TorchKiln\_downloads\official\PP-OCRv6_tiny_rec_ptocr.pth
   ```
 - **想把缓存真正填满**（例如想脱离仓库运行、或验证下载）：
   ```powershell
@@ -644,12 +650,12 @@ python tools/train.py -c configs/det/PP-OCRv6_tiny_det.yml -o Global.pretrained_
   python tools/download_pretrained.py PP-OCRv6_tiny_det     # 只下一个
   python tools/download_pretrained.py --list                # 看每个名字实际解析到哪个文件
   ```
-  该工具**总是下载到缓存**，不会复用 `~/.pytorchocr/pretrained` 里的副本。
+  该工具**总是下载到缓存**，不会复用 `~/.torchkiln/pretrained` 里的副本。
 - 也可以直接禁掉本地复用：`set PYTORCHOCR_ALLOW_LOCAL_REPO=0`，或 `set PYTORCHOCR_HOME=<空目录>`。
 
 **识别模型注意字典**（权重和字典必须匹配）；例如：
 ```powershell
-python tools/train.py -c configs/rec/PP-OCRv5_mobile_rec.yml -o Global.character_dict_path=./pytorchx/ocr/utils/dict/ppocrv5_dict.txt -o Global.save_model_dir=./output/finetune_rec
+python tools/train.py -c configs/rec/PP-OCRv5_mobile_rec.yml -o Global.character_dict_path=./torchkiln/ocr/utils/dict/ppocrv5_dict.txt -o Global.save_model_dir=./output/finetune_rec
 ```
 
 ### 6.2 断点续训
@@ -695,7 +701,7 @@ Checkpoint already trained 2/2 epochs; nothing to do. Pass -o Global.epoch_num=<
 
 ```powershell
 python tools/eval.py -c configs/det/PP-OCRv4_mobile_det.yml `
-  --weights ./~/.pytorchocr/pretrained/PP-OCRv4_mobile_det_ptocr.pth
+  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det_ptocr.pth
 ```
 - `-c` 配置（决定验证集与后处理/指标）
 - `--weights` 要评估的 `.pth`（不填则用配置里的 `Global.pretrained_model`）
@@ -716,7 +722,7 @@ python tools/eval.py -c configs/det/PP-OCRv4_mobile_det.yml `
 ```powershell
 python tools/infer/predict_det.py `
   -c configs/det/PP-OCRv4_mobile_det.yml `
-  --weights ./~/.pytorchocr/pretrained/PP-OCRv4_mobile_det_ptocr.pth `
+  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det_ptocr.pth `
   --input datasets/ocr_det_dataset_examples/images/val_img_61.jpg `
   --output output/vis.jpg `
   --device cuda:0
@@ -737,8 +743,8 @@ python tools/infer/predict_det.py `
 ```powershell
 python tools/infer/predict_rec.py `
   -c configs/rec/PP-OCRv4_mobile_rec.yml `
-  -o Global.character_dict_path=./pytorchx/ocr/utils/ppocr_keys_v1.txt `
-  --weights ./~/.pytorchocr/pretrained/PP-OCRv4_mobile_rec_ptocr.pth `
+  -o Global.character_dict_path=./torchkiln/ocr/utils/ppocr_keys_v1.txt `
+  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_rec_ptocr.pth `
   --input datasets/ocr_rec_dataset_examples/images/val_word_1.png `
   --device cuda:0
 ```
@@ -760,7 +766,7 @@ python tools/infer/predict_rec.py `
 $env:PYTHONIOENCODING="utf-8"   # 本机 GBK 控制台建议设置，避免 torch.onnx 打印报编码 warning
 
 python tools/export.py -c configs/det/PP-OCRv4_mobile_det.yml `
-  --weights ./~/.pytorchocr/pretrained/PP-OCRv4_mobile_det_ptocr.pth `
+  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det_ptocr.pth `
   --save-dir output/export/v4_det `
   --fuse --onnx --slim
 ```
@@ -803,11 +809,11 @@ save_dir/
 ```powershell
 # 1) paddlex 环境：把官方 .pdparams 导出为 numpy pickle
 conda activate paddlex
-python tools/convert/dump_all.py          # 转换 ~/.pytorchocr/pretrained 下所有 .pdparams -> .pkl
+python tools/convert/dump_all.py          # 转换 ~/.torchkiln/pretrained 下所有 .pdparams -> .pkl
 
 # 2) ptocr 环境：映射成 torch .pth
 conda activate ptocr
-python tools/convert/convert_all.py       # 生成 ~/.pytorchocr/pretrained/<模型名>_ptocr.pth
+python tools/convert/convert_all.py       # 生成 ~/.torchkiln/pretrained/<模型名>_ptocr.pth
 ```
 
 单独转换一个：
@@ -838,7 +844,7 @@ python tools/convert/convert_det.py -c <cfg> --paddle-pkl <xxx.pkl> --output <xx
 | `save_model_dir` | ./output/... | 产物目录 |
 | `save_epoch_step` | 10 | 每多少 epoch 存一次 `epoch_N.pth` |
 | `eval_batch_step` | det [0,1500] / rec [0,2000] | `[起始step, 间隔]`：训练中途评估节奏 |
-| `pretrained_model` | ModelScope URL | 预训练权重。**默认写成 ModelScope 的 URL**（首次自动下载并缓存到 `~/.pytorchx/ocr/pretrained`）；也支持本地路径或模型名；`null` 表示从零训练。见 [6.1](#61-预训练权重写-url首次自动下载并缓存) |
+| `pretrained_model` | ModelScope URL | 预训练权重。**默认写成 ModelScope 的 URL**（首次自动下载并缓存到 `~/.torchkiln/ocr/pretrained`）；也支持本地路径或模型名；`null` 表示从零训练。见 [6.1](#61-预训练权重写-url首次自动下载并缓存) |
 | `checkpoints` | null | 续训用 `latest.pth` |
 | `use_ema` | false | 是否用 EMA 权重评估/保存（Paddle 默认关） |
 | `ema_decay` / `ema_decay_type` | 0.9998 / threshold | EMA 衰减与调度 |
@@ -951,7 +957,7 @@ $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1
 **Q4. 识别加载官方权重报 `size mismatch` / 日志出现 `pretrained param(s) skipped because of shape mismatch`？**
 说明**字符集（`Global.character_dict_path`）与预训练权重不一致**（`num_classes` 不同）。两种情况：
 
-- **想用官方字符集微调** → 用匹配的字典：v5 用 `pytorchx/ocr/utils/dict/ppocrv5_dict.txt`；v6 small/medium 用 `ppocrv6_dict.txt`；v6 tiny 用 `ppocrv6_tiny_dict.txt`；v3/v4 用 `ppocr_keys_v1.txt`。
+- **想用官方字符集微调** → 用匹配的字典：v5 用 `torchkiln/ocr/utils/dict/ppocrv5_dict.txt`；v6 small/medium 用 `ppocrv6_dict.txt`；v6 tiny 用 `ppocrv6_tiny_dict.txt`；v3/v4 用 `ppocr_keys_v1.txt`。
 - **想用自己的字符集（比如只要 0-9 数字）** → 这**是正常的**：分类头形状不同会被自动跳过并重新初始化，其他权重照常加载。日志会警告但**不会中断训练**（和 PaddleOCR 行为一致）。记得必须显式指定：
   ```powershell
   -o Global.character_dict_path=E:/dx_ocr/rec/dict.txt
@@ -1038,7 +1044,7 @@ python tools/check_graph_build.py
 
 ---
 
-## 14. YOLO 任务（`pytorchx/`）
+## 14. YOLO 任务（`torchkiln/`）
 
 在同一个训练平台（`ptcore`）上，用**独立实现**的 YOLO 风格模型覆盖 6 个任务。
 **不依赖也不嵌入 `ultralytics`**（其代码与权重均为 AGPL-3.0），模型按公开架构描述从零编写。
@@ -1098,13 +1104,13 @@ det/obb 导出为**多个输出**（每个尺度一个），seg 额外输出 mas
 
 ## 15. YAML 图模型 + ultralytics 生态兼容
 
-`pytorchx/nn/` 是一个**模块库 + 注册表 + YAML 图解析器**：模型用上游同款的 layer-list
+`torchkiln/nn/` 是一个**模块库 + 注册表 + YAML 图解析器**：模型用上游同款的 layer-list
 格式描述（`[-1, 1, Conv, [64, 3, 2]]`、`-1` 指上一层、列表 `from` 做 Concat、
 `scales: {n: [depth, width, max_channels]}` 自动缩放），**不用 import ultralytics**。
 
 ### 15.1 已支持的模型家族（上游 YAML 全量搬运）
 
-上游 `ultralytics/cfg/models` 里**所有可训练的 YAML** 都搬到了 `pytorchx/cfg/models/`，
+上游 `ultralytics/cfg/models` 里**所有可训练的 YAML** 都搬到了 `torchkiln/cfg/models/`，
 并在 `configs/yolo/` 生成了可直接训练的配置：
 
 | 家族 | YAML 目录 | 变体（= 生成的 `*_graph.yml`） | 任务 |
@@ -1126,7 +1132,7 @@ det/obb 导出为**多个输出**（每个尺度一个），seg 额外输出 mas
 > **anchor stride 由模型头部自动推导**（`[4,8,16,32]` / `[8,16,32,64]`），
 > 配置里写不写 `strides` 都会被纠正为真实层数，避免锚点错位。
 
-**模块库**（`pytorchx/nn/modules.py`，YAML 里可直接引用名字）：
+**模块库**（`torchkiln/nn/modules.py`，YAML 里可直接引用名字）：
 
 ```
 Conv DWConv ConvTranspose Bottleneck C1 C2 C2f C2fCIB C3 C3x C3TR C3Ghost C3k C3k2
@@ -1193,7 +1199,7 @@ Train:
 ```
 
 增广对 **检测框（xyxy / 旋转框 xywhr）、关键点、实例掩码** 做同一套几何变换
-（`pytorchx/data/augment.py`），已接入 det/obb/seg/pose/sem/depth 六个数据集；
+（`torchkiln/data/augment.py`），已接入 det/obb/seg/pose/sem/depth 六个数据集；
 `mosaic9`/`copy_paste` 同样会一起搬移框、关键点与掩码（`copy_paste` 只粘贴与目标图
 同类别的实例，且与已有目标 `IoU > 0.3` 时跳过，避免无效遮挡）。
 
@@ -1278,7 +1284,7 @@ python tools/check_plate_models.py   # 检测 500/500、识别 86/86 张量;识�
 * ⚠ 用户 `test_data` 里的 `yolov5plate.onnx` 是**更早版权重**(首层卷积即不同),不能作为对齐基准;
 * 车牌识别**不是 LPRNet**:仓库虽含 `LPRNet.py`,但权重来自 `plateNet.py/colorNet.py` 的 CNN+CTC(无 RNN)。
 
-数据格式:`路径 c1 c2 ... c7 颜色号`(字符表见 `pytorchx/nn/plate.py::PLATE_CHARSET`,
+数据格式:`路径 c1 c2 ... c7 颜色号`(字符表见 `torchkiln/nn/plate.py::PLATE_CHARSET`,
 颜色 `['黑色','蓝色','绿色','白色','黄色']`);检测标签为 `cls cx cy w h p1x p1y ... p4x p4y`(`kpt_shape: [4,2]`)。
 
 ---
@@ -1289,27 +1295,27 @@ python tools/check_plate_models.py   # 检测 500/500、识别 86/86 张量;识�
 
 | 配置 | 类别 | 输入 | 属性名表 |
 |---|---|---|---|
-| `configs/attr/pedestrian_attribute.yml` | **26** | 256×192(竖版) | `pytorchx/utils/pedestrian_attribute_label_list.txt` |
-| `configs/attr/vehicle_attribute.yml` | **19**(9 颜色 + 10 车型) | 192×256(横版) | `pytorchx/utils/vehicle_attribute_label_list.txt` |
+| `configs/attr/pedestrian_attribute.yml` | **26** | 256×192(竖版) | `torchkiln/utils/pedestrian_attribute_label_list.txt` |
+| `configs/attr/vehicle_attribute.yml` | **19**(9 颜色 + 10 车型) | 192×256(横版) | `torchkiln/utils/vehicle_attribute_label_list.txt` |
 
 * 网络 `AttributeNet` = `PPLCNetX1_0`(真实 `NET_CONFIG`:blocks5 无 SE、blocks6 仅 2 单元)+ 多标签头
   (`1×1 last_conv 512→1280 → hardswish → dropout(0.5, use_ssld) → Linear`),**1,707,386 参数**;
 * 损失 `MultiLabelLoss`:BCE + `ratio2weight = exp((1-t)·r + t·(1-r))`,`size_sum=True`(逐类求和、逐样本平均);
 * 指标 `AttrMetric`:阈值 0.5 的逐属性准确率均值 **mA** + **mAP**;
-* 增广对齐 `TimmAutoAugment(rand-m9-mstd0.5-inc1, p=0.8)`(见 `pytorchx/attr_randaug.py`)+ RandomErasing + Flip。
+* 增广对齐 `TimmAutoAugment(rand-m9-mstd0.5-inc1, p=0.8)`(见 `torchkiln/attr_randaug.py`)+ RandomErasing + Flip。
 
 ```powershell
 # 官方权重转换(PaddleClas .pdparams → torch .pth)
 & C:\ProgramData\miniconda3\envs\paddlex\python.exe tools/convert/dump_attribute_paddle.py `
-  --weights ~/.pytorchocr/pretrained/PP-LCNet_x1_0_pedestrian_attribute_pretrained.pdparams --out ~/.pytorchocr/pretrained/ped_attr_paddle.pkl
-python tools/convert/convert_attribute_weights.py --pkl ~/.pytorchocr/pretrained/ped_attr_paddle.pkl --num-classes 26 `
-  --out ~/.pytorchocr/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
+  --weights ~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute_pretrained.pdparams --out ~/.torchkiln/pretrained/ped_attr_paddle.pkl
+python tools/convert/convert_attribute_weights.py --pkl ~/.torchkiln/pretrained/ped_attr_paddle.pkl --num-classes 26 `
+  --out ~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
 
 # 训练 / 评估
 python tools/train.py -c configs/attr/pedestrian_attribute.yml `
-  -o Global.pretrained_model=~/.pytorchocr/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
+  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
 python tools/train.py -c configs/attr/vehicle_attribute.yml `
-  -o Global.pretrained_model=~/.pytorchocr/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
+  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
 python tools/eval.py  -c configs/attr/vehicle_attribute.yml --weights output/PP-LCNet_x1_0_vehicle_attribute/best_accuracy.pth
 ```
 
@@ -1324,15 +1330,15 @@ python tools/eval.py  -c configs/attr/vehicle_attribute.yml --weights output/PP-
 ## 18. 项目结构总览与文档索引
 
 ```
-E:\PytorchOCR
+E:\TorchKiln
 ├─ README.md            本文件(全平台说明)
 ├─ docs/                STRUCTURE / MODEL_ZOO / TRAINING / CONFIG_REFERENCE / FAQ
 ├─ ptcore/              平台层:config / pretrained / optimizer / precision / ema / batch_sampler /
 │                       task(TaskAdapter)/ trainers(每任务一个 trainer + base.BaseTrainer)
 │                       / trainer.py(兼容 shim)/ factory
-├─ pytorchx/ocr/          OCR 产品线:modeling(backbones/necks/heads/transforms)、data/imaug、
+├─ torchkiln/ocr/          OCR 产品线:modeling(backbones/necks/heads/transforms)、data/imaug、
 │                       losses、metrics、postprocess、utils/dict、task、trainer
-├─ pytorchx/         YOLO + 车牌 + 属性:nn(modules/graph/plate/attribute)、models、det、
+├─ torchkiln/         YOLO + 车牌 + 属性:nn(modules/graph/plate/attribute)、models、det、
 │                       data(augment/det/seg/pose/sem/depth/plate)、tasks/(每任务一个文件:
 │                       classify/detect/obb/segment/pose/semantic/depth/plate_det/plate_rec/
 │                       attribute/pose_action/video_cls + _base/_cls)、cfg/models(上游 YAML 53 个)
@@ -1355,7 +1361,7 @@ E:\PytorchOCR
 | `python tools/check_graph_build.py` | `53 configs: 53 OK, 0 FAIL` |
 | `python tools/check_plate_models.py` | 检测 500/500、识别 86/86,识别 ONNX `max|diff| ≈ 1e-5` |
 
-**依赖方向**:`configs → ptcore.config → ptcore.factory → ptcore.trainer.BaseTrainer ← {pytorchx.ocr.TaskAdapter, pytorchx.TaskAdapter}`;
-`ptcore` 不反向依赖任何产品线;`pytorchx/ocr/utils/*`、`pytorchx/ocr/optimizer/` 是兼容 shim(真实现在 `ptcore/`)。
+**依赖方向**:`configs → ptcore.config → ptcore.factory → ptcore.trainer.BaseTrainer ← {torchkiln.ocr.TaskAdapter, torchkiln.TaskAdapter}`;
+`ptcore` 不反向依赖任何产品线;`torchkiln/ocr/utils/*`、`torchkiln/ocr/optimizer/` 是兼容 shim(真实现在 `ptcore/`)。
 
 

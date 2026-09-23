@@ -1,5 +1,30 @@
 # AGENTS.md
 
+## 仓库改名（PytorchOCR → TorchKiln，2026-09-23，已完成）
+- **三层命名**：
+  | 层 | 旧 | 新 |
+  |---|---|---|
+  | 仓库根目录 | `E:\PytorchOCR` | **`E:\TorchKiln`** |
+  | Python 包 / import | `pytorchx` | **`torchkiln`**（目录 `pytorchx/` → `torchkiln/`） |
+  | CLI 命令 | `ptx` / `ptx.bat` / `python -m pytorchx` | **`tkiln`** / `tkiln.bat` / `python -m torchkiln` |
+- **改名原因**：`TrainForge`/`trainforge`（组织+PyPI）、`PytorchX`/`pytorchx`（wang-xinyu 200★ 同名且也做 YOLO）、`TorchForge`（Meta 官方）均已占用；`kiln` 命令被 Kiln-AI(5k★) 占用故 CLI 用 **`tkiln`**；`torchkiln` GitHub/PyPI 搜索干净。
+- **必须保留、禁止改（外部契约）**：
+  - ModelScope 外部 URL / 模型名：`ChaoII0987/PytorchOCR`（configs 里 `pretrained_model`、`MODELSCOPE_MODEL = "PytorchOCR"`、`datasets/manifest.yml` 的 prefix）。
+  - 环境变量名保持 **`PYTORCHOCR_*`**（`PYTORCHOCR_HOME` / `PRETRAINED_DIR` / `AUTO_DOWNLOAD` / `ALLOW_LOCAL_REPO` / `TF32` / `CUDNN_BENCHMARK`）——改了会破坏用户已有环境变量与文档。
+  - 兼容包 **`pytorchocr/`** 目录与 `_PREFIX = "pytorchocr"`（老 import 别名到 `torchkiln.ocr`）；`pyproject` 的 `include` 含 `pytorchocr*`。
+  - conda 环境名 **`ptocr`** 不变（与仓库名无关）。
+- **缓存路径**：
+  - 新默认：`~/.torchkiln/pretrained/`（及 OCR 子路径 `~/.torchkiln/ocr/pretrained/`）。
+  - **旧缓存 `~/.pytorchocr/pretrained/` 仍会被回退查找**（`ptcore/pretrained.py::_local_search_dirs` 追加 legacy 目录），已下载权重不用重下。
+  - 可迁移：`Move-Item $env:USERPROFILE\.pytorchocr $env:USERPROFILE\.torchkiln`（可选）。
+- **标签缓存**：`CACHE_VERSION = "tkiln-labels-1.0"`（由 `ptx-labels-1.0` 改来），旧 `.labels_cache_*.pkl` 会自动失效重扫，无害。
+- **启动器**：根目录 `tkiln`（sh）与 `tkiln.bat`；`pip install -e .` 后 `pyproject.toml` 注册 console script `tkiln = torchkiln.cli:main`。
+- **批量替换踩坑（复盘，勿重蹈）**：
+  1. PowerShell `-replace` **默认大小写不敏感**——会把 `pytorchocr`/`PYTORCHOCR_*` 误替换成 `TorchKiln`。必须用 `.NET` 的 `.Replace()`（大小写敏感）或 `-creplace`。
+  2. 用占位符保护外部 URL 时，占位符**自身**也被大小写不敏感替换打穿 → 恢复失败。保护 token 里不要含被替换子串的大小写变体。
+  3. 仓库根目录改名时若有进程 cwd 在目录内会 `IOException`；解法：从 `E:\` 用 `robocopy /E /MOVE` 搬内容到新名，再删空壳。
+- **验证记录（改名后全过）**：`import torchkiln/ptcore/pytorchocr` OK；`python -m torchkiln --help` / `tkiln.bat check -c configs/_parity/dx_yolo11n_det.yml` OK；`tools/check_graph_build.py` **53 OK, 0 FAIL**；git 仓库在 `E:\TorchKiln` 可用。
+
 ## Detect（目标检测）与 ultralytics 的对齐（单步验证已通过，yolo11n）
 - 验证方法为**单步验证**：同权重（`\\tsclient\D\项目资料\ultralytics_models` dump）+ 同输入 `\opencode\det_x_1.npz`(1,3,640,640)
   + 同 GT（像素框 [192,128,320,384]，ultra 归一化 xywh=[0.4,0.4,0.2,0.4]）做前向（feature/loss）+ 反向（梯度）对比。
@@ -8,7 +33,7 @@
   - assigner 匹配一致：n_fg=10 / t_scores.sum=1.3955（框架=ultra）。
   - 损失三分量（raw）全对齐：box=**0.5508**、cls=**23.3453**、dfl=**3.1119**；total=**20.47179** vs ultra **20.47182**（差 3e-5）。
   - 梯度 maxdiff=0.0216（worst `model.0.conv.weight`，cuDNN 卷积反向算子级微差）。
-- **关键 bug 修复（DFL 目标，影响所有 detect 训练）**：`pytorchx/det/loss.py::DetLoss._forward_one`
+- **关键 bug 修复（DFL 目标，影响所有 detect 训练）**：`torchkiln/det/loss.py::DetLoss._forward_one`
   原先把 `tgt = (t_bboxes[fg]/stride_fg).clamp(0, reg_max-1-1e-3)` —— 把 **GT 框坐标** clamp 到 reg_max-1-0.99，
   导致 x2=320/16=20 被截断到 14.99，DFL target 错误（dfl 4.07 vs ultra 3.11）。**ultra 从不对框坐标 clamp**，
   只在 `bbox2dist` 输出的 **ltrb 距离**上 clamp（`reg_max-1-0.01`，对齐 ultra `DFLoss`）。已改为：
@@ -110,7 +135,7 @@
 - 评估用 `Eval.loader.num_workers=0`、训练默认 `Train.loader.num_workers=4`（Windows 下 worker 过多会耗尽提交内存）。
 
 ## 环境
-- 框架（PytorchOCR / pytorchx）使用 conda 环境 **`ptocr`**（Python 3.12 + PyTorch 2.12 + CUDA）。
+- 框架（TorchKiln / torchkiln）使用 conda 环境 **`ptocr`**（Python 3.12 + PyTorch 2.12 + CUDA）。
 - 原版 ultralytics 使用 conda 环境 **`ultralytics`**（Python 3.12 + ultralytics 8.4.x）。
 - 两者均可用 GPU（CUDA 可用）。
 
@@ -123,7 +148,7 @@
 - 图片与权重一律**不入库**（由 `.gitignore` 忽略），只保留标签文本与清单文件。
 
 ## OBB（旋转框）与 ultralytics 的对齐（已完成并验证）
-- **旋转框 NMS**：`pytorchx/det/rbox.py::nms_rotated` 由 O(N²) 纯 NumPy 多边形裁剪（2000 框 87s）
+- **旋转框 NMS**：`torchkiln/det/rbox.py::nms_rotated` 由 O(N²) 纯 NumPy 多边形裁剪（2000 框 87s）
   改为 **`probiou`(ProbIoU 上三角矩阵) + `fast_nms` 上三角抑制**（GPU 向量化，2000 框 0.13s），
   并加 `max_candidates=3000`（仿 ultra `max_nms`）防密集图 OOM。
   **已验证与 ultra `TorchNMS.fast_nms(...,iou_func=batch_probiou)` 输出索引完全一致（maxdiff=0.0）。**
@@ -205,10 +230,10 @@
 ## Pose（关键点）与 ultralytics 的对齐（已完成并验证）
 - **数据管线**：`PoseDataset` 支持 `kpt_shape:[12,2]`（无可见性维），加载时若 `ndim==2` 会**补一列可见性**
   （`x/y<0 → 0，否则 1`），与 ultralytics `verify_image_label` 一致（GT 关键点恒为 `(N,nk,3)`）。
-- **Pose 头 cv4**：`pytorchx/nn/modules.py` 的 `Pose`/`PoseU` 头 `cv4` 从 `c4=x` 改为 **`c4=max(ch[0]//4, nk)`**，
+- **Pose 头 cv4**：`torchkiln/nn/modules.py` 的 `Pose`/`PoseU` 头 `cv4` 从 `c4=x` 改为 **`c4=max(ch[0]//4, nk)`**，
   与 ultralytics `Pose.cv4` 一致；框架模型与 ultralytics `yolo11n-pose`（nc=1,kpt:[12,2]）**权重完全加载
   （missing=0 unexpected=0）**。
-- **关键点损失（重要 bug 修复）**：`pytorchx/pose.py::PoseLoss` 对齐 ultralytics `v8PoseLoss`——
+- **关键点损失（重要 bug 修复）**：`torchkiln/pose.py::PoseLoss` 对齐 ultralytics `v8PoseLoss`——
   `KeypointLoss` 用 `e=d/((2σ)²·area·2)`、`loss_pose=(kpt_loss_factor·(1-exp(-e))·kpt_mask).mean()`、`pose_gain=12/kobj_gain=1`；
   **关键修复**：`target_bboxes` 也先 `/=stride` 转成**网格单位**再算 `area`（原实现用像素面积，梯度被稀释 ~1.7 万倍，
   导致关键点头几乎不学习）。修复前从零 30ep pose mAP=0，修复后 **0.164**。
@@ -243,16 +268,95 @@
   - ultralytics box_mAP50=0.922 / box_mAP50-95=0.845，mask_mAP50=0.9235 / mask_mAP50-95=**0.8214**。
   - **同一权重下高度一致**：mask_mAP50-95 差 0.0008（几乎相等），box_mAP50-95 差 ~0.005（算子级微差）。
 
+## Segment 端到端训练对齐（关键修复：评估 fp16 + 增广裁剪中心；系统性差距已消除）
+- 背景：框架 seg 训练 mAP 曾**系统性落后** ultra ~0.03-0.05（v8/y11/y26 全部家族都差，非随机）。
+  排查结论：**不是训练/损失问题，而是「评估精度」+「增广实现」两处 bug**。
+- **快速定位手法（重要，省时）**：
+  1. 把 **ultra 自己训练的 `best.pt`** 丢进**框架评估器**：若数值对不上，问题必在评估侧（与训练无关）。
+  2. 对照 ultra `results.csv` 时注意列序：**mask mAP50-95 是第 15 列(index 14)**，别读成 index 13(mAP50)。
+  3. **统一用同一评估器评双方模型**（排除 ultra val 默认 `rect=True` 抬高的口径差）。
+  4. **多 seed（各 3 个）** 确认差距是否超过运行噪声（v8n std≈0.014/0.026）。
+  5. **关增广对照**：若差距消失→问题在增广（实测无增广差距仅 0.008）。
+- **修复 1（评估 fp16→fp32，`ptcore/trainers/base.py::_evaluate_loop`）**：评估阶段改为
+  `torch.autocast(..., enabled=False)` 强制 fp32。yolo26 seg 的 `reg_max=1` 框解码 / proto einsum
+  在 fp16 下失真 → 同权重 mask_mAP50-95 **0.5596(fp16) vs 0.6413(fp32)**（ultra val 是 fp32）。
+  此 bug **影响所有任务**的历史评估数值。
+- **修复 2（mosaic 裁剪中心，`torchkiln/data/augment.py::mosaic4`）**：调 `_random_crop_mosaic(..., center=(s,s))`
+  即**画布中心**。ultra `RandomPerspective` 的 `M=T@S@R@P@C` 把**输入画布中心**映射到输出中心（scale 仅 jitter），
+  等价于在画布中心裁剪；框架原在 mosaic 的 tile 汇聚点 `(xc,yc)` 裁剪 → 物体分布与 ultra 不一致。
+  改后 **v8n 0.595→0.650（=ultra 0.648）**，系统性差距消除。⚠️注意：曾试过"不裁剪改缩放(2S→S)"，
+  **更差(0.47)**——ultra 的仿射是**中心裁剪**不是缩放，勿再走弯路。
+- **修复 3（SegLoss DFL/L1，`torchkiln/seg.py`）**：`tgt` 不该 clamp 到 `reg_max-1`（只 clamp `bbox2dist` 的
+  ltrb 距离，对齐 `DetLoss`/ultra）；`reg_max<=1` 时补 **L1 loss**（对齐 ultra `BboxLoss` 无 DFL 分支）。
+- **修复 4（yolo26 seg 真 E2E 训练）**：`Segment26.forward` 训练返回 `(one2many, one2one, proto)`
+  （one2one 输入特征 `detach`）；`SegLoss` 支持双分支（one2many `topk=10`；one2one `topk=7, topk2=1`，
+  one2one 的 proto `detach`）+ **语义辅助损失**（BCE+Dice，`_semantic_loss`）+ ultra `E2ELoss` 的
+  **o2m/o2o 增益调度**（0.8→0.1，每 epoch 末 `loss.update()`，`base.py::_train_one_epoch`）。
+  ⚠️**关键**：`Segment26.__init__` 必须初始化 **one2one_cv2/cv3 的 bias**（对齐 ultra `bias_init`），
+  否则 one2one cls 初始 p~0.5 → cls loss 爆炸(1495) → 训练崩盘；并需**重生成 nc1 权重**（patch one2one_cv3 末端 bias）。
+- **修复 5（`evaluate()` 两处）**：BN eps 仅 `yolo_cls` 用 1e-5（det/seg/pose/obb 保留训练值 1e-3，强改 1e-5 会崩）；
+  end2end 交换**推广到所有含 `one2one_cv2` 的头**（Segment26/OBB26，原先只换 Detect10）。
+- **结果（缩放集 100/50，50 轮，同一框架评估器）**：v8n **0.650** vs ultra 0.648；y11n **0.618** vs 0.583；
+  y26n **0.636** vs 0.642 → **系统性差距消除**（框架不落后）。单步 seg loss 与 ultra 差 ~1.5%（mask 1.7%、box/dfl <0.5%）。
+- **速度经验**：训练期**不评估**（仅末轮评一次，`eval_epoch_step` 设大、`eval_batch_step` 设大）；`num_workers=8`
+  稳态 ~6.6s/epoch（~7 分钟/模型）；瓶颈是 mosaic 掩码构建(CPU)，非 GPU。Windows 下 worker 多 + 全分辨率掩码易 OOM；
+  `load_raw` 加内存缓存会 OOM（8 worker×全分辨率掩码，已回退）；残留 python 进程会占数 GB，需 `Stop-Process` 清理。
+- 数据集：`datasets/package-seg-r/`（1920×1080 预缩放 960×540，`train.txt`/`val.txt`(相对)+`*_abs.txt`(ultra)+`pkgsub_ultra.yaml`），
+  配置 `output/seg_r_cfg/{yolov8n,yolo11n,yolo26n}.yml`。
+
+## 通用训练/评估关键修复（det/seg/pose/obb 通用）
+- **关键 bug：梯度累积 `accumulate` 路径写错（`ptcore/trainers/base.py`）**——原读
+  `config["Train"]["dataset"]["loader"]["batch_size_per_card"]`（不存在），实际在 `Train.loader`。
+  → `_bs=1` → `accumulate = round(nbs/1) = 64`（应为 `nbs/batch`，如 64/8=8）。
+  **后果：有效 batch 放大 8×、每 epoch 仅 ~4 次优化器更新（应 ~25）→ 学习慢 8×、收敛远慢于 ultra**。
+  已修（读 `Train.loader`，兼容旧式 `Train.dataset.loader`）。修复后同 10 轮（val50）：框架 **0.4457→0.5557**（ultra 0.538，反超）。
+  ⚠️ **这解释了此前"框架普遍收敛慢"的真正原因**（不是增广、不是优化器、不是 warmup）。
+- **关键 bug：评估 NMS 极慢（`torchkiln/det/ops.py::nms`）**——原为 Python 逐框循环 + 每步 `.item()` GPU 同步；
+  16800 框时 **10s/图**，402 张 val 要 ~1 小时（表现为"评估卡死"）。改用 **torchvision C++ NMS**：
+  postprocess **504s→2.5s/50图（200×）**，全 val 35s；mAP 逐位不变。（旋转框 NMS 早已优化为 probiou+fast_nms。）
+- **评估 fp16→fp32**（`_evaluate_loop`，见 Segment 节修复 1）：强制 fp32，否则 yolo26 等被系统性低估。
+- **MuSGD/Muon 优化器（新增 `ptcore/muon.py` + `ptcore/optimizer.py`）**——1:1 移植 ultra `optim/Muon`：
+  `optimizer=auto` 迭代数 >10000 选 MuSGD(lr0=0.01, momentum=0.9)；ndim∈{2,4} 走 Newton-Schulz 正交化的 Muon，
+  检测头 `cv3/one2one_cv3` 参数 `lr*3`；`muon=0.2, sgd=1.0`。10 轮比 SGD 好 +0.02。
+- **yolo26 检测 E2E 损失已逐位对齐**：单步**同权重**下总 loss **27.138552 vs 27.138544**（差 8e-6）。
+  之前"one2one cls 差 6×"是**权重加载不一致**的假象——对比时**必须让两边加载完全相同的权重**。
+- **增广/仿射**：`mosaic4` 裁剪中心已对齐画布中心 `(s,s)`；`RandomAffine` 矩阵已改为 ultra `RandomPerspective` 的
+  `M=T@S@R@P@C`。`augment.mosaic_crop` 可选（det 早期不裁剪略好、100 轮裁剪略好，差异不大）。
+- **复现验收标准（通用）**：① 权重加载 missing=0/unexpected=0；② 同权重逐层前向 maxdiff ~1e-5；
+  ③ 单步 loss/梯度（loss 相对误差 <1e-3；梯度仅 cuDNN 卷积反向的算子级微差）；④ 同权重推理 mAP 差 ≤0.02；
+  ⑤ 端到端训练 mAP 收敛后差 ≤0.02-0.03（含随机种子噪声）。**1-4 项对齐即复现成功**；第 5 项天生有噪声。
+- **外部 person 检测数据集**：`E:\20260921\export_yolo_dataset`（2560×1440，1606/402，`cls cx cy w h` 归一化），
+  预缩放副本 `datasets/export_yolo_1280/`（含 `train/val.txt` 相对 + `*_abs.txt` ultra + `pkgsub_ultra.yaml`），
+  配置 `configs/export_yolo/yolo26n_det.yml`（yolo26n, imgsz1280, batch8, MuSGD/auto, mosaic_crop=false, 预训练 `weights/yolo26n_det.pt`）。
+
+## 复现/对比 ultralytics 的常见坑（避雷清单）
+- **口径必须一致**：ultra 自报的 mAP 默认用 `rect=True`（val 矩形 letterbox）会抬高数值；框架是方图。
+  对比时**必须用同一个评估器评双方权重**（把 ultra 的 `best.pt` 丢进框架 `tools/eval.py` 即可）。
+- **读 ultra `results.csv` 注意列序**：`metrics/mAP50-95(B)` 是第 11 列(index 10)、`metrics/mAP50-95(M)` 是 index 14；
+  别把 index 13(`mAP50`) 当成 mAP50-95（本会话为此误判过）。
+- **单步 loss/梯度对比必须加载"完全相同"的权重**：一边 `miss=102`、另一边 `miss=594` 时算出来的 loss 毫无意义
+  （曾据此误判"one2one cls 差 6×"）。做法：框架加载后 dump `state_dict`，ultra 直接加载它。
+- **对比必须用同一 val 清单**：框架 val50 vs ultra val402 不可比；要么都用同一文件，要么都用同一评估器。
+- **`augment: {}`（空 dict）是 falsy**，`DetDataset/SegDataset` 不会建 augmenter → 需写显式值
+  （`mosaic/hsv/affine/fliplr/close_mosaic`）才真正开启增广。
+- **batch 配在 `Train.loader`（与 dataset 同级）**，不是 `Train.dataset.loader`；框架已兼容两者，
+  但历史配置混用过，排查 `accumulate` 时注意。
+- **大图慢**：2560×1440 直接 mosaic 极慢；预缩放到训练 `imgsz`（无损）可让 reader 114s→43s/epoch。
+- **Windows worker/内存**：`num_workers` 过大 + 全分辨率掩码/mosaic 画布易 OOM；`load_raw` 加内存缓存会 OOM（已回退）；
+  残留 python 进程会占数 GB，需 `Stop-Process -Force` 清理。
+- **训练/评估进程可能"结束即卡住"**（无输出、GPU 归零、无残留进程）→ 用 `val` 子集评估、或训练时 `eval_epoch_step` 设大。
+- **`device` 必须写 `cuda:0`**（写 `'0'` 会按非 gpu/cuda 前缀解析到 cpu）。
+
 ## Classification（图像分类）与 ultralytics 的对齐（已完成并验证）
-- **任务已存在但需对齐验证**：`pytorchx/tasks/classify.py` + `_cls.py`（ClsLoss/ClsMetric/ClsPostProcess）
-  + `pytorchx/data/cls.py::ClsDataset`（读 `path label` 清单）；框架 `pytorchx/cfg/models/11/yolo11-cls.yaml`
+- **任务已存在但需对齐验证**：`torchkiln/tasks/classify.py` + `_cls.py`（ClsLoss/ClsMetric/ClsPostProcess）
+  + `torchkiln/data/cls.py::ClsDataset`（读 `path label` 清单）；框架 `torchkiln/cfg/models/11/yolo11-cls.yaml`
   与 ultra yolo11-cls 结构一致（backbone + 单一 `Classify` 头：Conv→1280 → AdaptiveAvgPool → Linear(nc)）。
 - **权重加载完全对齐**：dump ultralytics `yolo11n-cls.pt`（ImageNet 1000 类）→ `build_arch_model(...,"classify")` 加载：
   **missing=0 / unexpected=0**（框架 `Classify` 头与 ultra 完全一致）。
 - **全部 15 个权重对齐（yolov8/yolo11/yolo26 × n/s/m/l/x）**：对 `\\tsclient\D\项目资料\ultralytics_models\{yolov8,yolo11,yolo26}\*-cls.pt`
   全部验证——加载均 **missing=0/unexpected=0**；同输入(224)推理 softmax maxdiff **≤0.0000007**（几乎逐位一致），top1 全部一致。
 - **C3k2 的 M/L/X 规模逻辑已对齐**：ultra `parse_model` 对 `scale∈{m,l,x}` 强制 C3k2 `c3k=True`（用 C3k，1×1）；框架
-  `pytorchx/nn/graph.py::parse_model` 已复刻（`if module_name=="C3k2" and scale in ("m","l","x"): args[2]=True`），
+  `torchkiln/nn/graph.py::parse_model` 已复刻（`if module_name=="C3k2" and scale in ("m","l","x"): args[2]=True`），
   n/s 用 Bottleneck(3×3)，m/l/x 用 C3k(1×1)，故各规模权重均能完全加载。
 - **前向一致性（同权重同输入，imgsz=224）**：框架 vs ultra 逐层对比——
   - backbone 各层（Conv/C3k2/C2PSA）maxdiff **≈0.00000**（几乎逐位一致）；raw logits maxdiff 0.000004；softmax maxdiff **0.000000**；top1 一致（885）。
@@ -269,7 +373,7 @@
 - 注：cls_demo（3 类 96×96）是 toy 数据，与 1000 类预训练权重不匹配；核心对齐验证用 ImageNet 预训练权重完成。
 
 ## 家族头路由与 seg 全家族对齐（重要）
-- **按家族路由检测/分割头（`pytorchx/nn/graph.py`）**：`build_from_arch` 从 `yaml_file` 判断家族，
+- **按家族路由检测/分割头（`torchkiln/nn/graph.py`）**：`build_from_arch` 从 `yaml_file` 判断家族，
   旧家族（`v3/v5/v8/v9`）令 `spec["_legacy"]=True`；`parse_model` 里对 legacy 家族把
   `Detect/Segment/OBB/Pose` 路由到 **旧式 Conv 头**（`modules.py` 的 `Detect/Segment/OBB/Pose` 类），
   新家族（`yolo11/12/26`）用 **新 DWConv 头**（`SegmentU`/`Detect26` 等）。
@@ -314,7 +418,7 @@
 - 注意：**两个训练不能同时占用 GPU**（16GB 会 OOM），需串行。
 
 ## git 约定
-- 仓库已在 `E:\PytorchOCR` 初始化。
+- 仓库已在 `E:\TorchKiln` 初始化。
 - `.gitignore` 会忽略：`__pycache__`、`output/`、`*.log`、权重(`*.pt/*.pth`)、数据集图片、
   数据集压缩包(`*.zip/*.tgz/*.tar`)、缓存(`*.cache`、`.labels_cache_*.pkl`)、`_downloads/`、`_ref/`。
 - 提交信息使用中文、简洁说明改动即可。
@@ -334,11 +438,11 @@
   实测开 EMA exponential 后框架终值 mAP50-95≈**0.7825**，与无 EMA（0.7817）几乎相同 → 说明此前无 EMA 结果已接近 ultra。
 - **同 batch=8 → 两侧都按 step 递减 LR**（框架 Linear scheduler 每 do_step、ultra 也每 batch），LR 相位对齐。
   （之前 mini_det 用 batch=4 使 1 step/epoch 造成 LR 错位；dx 用大数据+同 batch 解决。）
-- **同权重评估对比（定位 mAP 差来源）**：用 ultra 训练好的 `weights/best.pt`（nc=1），框架 `ptx val` 加载
+- **同权重评估对比（定位 mAP 差来源）**：用 ultra 训练好的 `weights/best.pt`（nc=1），框架 `tkiln val` 加载
   **missing=0/unexpected=0**，评估 **mAP50=0.995 / mAP50-95=0.7928 / mAP75=0.9947**，
   ultra 自评 **mAP50=0.995 / mAP50-95=0.7909** → 同一权重下 mAP50-95 仅差 **0.0019**，**评估管线一致**。
   → 训练端到端 mAP 差的 **~0.008** 主要来自**训练阶段数据顺序差异**（框架 `Train.loader.shuffle=false`、ultra 默认 shuffle=true，
-  每 batch 梯度次序不同），属训练噪声，非算法/评估差异。`ptx val`（`tools/eval.py`）强制 `use_ema=False`
+  每 batch 梯度次序不同），属训练噪声，非算法/评估差异。`tkiln val`（`tools/eval.py`）强制 `use_ema=False`
   且用 `load_state_dict_any` 可加载 ultra `.pt`，因此可做同权重跨端评估。
 - **验证结果（val mAP，6 epoch）**：
   | ep | 框架 mAP50-95 | ultra mAP50-95 | 框架 mAP50 | ultra mAP50 |

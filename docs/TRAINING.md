@@ -10,7 +10,7 @@
 ```powershell
 # 1) 训练(不改 yml,用 -o 覆盖任意字段)
 python tools/train.py -c configs/det/ch_PP-OCRv4_det_mobile.yml `
-  -o Global.pretrained_model=~/.pytorchocr/pretrained/ch_PP-OCRv4_det_mobile_ptocr.pth `
+  -o Global.pretrained_model=~/.torchkiln/pretrained/ch_PP-OCRv4_det_mobile_ptocr.pth `
   -o Global.epoch_num=100 -o Train.dataset.data_dir=D:/mydata/det
 
 # 2) 评估
@@ -26,21 +26,21 @@ python tools/export.py -c configs/det/ch_PP-OCRv4_det_mobile.yml --weights outpu
 
 ### 0.1 ultralytics 风格的任务/模式 CLI(推荐)
 
-> 命令名 **ptx**(仓库根目录已提供免安装启动器 ptx.bat / ptx;pip install -e . 后可用
-> pyproject.toml 注册的 ptx 入口)。下面示例里的 python -m pytorchx 与 ptx 完全等价。
+> 命令名 **tkiln**(原 `ptx`,2026-09 随仓库改名 TorchKiln;根目录提供免安装启动器 tkiln.bat / tkiln;
+> pip install -e . 后可用 pyproject.toml 注册的 tkiln 入口)。下面示例里的 python -m torchkiln 与 tkiln 完全等价。
 
 ```powershell
-python -m pytorchx <task> <mode> [args...]        # mode = train | val | export | predict | check
+python -m torchkiln <task> <mode> [args...]        # mode = train | val | export | predict | check
 
-python -m pytorchx detect    train  -c configs/yolo/yolov8_graph.yml -o Global.epoch_num=100
-python -m pytorchx obb       val    -c configs/yolo/yolov8-obb_graph.yml --weights output/x/best_accuracy.pth
-python -m pytorchx pose      export -c configs/yolo/yolov8-pose_graph.yml --weights ... --onnx
-python -m pytorchx plate_det train  -c configs/plate/plate_det.yml
-python -m pytorchx plate_rec train  -c configs/plate/plate_rec.yml
-python -m pytorchx attribute train  -c configs/attr/vehicle_attribute.yml
-python -m pytorchx ocr_det   train  -c configs/det/PP-OCRv5_mobile_det.yml
-python -m pytorchx detect    check  -c configs/yolo/yolov8_graph.yml    # 只构建 + 打印摘要
-python -m pytorchx --help                                              # task/mode 一览
+python -m torchkiln detect    train  -c configs/yolo/yolov8_graph.yml -o Global.epoch_num=100
+python -m torchkiln obb       val    -c configs/yolo/yolov8-obb_graph.yml --weights output/x/best_accuracy.pth
+python -m torchkiln pose      export -c configs/yolo/yolov8-pose_graph.yml --weights ... --onnx
+python -m torchkiln plate_det train  -c configs/plate/plate_det.yml
+python -m torchkiln plate_rec train  -c configs/plate/plate_rec.yml
+python -m torchkiln attribute train  -c configs/attr/vehicle_attribute.yml
+python -m torchkiln ocr_det   train  -c configs/det/PP-OCRv5_mobile_det.yml
+python -m torchkiln detect    check  -c configs/yolo/yolov8_graph.yml    # 只构建 + 打印摘要
+python -m torchkiln --help                                              # task/mode 一览
 ```
 
 `<task>` 只做命名空间与一致性校验(真任务由配置的 `Architecture.task` 决定),其余参数与
@@ -66,9 +66,9 @@ python tools/train.py -c configs/plate/plate_rec.yml `
 
 # 属性识别(行人 / 车辆)
 python tools/train.py -c configs/attr/pedestrian_attribute.yml `
-  -o Global.pretrained_model=~/.pytorchocr/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
+  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
 python tools/train.py -c configs/attr/vehicle_attribute.yml `
-  -o Global.pretrained_model=~/.pytorchocr/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
+  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
 ```
 
 ## 2. 训练特性(与 ultralytics 对齐)
@@ -190,14 +190,14 @@ python tools/train.py -c <cfg>.yml -o Global.distributed=true -o Global.gpu=0,1,
 仓库**不入库**图片、掩码、深度图与任何权重文件(.gitignore 已挡住)。两类外部资产的获取方式:
 
 ### 9.1 预训练权重
-* 本地缓存目录:**~/.pytorchocr/pretrained/**(Windows:C:\Users\<用户>\.pytorchocr\pretrained)。
+* 本地缓存目录:**~/.torchkiln/pretrained/**(Windows:C:\Users\<用户>\.torchkiln\pretrained)。
   平台按**配置名**找权重:<config_name>_ptocr.pth(	ools/smoke_all.py 的 --pretrained-dir 默认即此目录)。
 * 配置里可以直接写 ModelScope URL(推荐),平台会**自动下载 + 缓存**:
   `yaml
   Global:
     pretrained_model: https://www.modelscope.cn/models/ChaoII0987/PytorchOCR/resolve/master/pretrained/<file>.pth
   `
-  也可临时覆盖:ptx train -c <cfg> -o Global.pretrained_model=<本地路径或URL>。
+  也可临时覆盖:tkiln train -c <cfg> -o Global.pretrained_model=<本地路径或URL>。
 * 上传命名约定(必须与配置名一致):
   | 文件 | 模型 |
   |---|---|
@@ -208,9 +208,9 @@ python tools/train.py -c <cfg>.yml -o Global.distributed=true -o Global.gpu=0,1,
 
 ### 9.2 数据集
 `powershell
-ptx data list                  # 每个数据集:label / 图片 / URL 是否就绪
-ptx data get <name>            # 从 ModelScope 下载并解包到 datasets/<name>/
-ptx data get --all
+tkiln data list                  # 每个数据集:label / 图片 / URL 是否就绪
+tkiln data get <name>            # 从 ModelScope 下载并解包到 datasets/<name>/
+tkiln data get --all
 python tools/make_demo_data.py --all     # 没网时生成本地占位图(仅供自检)
 `
 约定:datasets/<name>/{train.txt,val.txt,images/},	rain.txt 只列图片相对路径;

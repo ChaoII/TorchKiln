@@ -7,7 +7,7 @@ ships two kinds of checkpoints:
   ``models.*`` classes to unpickle),
 * ``weights/plate_rec_color.pth`` - ``{'cfg': [...], 'state_dict': {...}}``.
 
-Both are mapped onto our own classes (``pytorchx.nn.plate``) and written as
+Both are mapped onto our own classes (``torchkiln.nn.plate``) and written as
 ``{'state_dict': ..., 'cfg': ...}`` so ``Global.pretrained_model`` can load them
 with the usual name+shape matching.
 
@@ -34,8 +34,8 @@ if ROOT not in sys.path:
 def _class_map():
     import torch.nn as nn
 
-    from pytorchx.nn import plate as P
-    from pytorchx.nn.modules import C3, Concat, Conv
+    from torchkiln.nn import plate as P
+    from torchkiln.nn.modules import C3, Concat, Conv
 
     class _Model(nn.Module):
         """Placeholder for upstream ``models.yolo.Model``."""
@@ -54,7 +54,7 @@ def _class_map():
 
 def load_upstream_state(path):
     """``torch.load`` an upstream checkpoint whose classes are not importable."""
-    from pytorchx.nn import plate as _plate  # noqa: F401  (registers modules)
+    from torchkiln.nn import plate as _plate  # noqa: F401  (registers modules)
 
     class _Unpickler(pickle.Unpickler):
         MAP = _class_map()

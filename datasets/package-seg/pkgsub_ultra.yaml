@@ -1,4 +1,4 @@
-path: E:\PytorchOCR\datasets\package-seg
+path: E:\TorchKiln\datasets\package-seg
 train: train_abs.txt
 val: val_abs.txt
 nc: 1

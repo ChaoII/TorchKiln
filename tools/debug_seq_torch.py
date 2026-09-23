@@ -9,15 +9,15 @@ from torch.utils.data import DataLoader
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT)
 
-from pytorchx.ocr.data.simple_dataset import SimpleDataSet
-from pytorchx.ocr.losses import build_loss
-from pytorchx.ocr.metrics import build_metric
-from pytorchx.ocr.modeling.architectures.base_model import BaseModel
-from pytorchx.ocr.optimizer import build_optimizer
-from pytorchx.ocr.postprocess import build_post_process
-from pytorchx.ocr.trainer import det_eval_collate
-from pytorchx.ocr.utils.config import load_config
-from pytorchx.ocr.utils.precision import enable_paddle_like_precision
+from torchkiln.ocr.data.simple_dataset import SimpleDataSet
+from torchkiln.ocr.losses import build_loss
+from torchkiln.ocr.metrics import build_metric
+from torchkiln.ocr.modeling.architectures.base_model import BaseModel
+from torchkiln.ocr.optimizer import build_optimizer
+from torchkiln.ocr.postprocess import build_post_process
+from torchkiln.ocr.trainer import det_eval_collate
+from torchkiln.ocr.utils.config import load_config
+from torchkiln.ocr.utils.precision import enable_paddle_like_precision
 
 OFF = os.path.join(ROOT, "_downloads", "official")
 CFG = os.path.join(ROOT, "configs", "det", "PP-OCRv4_mobile_det.yml")

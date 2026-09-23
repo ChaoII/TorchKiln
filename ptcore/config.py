@@ -138,7 +138,7 @@ def merge_config(config, opts):
         )
 
     if unknown_keys:
-        logging.getLogger("pytorchx/ocr").warning(
+        logging.getLogger("torchkiln/ocr").warning(
             "Overriding key(s) not present in the yml (added anyway): %s",
             ", ".join(unknown_keys),
         )

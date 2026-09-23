@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+# tkiln - unified TorchKiln CLI:  tkiln <task> <mode> [args...]
+# Prefer TKILN_PYTHON, then CONDA_PREFIX, then common ptocr path, else python.
+if [ -n "${TKILN_PYTHON:-}" ]; then
+  PY="$TKILN_PYTHON"
+elif [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/python" ]; then
+  PY="$CONDA_PREFIX/bin/python"
+elif [ -x "/c/ProgramData/miniconda3/envs/ptocr/python.exe" ]; then
+  PY="/c/ProgramData/miniconda3/envs/ptocr/python.exe"
+else
+  PY="python"
+fi
+exec "$PY" -m torchkiln "$@"

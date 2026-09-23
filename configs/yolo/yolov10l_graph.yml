@@ -18,7 +18,7 @@ Architecture:
   model_family: yolo
   task: detect
   algorithm: yolov10l
-  yaml_file: pytorchx/cfg/models/v10/yolov10l.yaml
+  yaml_file: torchkiln/cfg/models/v10/yolov10l.yaml
   scale: n
   in_channels: 3
   Head:

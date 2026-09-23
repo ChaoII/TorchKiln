@@ -8,7 +8,7 @@
 
 `configs/det/*.yml` · 任务 `Architecture.task: det` · 指标 `DetMetric`(hmean / precision / recall)
 
-| 配置 | 主干 / 结构 | 预训练权重(缓存于 `~/.pytorchocr/pretrained/`) |
+| 配置 | 主干 / 结构 | 预训练权重(缓存于 `~/.torchkiln/pretrained/`) |
 |---|---|---|
 | `ch_PP-OCRv3_det_student` | MobileNetV3 + RSEFPN + DBHead | `ch_PP-OCRv3_det_student_ptocr.pth` |
 | `ch_PP-OCRv4_det_mobile` | MobileNetV3 + RSEFPN + PFHeadLocal | `ch_PP-OCRv4_det_mobile_ptocr.pth` |
@@ -35,7 +35,7 @@
 | `PP-OCRv6_{tiny,small,medium}_rec` | PPHGNetV2 + SVTR + v6 结构(字符集不同) |
 | `rec_svtrnet` / `rec_mtb_nrtr` / `rec_r31_sar` / `rec_d28_can`(...) | 参考实现(SVTR/NRTR/SAR/CAN) |
 
-字符集放在 `pytorchx/ocr/utils/dict/`(v5: `ppocrv5_dict.txt`、v6: `ppocrv6_dict.txt`、v6-tiny: `ppocrv6_tiny_dict.txt`)。
+字符集放在 `torchkiln/ocr/utils/dict/`(v5: `ppocrv5_dict.txt`、v6: `ppocrv6_dict.txt`、v6-tiny: `ppocrv6_tiny_dict.txt`)。
 
 ## 3. YOLO 家族(7 任务,59 个配置)
 

@@ -166,7 +166,7 @@ def plate_rec():
         "plate_rec",
         "images/*.jpg(48×168)+ train.txt / val.txt",
         "每行: 路径 c1..c7 颜色号\n"
-        "c: 字符表下标(pytorchx/nn/plate.py::PLATE_CHARSET,78 项,0=CTC blank)\n"
+        "c: 字符表下标(torchkiln/nn/plate.py::PLATE_CHARSET,78 项,0=CTC blank)\n"
         "颜色: 0黑 1蓝 2绿 3白 4黄;双层牌设 Train.dataset.double_plate=true"))
 
 

@@ -1,4 +1,4 @@
-﻿Global:
+Global:
   model_name: dx_yolov10n_det
   debug: false
   use_gpu: true
@@ -26,7 +26,7 @@ Architecture:
   model_family: yolo
   task: detect
   algorithm: yolov10
-  yaml_file: pytorchx/cfg/models/v10/yolov10n.yaml
+  yaml_file: torchkiln/cfg/models/v10/yolov10n.yaml
   scale: n
   in_channels: 3
   Head:

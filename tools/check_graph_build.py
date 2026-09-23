@@ -18,7 +18,7 @@ import torch
 import yaml  # noqa: E402
 
 from ptcore.config import load_config  # noqa: E402
-from pytorchx.models import build_arch_model  # noqa: E402
+from torchkiln.models import build_arch_model  # noqa: E402
 
 DEFAULT_SIZES = {
     "classify": 128,

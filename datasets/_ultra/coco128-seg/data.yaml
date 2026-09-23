@@ -1,4 +1,4 @@
-path: E:/PytorchOCR/datasets/_ultra/coco128-seg
+path: E:/TorchKiln/datasets/_ultra/coco128-seg
 train: images/train2017
 val: images/train2017
 nc: 80

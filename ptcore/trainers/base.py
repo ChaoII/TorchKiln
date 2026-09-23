@@ -84,7 +84,7 @@ class BaseTrainer:
         if self.is_main:
             os.makedirs(self.save_model_dir, exist_ok=True)
         self.logger = get_logger(
-            "pytorchx/ocr",
+            "torchkiln/ocr",
             os.path.join(self.save_model_dir, "train.log") if self.is_main else None,
         )
         if self.distributed:
@@ -273,12 +273,10 @@ class BaseTrainer:
 
         self.steps_per_epoch = max(1, len(self.train_loader))
         # 对齐 ultralytics:梯度累积由 nbs/batch 推导(Global.accumulate 可覆盖)
-        _bs = int(
-            (((config.get("Train") or {}).get("dataset") or {}).get("loader") or {}).get(
-                "batch_size_per_card", 1
-            )
-            or 1
-        )
+        # batch 在 ``Train.loader``(与 dataset 同级);兼容旧式 ``Train.dataset.loader``。
+        _train = config.get("Train") or {}
+        _loader = _train.get("loader") or ((_train.get("dataset") or {}).get("loader")) or {}
+        _bs = int(_loader.get("batch_size_per_card", 1) or 1)
         _nbs = (config.get("Optimizer") or {}).get("nbs")
         if gcfg.get("accumulate") is not None:
             self.accumulate = max(1, int(gcfg.get("accumulate")))
@@ -552,7 +550,7 @@ class BaseTrainer:
                     "(e.g. digits only) -> expected, the head is re-initialised "
                     "and trained from scratch; (b) you meant to fine-tune the "
                     "official charset -> set the matching dict, e.g. "
-                    "pytorchx/ocr/utils/dict/ppocrv6_tiny_dict.txt for "
+                    "torchkiln/ocr/utils/dict/ppocrv6_tiny_dict.txt for "
                     "PP-OCRv6_tiny_rec."
                 )
         missing, unexpected = self.model.load_state_dict(filtered, strict=False)
@@ -712,22 +710,22 @@ class BaseTrainer:
                     self.lr_scheduler.step()
             if self.ema is not None and do_step:
                 self.ema.update(self._raw_model())
-            if self.device.type == "cuda":
-                torch.cuda.synchronize()
+            # 不每 batch 强制同步(否则 GPU 流水线被串行化,每步多 ~50ms);
+            # loss 分量也延迟到打印时再 .item(),避免每 batch 多次 CPU-GPU 同步。
             batch_cost = time.time() - batch_tic
             last_end = time.time()
 
             if do_step:
                 self.global_step += 1
             num_samples = int(images.shape[0])
-            loss_hist.append(float(loss.detach()))
+            loss_hist.append(loss.detach())
             reader_hist.append(reader_cost)
             batch_hist.append(batch_cost)
             sample_hist.append(num_samples)
             for k, v in loss_dict.items():
                 if k == "loss":
                     continue
-                comp_hists.setdefault(k, deque(maxlen=window)).append(float(v.detach()))
+                comp_hists.setdefault(k, deque(maxlen=window)).append(v.detach())
 
             if idx == 0:
                 self.logger.info(
@@ -770,6 +768,9 @@ class BaseTrainer:
                     mem_alloc,
                 )
             self._maybe_eval_and_save()
+        # 对齐 ultralytics:每个 epoch 末更新 E2E loss 的 o2m/o2o 增益调度
+        if hasattr(self.loss, "update"):
+            self.loss.update()
         self.logger.info(
             "epoch: [%d/%d], done, time: %.1fs",
             epoch + 1,
@@ -803,32 +804,38 @@ class BaseTrainer:
             self.ema_model.load_state_dict(self.ema.apply())
             model = self.ema_model
         model.eval()
-        # 对齐 ultralytics 推理数值：ultra 训练 initialize_weights 把 BN eps 设为 1e-3，
-        # 但保存的权重不含 BN eps，加载后推理时 BN 用构造默认 1e-5。此处评估临时恢复 1e-5，
-        # 评估完再还原（raw 训练模型保持 1e-3，不影响训练 forward）。
+        # BN eps 处理：DetectionModel 类任务(det/seg/pose/obb)与 ultra 一致，训练时
+        # _set_bn_ultralytics 设 eps=1e-3，评估必须保留该训练值(强改 1e-5 会破坏
+        # 预测，实测 seg box_mAP50 0.767→0.382、mask 0.574→0.008)。仅分类任务
+        # (yolo_cls) 对齐 ultra 推理时才用构造函数默认 1e-5。
         import torch.nn as _nn
 
-        _bns = [m for m in model.modules() if isinstance(m, _nn.BatchNorm2d)]
-        _old_bn = [(m, m.eps) for m in _bns]
-        for _m in _bns:
-            _m.eps = 1e-5
-        # 对齐 ultralytics：end2end 检测头（如 yolo26 的 Detect10）评估时走 one2many+NMS，
-        # 而非 one2one 分支（ultra 加载权重后 end2end=False）。按 PostProcess.end2end 决定。
-        import pytorchx.nn.modules as _pmod
+        _old_bn = []
+        if self.task_name == "yolo_cls":
+            _bns = [m for m in model.modules() if isinstance(m, _nn.BatchNorm2d)]
+            _old_bn = [(m, m.eps) for m in _bns]
+            for _m in _bns:
+                _m.eps = 1e-5
+        # 对齐 ultralytics：end2end 头（yolo26 的 Detect10/Segment26/OBB26）评估时走
+        # one2many+NMS，而非 one2one 分支（ultra 加载权重后 end2end=False）。按
+        # PostProcess.end2end 决定，评估完还原。
+        import torchkiln.nn.modules as _pmod
 
         _swapped = []
         _pp_end2end = bool(getattr(self.post_process, "end2end", False))
         for _head in model.modules():
-            if isinstance(_head, _pmod.Detect10) and getattr(_head, "end2end", False):
-                _swapped.append(_head)
+            if getattr(_head, "end2end", False) and (
+                isinstance(_head, _pmod.Detect10) or hasattr(_head, "one2one_cv2")
+            ):
+                _swapped.append((_head, _head.end2end))
                 _head.end2end = _pp_end2end
         try:
             return self._evaluate_loop(model, tic=time.time())
         finally:
             for _m, _eps in _old_bn:
                 _m.eps = _eps
-            for _head in _swapped:
-                _head.end2end = True
+            for _head, _orig in _swapped:
+                _head.end2end = _orig
 
     def _evaluate_loop(self, model, tic):
         self.metric.reset()
@@ -855,10 +862,13 @@ class BaseTrainer:
                     continue
                 n = self.task.sample_count(batch)
                 total_samples += n
+                # 评估必须在 fp32 下进行:fp16 autocast 会让（尤其 yolo26 seg 的
+                # reg_max=1 框解码 / proto einsum）数值溢出/失真,评估被系统性低估
+                # (实测同权重 mask_mAP50-95 fp16 0.5596 vs fp32 0.6413;ultra val 是 fp32)。
                 with torch.autocast(
                     device_type=self.device.type,
                     dtype=self.amp_dtype,
-                    enabled=self.use_amp,
+                    enabled=False,
                 ):
                     self.task.eval_step(
                         model, batch, self.post_process, self.metric, self.device

@@ -11,7 +11,7 @@ Resolution rules (in order):
 
 The local cache lives in a hidden folder under the user home:
 
-    ~/.pytorchx/ocr/pretrained/<name>_ptocr.pth
+    ~/.torchkiln/ocr/pretrained/<name>_ptocr.pth
 
 Override the location with the environment variables ``PYTORCHOCR_HOME`` or
 ``PYTORCHOCR_PRETRAINED_DIR``.
@@ -76,7 +76,7 @@ def pretrained_dir():
     if not d:
         home = os.environ.get(ENV_HOME)
         if not home:
-            home = os.path.join(os.path.expanduser("~"), ".pytorchocr")
+            home = os.path.join(os.path.expanduser("~"), ".torchkiln")
         d = os.path.join(home, PRETRAINED_SUBDIR)
     return d
 
@@ -95,11 +95,11 @@ def _hide_dir(path):
 
 
 def _hide_default_cache():
-    """Hide ``~/.pytorchocr`` (only when the default location is used)."""
+    """Hide ``~/.torchkiln`` (only when the default location is used)."""
     if os.environ.get(ENV_HOME) or os.environ.get(ENV_PRETRAINED_DIR):
         return
     home = os.path.expanduser("~")
-    _hide_dir(os.path.join(home, ".pytorchocr"))
+    _hide_dir(os.path.join(home, ".torchkiln"))
 
 
 def _local_search_dirs():
@@ -108,6 +108,10 @@ def _local_search_dirs():
     # the weights shipped inside this repo.
     if os.environ.get(ENV_HOME) or os.environ.get(ENV_PRETRAINED_DIR):
         return dirs
+    # Legacy cache dir from the pre-rename PytorchOCR layout (keep old downloads working).
+    legacy = os.path.join(os.path.expanduser("~"), ".pytorchocr", PRETRAINED_SUBDIR)
+    if os.path.isdir(legacy) and legacy not in dirs:
+        dirs.append(legacy)
     if os.environ.get(ENV_ALLOW_LOCAL_REPO, "1") == "0":
         return dirs
     # Convenience for the dev checkout: weights next to the repo.
@@ -164,7 +168,7 @@ def _download_file(url, dst, logger=None):
 
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     tmp = "{}.part.{}".format(dst, os.getpid())
-    req = urllib.request.Request(url, headers={"User-Agent": "pytorchx/ocr/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "torchkiln/ocr/1.0"})
     with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0

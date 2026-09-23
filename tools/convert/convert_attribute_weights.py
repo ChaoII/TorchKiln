@@ -6,7 +6,7 @@ Run this in the **ptocr** environment (needs torch only)::
         --pkl _downloads/official/ped_attr_paddle.pkl  --num-classes 26 \
         --out _downloads/official/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
 
-Key mapping (PaddleClas -> pytorchx):
+Key mapping (PaddleClas -> torchkiln):
 
     conv1.* / blocks*.*      -> backbone.<same>
     last_conv.weight / fc.*  -> head.<same>
@@ -57,7 +57,7 @@ def main():
     ap.add_argument("--verify-only", action="store_true")
     args = ap.parse_args()
 
-    from pytorchx.nn.attribute import AttributeNet
+    from torchkiln.nn.attribute import AttributeNet
 
     model = AttributeNet(num_classes=args.num_classes)
     sd = convert(args.pkl, args.num_classes)

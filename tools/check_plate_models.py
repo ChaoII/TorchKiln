@@ -25,8 +25,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from pytorchx.models import build_arch_model  # noqa: E402
-from pytorchx.nn import plate as P  # noqa: E402
+from torchkiln.models import build_arch_model  # noqa: E402
+from torchkiln.nn import plate as P  # noqa: E402
 
 VENDOR = os.path.join(ROOT, "_downloads", "Chinese_license_plate_detection_recognition")
 
@@ -57,7 +57,7 @@ def check_det(vendor, onnx_dir):
     print("=" * 72)
     yaml_path = os.path.join(vendor, "models", "yolov5n-0.5.yaml")
     spec = yaml.safe_load(io.open(yaml_path, encoding="utf-8").read())
-    ours_yaml = os.path.join(ROOT, "pytorchx", "cfg", "models", "plate", "yolov5n-0.5.yaml")
+    ours_yaml = os.path.join(ROOT, "torchkiln", "cfg", "models", "plate", "yolov5n-0.5.yaml")
     arch = {
         "yaml_file": os.path.relpath(ours_yaml, ROOT).replace("\\", "/"),
         "in_channels": 3,

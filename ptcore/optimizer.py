@@ -185,7 +185,47 @@ def build_optimizer(config, epochs, step_each_epoch, model):
         optimizer = torch.optim.AdamW(
             param_groups, lr=base_lr, betas=(beta1, beta2), eps=eps, weight_decay=weight_decay
         )
-    elif optim_name in ("SGD", "sgd", "MuSGD", "musgd"):
+    elif optim_name in ("MuSGD", "musgd"):
+        # ultralytics MuSGD: ndim∈{2,4} 的矩阵/卷积核走 Muon(正交化),其余 SGD;
+        # 且检测头 cv3/one2one_cv3 参数 lr*3(ultra finetune 设定)。
+        from ptcore.muon import MuSGD as _MuSGD
+
+        mods = dict(model.named_modules())
+        g_w, g_b, g_n, g_m = [], [], [], []
+        for pname, p_ in model.named_parameters():
+            if not p_.requires_grad:
+                continue
+            if p_.ndim in (2, 4):
+                g_m.append((pname, p_))
+            elif pname.endswith(".bias"):
+                g_b.append(p_)
+            elif isinstance(mods.get(pname.rsplit(".", 1)[0]), _bn_types):
+                g_n.append(p_)
+            else:
+                g_w.append(p_)
+        boosted = set()
+        for mname, mod in mods.items():
+            if mname.split(".")[-1] in ("cv3", "one2one_cv3"):
+                for p_ in mod.parameters():
+                    boosted.add(id(p_))
+        oa = {"momentum": momentum, "nesterov": True}
+        groups = []
+        for tag, items, wd in (("bias", [("", p) for p in g_b], 0.0),
+                               ("weight", [("", p) for p in g_w], weight_decay),
+                               ("bn", [("", p) for p in g_n], 0.0),
+                               ("muon", g_m, weight_decay)):
+            p1, p2 = [], []
+            for pname, p_ in items:
+                (p1 if (id(p_) in boosted or "proto.semseg" in pname) else p2).append(p_)
+            base = dict(oa, weight_decay=wd)
+            if tag == "muon":
+                base["use_muon"] = True
+            if p1:
+                groups.append(dict(base, params=p1, lr=base_lr * 3))
+            if p2:
+                groups.append(dict(base, params=p2, lr=base_lr))
+        optimizer = _MuSGD(groups, muon=0.2, sgd=1.0)
+    elif optim_name in ("SGD", "sgd"):
         optimizer = torch.optim.SGD(
             param_groups,
             lr=base_lr,

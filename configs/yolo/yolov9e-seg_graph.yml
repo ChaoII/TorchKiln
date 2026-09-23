@@ -18,7 +18,7 @@ Architecture:
   model_family: yolo
   task: segment
   algorithm: yolov9e-seg
-  yaml_file: pytorchx/cfg/models/v9/yolov9e-seg.yaml
+  yaml_file: torchkiln/cfg/models/v9/yolov9e-seg.yaml
   scale: n
   in_channels: 3
   Head:

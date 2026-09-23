@@ -7,7 +7,7 @@ import numpy as np
 import paddle
 import yaml
 
-PADDLE_REPO = r"E:\PytorchOCR\_downloads\PaddleOCR"
+PADDLE_REPO = r"E:\TorchKiln\_downloads\PaddleOCR"
 sys.path.insert(0, PADDLE_REPO)
 
 from ppocr.data import build_dataloader  # noqa: E402
@@ -17,7 +17,7 @@ from ppocr.modeling.architectures.base_model import BaseModel  # noqa: E402
 from ppocr.optimizer import build_optimizer  # noqa: E402
 from ppocr.postprocess import build_post_process  # noqa: E402
 
-ROOT = r"E:\PytorchOCR"
+ROOT = r"E:\TorchKiln"
 OFF = os.path.join(ROOT, "_downloads", "official")
 CFG = os.path.join(ROOT, "configs", "det", "PP-OCRv4_mobile_det.yml")
 EPOCHS = int(sys.argv[1]) if len(sys.argv) > 1 else 5
