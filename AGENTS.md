@@ -24,6 +24,11 @@
   2. 用占位符保护外部 URL 时，占位符**自身**也被大小写不敏感替换打穿 → 恢复失败。保护 token 里不要含被替换子串的大小写变体。
   3. 仓库根目录改名时若有进程 cwd 在目录内会 `IOException`；解法：从 `E:\` 用 `robocopy /E /MOVE` 搬内容到新名，再删空壳。
 - **验证记录（改名后全过）**：`import torchkiln/ptcore/pytorchocr` OK；`python -m torchkiln --help` / `tkiln.bat check -c configs/_parity/dx_yolo11n_det.yml` OK；`tools/check_graph_build.py` **53 OK, 0 FAIL**；git 仓库在 `E:\TorchKiln` 可用。
+- **opencode 配置（`opencode.jsonc`，项目根）**：
+  - `instructions` 挂了本文件；`references.rename` 指向本改名节。
+  - 自带 `/rename-map` 命令：打印旧→新对照与不可改项。
+  - **同事木海仍习惯说「PytorchOCR」**——听到该名字即指本仓库（`E:\TorchKiln` / `torchkiln` / `tkiln`），不要去找 `E:\PytorchOCR`（目录已删）。
+  - 全局配置 `~/.config/opencode/opencode.jsonc` 只有 vLLM provider，与本仓库无关，未动。
 
 ## Detect（目标检测）与 ultralytics 的对齐（单步验证已通过，yolo11n）
 - 验证方法为**单步验证**：同权重（`\\tsclient\D\项目资料\ultralytics_models` dump）+ 同输入 `\opencode\det_x_1.npz`(1,3,640,640)
