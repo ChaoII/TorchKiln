@@ -7,8 +7,8 @@
 
 | 产品线 | 内容 | 配置 |
 |---|---|---|
-| **OCR** | PaddleOCR 复现:PP-OCRv**2/3/4/5/6** 检测 + 识别(17 个模型,与 Paddle 逐层权重对齐) | `configs/det/*.yml`(9)、`configs/rec/*.yml`(8) |
-| **YOLO 家族** | 自研实现,7 个任务(检测/实例分割/旋转框/关键点/分类/语义分割/深度)+ **上游 YAML 图模型**(v3/v5/v6/v8/v9/v10/v11/v12/v26 共 53 个可训练配置) | `configs/yolo/*.yml`(59) |
+| **OCR** | PaddleOCR 复现:PP-OCRv**2/3/4/5/6** 检测 + 识别(17 个模型,与 Paddle 逐层权重对齐) | `configs/ocr/det/*.yml`(9)、`configs/ocr/rec/*.yml`(8) |
+| **YOLO 家族** | 自研实现,7 个任务(检测/实例分割/旋转框/关键点/分类/语义分割/深度)+ **上游 YAML 图模型**(v3/v5/v6/v8/v9/v10/v11/v12/v26 共 53 个可训练配置) | `configs/yolo/*.yml`(53) |
 | **车牌** | 上游 `we0091234` 项目原版复刻:yolov5-lite + 4 角点检测、CNN+CTC+颜色识别 | `configs/plate/*.yml`(2) |
 | **属性识别** | PaddleX 复刻:PP-LCNet_x1_0 多标签(行人 26 属性 / 车辆 19 属性) | `configs/attr/*.yml`(2) |
 
@@ -20,6 +20,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | **⭐ 小白完整手册**:训练/评估/推理/导出全参数、默认值、引号规则、模型对照、报错速查（**新手先看这篇**） |
 | [`docs/STRUCTURE.md`](docs/STRUCTURE.md) | **项目结构**:完整目录树 + 每个模块的职责 + 依赖方向 |
 | [`docs/TASK_ARCHITECTURE.md`](docs/TASK_ARCHITECTURE.md) | **任务体系**:两级分派、TaskAdapter 契约、各任务组件落点、统一结构与新增任务流程 |
 | [`docs/MODEL_ZOO.md`](docs/MODEL_ZOO.md) | **模型总表**:四产品线全部模型/配置/数据格式/指标/对齐证据 |
@@ -42,13 +43,13 @@ $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"     # Windows 建议设�
 .\tkiln.bat --help                                             # 或 pip install -e . 后直接用 tkiln
 
 # 1) 用命令行指向你自己的数据集并训练（不改 yml；每个覆盖项一个 -o）
-python tools/train.py -c configs/det/PP-OCRv5_mobile_det.yml -o Train.dataset.data_dir=D:/mydata/det -o Train.dataset.label_file_list=D:/mydata/det/train.txt -o Eval.dataset.data_dir=D:/mydata/det -o Eval.dataset.label_file_list=D:/mydata/det/val.txt -o Global.save_model_dir=./output/my_det
+python tools/train.py -c configs/ocr/det/PP-OCRv5_mobile_det.yml -o Train.dataset.data_dir=D:/mydata/det -o Train.dataset.label_file_list=D:/mydata/det/train.txt -o Eval.dataset.data_dir=D:/mydata/det -o Eval.dataset.label_file_list=D:/mydata/det/val.txt -o Global.save_model_dir=./output/my_det
 
 # 2) 评估
-python tools/eval.py -c configs/det/PP-OCRv5_mobile_det.yml --weights output/my_det/best_accuracy.pth -o Eval.dataset.data_dir=D:/mydata/det -o Eval.dataset.label_file_list=D:/mydata/det/val.txt
+python tools/eval.py -c configs/ocr/det/PP-OCRv5_mobile_det.yml --weights output/my_det/best_accuracy.pth -o Eval.dataset.data_dir=D:/mydata/det -o Eval.dataset.label_file_list=D:/mydata/det/val.txt
 
 # 3) 推理
-python tools/infer/predict_det.py -c configs/det/PP-OCRv5_mobile_det.yml --weights output/my_det/best_accuracy.pth --input my.jpg --output out.jpg
+python tools/infer/predict_det.py -c configs/ocr/det/PP-OCRv5_mobile_det.yml --weights output/my_det/best_accuracy.pth --input my.jpg --output out.jpg
 ```
 
 识别只需多一个字典：`-o Global.character_dict_path=D:/mydata/rec/dict.txt`。详见 [4.4](#44-用命令行指定自己的数据集推荐不用改-yml)。
@@ -56,14 +57,14 @@ python tools/infer/predict_det.py -c configs/det/PP-OCRv5_mobile_det.yml --weigh
 其它产品线同样用法:
 
 ```powershell
-python tools/train.py -c configs/yolo/yolov8_graph.yml                 # YOLO(59 个配置任选)
+python tools/train.py -c configs/yolo/yolov8-det.yml                 # YOLO(53 个配置任选)
 python tools/train.py -c configs/plate/plate_det.yml `                 # 车牌检测(上游权重微调)
-  -o Global.pretrained_model=_downloads/plate/plate_detect_state.pth
+  -o Global.pretrained_model=_downloads/plate/plate_detect.pth
 python tools/train.py -c configs/attr/vehicle_attribute.yml `          # 车辆属性
-  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
+  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_vehicle_attribute.pth
 
 # 改完代码先自检(全量:每配置 1 步训练 + 1 步评估)
-python tools/smoke_all.py          # 期望 80 OK, 0 FAIL
+python tools/smoke_all.py          # 期望 76 OK, 0 FAIL
 python tools/check_graph_build.py  # 期望 53 configs: 53 OK, 0 FAIL
 ```
 
@@ -94,7 +95,7 @@ python tools/check_graph_build.py  # 期望 53 configs: 53 OK, 0 FAIL
 
 ## 1. 支持的模型
 
-共 **17** 个配置（`configs/det/*.yml` 9 个，`configs/rec/*.yml` 8 个）。
+共 **17** 个配置（`configs/ocr/det/*.yml` 9 个，`configs/ocr/rec/*.yml` 8 个）。
 
 ### 1.1 文本检测 det
 
@@ -195,9 +196,12 @@ OpenBLAS error: Memory allocation still failed after 10 retries, giving up.
 ```
 TorchKiln/
 ├─ configs/
-│  ├─ det/*.yml              # 9 个检测配置（可直接训练）
-│  ├─ rec/*.yml              # 8 个识别配置
-│  └─ yolo/*_graph.yml       # 59 个 YOLO 配置（53 个 YAML 图模型 + 6 个手写模型）
+│  ├─ ocr/det/*.yml           # 9 个检测配置（可直接训练）
+│  ├─ ocr/rec/*.yml           # 8 个识别配置
+│  ├─ yolo/*.yml              # 53 个 YOLO 图模型配置（小写+横线）
+│  ├─ plate/ attr/ action/ video/   # 车牌 / 属性 / 动作 / 视频
+│  ├─ local/                  # 业务实验（gitignore，不入库）
+│  └─ _parity/                # 对照验收 / 消融（gitignore，不入库；debug 在其下）
 ├─ ptcore/                   # 与任务无关的训练平台（config/optimizer/ema/precision）
 │  ├─ task.py                # TaskAdapter 抽象(11 个钩子)
 │  └─ trainers/              # 每个任务一个 trainer,共享 base.py 的训练循环
@@ -236,7 +240,7 @@ TorchKiln/
 │  ├─ eval.py                # 独立评估
 │  ├─ export.py              # 模型导出（pth/TorchScript/ONNX/onnxslim）
 │  ├─ download_pretrained.py # 预下载预训练权重到本地缓存
-│  ├─ smoke_all.py           # 一键自检全部配置（76 OK）
+│  ├─ smoke_all.py           # 一键自检全部产品线配置（76 OK；跳过 _parity/local）
 │  ├─ check_graph_build.py   # 只建图 + 前向：校验 53 个 YAML 图配置
 │  ├─ gen_configs.py         # 从官方配置生成 configs/
 │  ├─ infer/
@@ -249,7 +253,7 @@ TorchKiln/
 │     ├─ dump_ultralytics.py # (ultralytics 环境) 把上游 .pt 导出为纯张量 state_dict
 │     └─ convert_all.py      # (ptocr 环境) pickle -> torch .pth
 ├─ datasets/                 # 示例数据集（det / rec）
-├─ ~/.torchkiln/pretrained/      # 官方 .pdparams + 转换后的 *_ptocr.pth
+├─ ~/.torchkiln/pretrained/      # 官方 .pdparams + 转换后的 *.pth
 └─ output/                   # 训练/评估/导出产物
 ```
 
@@ -257,9 +261,45 @@ TorchKiln/
 
 ## 4. 训练数据怎么准备
 
-目录约定：每个数据集用一个文件夹，里面放 `train.txt`、`val.txt`（可选 `dict.txt`）以及图片。
+目录约定：每个数据集一个文件夹，里面放 `train.txt`、`val.txt`（可选 `dict.txt`）以及图片。
+**配置字段只有两个**：`Train/Eval.dataset.data_dir` + `label_file_list`（没有 `train_list`/`val_list`）。
+完整命令链、路径语义、各任务 `-o` 对照见 [`docs/TRAINING.md`](docs/TRAINING.md) §3 与
+[`docs/DATASET_FORMATS.md`](docs/DATASET_FORMATS.md) §0。
 
-### 4.1 检测（det）数据集
+### 4.0 全任务一览（目录 + 标签 + 一条训练命令）
+
+| 任务 | 清单/标签 | 必须额外 `-o`（示例） | 训练入口 |
+|---|---|---|---|
+| OCR det | `路径\tJSON四点` | `dataset.name=SimpleDataSet` + `transforms:` | `configs/ocr/det/*.yml` |
+| OCR rec | `路径\t文本` + 字典 | `Global.character_dict_path=...` | `configs/ocr/rec/*.yml` |
+| YOLO detect | `labels/`：`cls cx cy w h` | `Head.num_classes` + `names` | `configs/yolo/*.yml` |
+| YOLO OBB | **9 字段四角点**（非 6 字段 angle） | `dataset.box_format=xywhr` | 同上 + obb 配置 |
+| YOLO seg/pose/cls/sem/depth | 见 DATASET_FORMATS | `kpt_shape`/`mask_stride`/… | 同上 |
+| 车牌 det/rec | detect 布局 / `c1..c7 颜色` | `kpt_shape=[4,2]` 等 | `configs/plate/*.yml` |
+| 属性 | `路径 v1..vC` | `label_ratio` + `label_list` | `configs/attr/*.yml` |
+
+```powershell
+# 数据就绪检查 / 下载 / 格式模板
+tkiln data list
+tkiln data get plate_det_demo
+python tools/make_format_examples.py          # 各任务 README.txt + train.txt 样板
+python tools/make_demo_data.py --all          # 占位图(仅 smoke)
+
+# 接到训练：只改 -o，不改 yml（YOLO 单类示例）
+python tools/train.py -c configs/yolo/yolo11-det.yml `
+  -o Train.dataset.data_dir=D:/mydata/det `
+  -o Train.dataset.label_file_list=train.txt `
+  -o Eval.dataset.data_dir=D:/mydata/det `
+  -o Eval.dataset.label_file_list=val.txt `
+  -o Architecture.Head.num_classes=1 `
+  -o Train.dataset.names=[plate] `
+  -o Global.save_model_dir=./output/my_y11
+```
+
+OBB：加载器 `box_format=xywhr` 时**每行必须 `cls` + 4 角点（9 个数）**，`<9` 整行丢弃；
+6 字段 `cls cx cy w h angle` **不被接受**（`torchkiln/data/det.py`）。
+
+### 4.1 检测（OCR det）数据集
 
 **标注文件格式**：每行
 ```
@@ -286,10 +326,12 @@ datasets/ocr_det_dataset_examples/
 ```yaml
 Train:
   dataset:
-    data_dir: datasets/ocr_det_dataset_examples          # 根目录
-    label_file_list: [datasets/ocr_det_dataset_examples/train.txt]
+    name: SimpleDataSet            # OCR 数据集逻辑名
+    data_dir: datasets/ocr_det_dataset_examples
+    label_file_list: [train.txt]
+    transforms: [...]              # OCR 用 transforms 列表，不是 YOLO 的 transform
 ```
-> `data_dir` + 标注中的相对路径 拼成最终图片路径。
+> `data_dir` + 标注中的相对路径 拼成最终图片路径；`label_file_list` 项已是绝对路径/已存在文件时直接用。
 
 ### 4.2 识别（rec）数据集
 
@@ -312,8 +354,9 @@ Global:
   max_text_length: 25         # 最大文本长度（超过会被截断）
 Train:
   dataset:
+    name: SimpleDataSet
     data_dir: datasets/ocr_rec_dataset_examples
-    label_file_list: [datasets/ocr_rec_dataset_examples/train.txt]
+    label_file_list: [train.txt]
 ```
 
 > **字典必须与模型输出维度一致**：`模型类别数 = len(字典) + 1(blank) + (1 若 use_space_char)`。
@@ -326,20 +369,29 @@ Train:
 datasets/ocr_det_dataset_examples/    # ICDAR2015 风格，train 200 + val 50
 datasets/ocr_rec_dataset_examples/    # 词条图，train ~4400 + val，字典=ppocr_keys_v1
 ```
+YOLO/车牌/属性等占位与标签模板：
+```
+tkiln data list
+python tools/make_demo_data.py --all
+python tools/make_format_examples.py   # datasets/_format_examples/<task>/
+```
 
 ### 4.4 用命令行指定自己的数据集（推荐，**不用改 yml**）
 
 配置里的数据路径就是普通字段，可以被 `-o` 覆盖。日常换数据集、换字典、换输出目录，**都在命令行写，不要改 `configs/*.yml`**。
 
-**检测：**
+**OCR 检测：**
 ```powershell
-python tools/train.py -c configs/det/PP-OCRv5_mobile_det.yml -o Train.dataset.data_dir=D:/mydata/det -o Train.dataset.label_file_list=D:/mydata/det/train.txt -o Eval.dataset.data_dir=D:/mydata/det -o Eval.dataset.label_file_list=D:/mydata/det/val.txt -o Global.save_model_dir=./output/my_det
+python tools/train.py -c configs/ocr/det/PP-OCRv5_mobile_det.yml -o Train.dataset.data_dir=D:/mydata/det -o Train.dataset.label_file_list=D:/mydata/det/train.txt -o Eval.dataset.data_dir=D:/mydata/det -o Eval.dataset.label_file_list=D:/mydata/det/val.txt -o Global.save_model_dir=./output/my_det
 ```
 
-**识别（多一个字典）：**
+**OCR 识别（多一个字典）：**
 ```powershell
-python tools/train.py -c configs/rec/PP-OCRv5_mobile_rec.yml -o Global.character_dict_path=D:/mydata/rec/dict.txt -o Train.dataset.data_dir=D:/mydata/rec -o Train.dataset.label_file_list=D:/mydata/rec/train.txt -o Eval.dataset.data_dir=D:/mydata/rec -o Eval.dataset.label_file_list=D:/mydata/rec/val.txt -o Global.save_model_dir=./output/my_rec
+python tools/train.py -c configs/ocr/rec/PP-OCRv5_mobile_rec.yml -o Global.character_dict_path=D:/mydata/rec/dict.txt -o Train.dataset.data_dir=D:/mydata/rec -o Train.dataset.label_file_list=D:/mydata/rec/train.txt -o Eval.dataset.data_dir=D:/mydata/rec -o Eval.dataset.label_file_list=D:/mydata/rec/val.txt -o Global.save_model_dir=./output/my_rec
 ```
+
+**YOLO / 车牌 / 属性** 同一写法，只换 `-c` 与任务字段（见 [4.0](#40-全任务一览目录--标签--一条训练命令)）；相对路径写法：
+`-o Train.dataset.label_file_list=train.txt`（相对 `data_dir`）。
 
 要点：
 - **一个覆盖项一个 `-o`**，不用引号、不用方括号（与 PaddleOCR 一致）。单个标注文件直接给路径即可；多个用逗号分隔：
@@ -351,6 +403,7 @@ python tools/train.py -c configs/rec/PP-OCRv5_mobile_rec.yml -o Global.character
 - `-o` 里写错**配置段名**（如 `Trainn.` 或带上了引号 `'Train.`）会**直接报错**并提示可用段名，不会再静默失效。
 - 断点/续训/微调时，**数据路径同样这样覆盖**，不用动 yml。
 - 其它所有可覆盖字段见 [5.2](#52--o-覆盖语法) 与 [11. 配置项全解](#11-配置项全解)。
+- **四阶段完整命令**（check → train → val → predict → export）见 [`docs/TRAINING.md`](docs/TRAINING.md)。
 
 ---
 
@@ -360,10 +413,10 @@ python tools/train.py -c configs/rec/PP-OCRv5_mobile_rec.yml -o Global.character
 
 ```powershell
 # 检测（默认示例数据 + 指定输出目录）
-python tools/train.py -c configs/det/PP-OCRv4_mobile_det.yml -o Global.save_model_dir=./output/my_det
+python tools/train.py -c configs/ocr/det/PP-OCRv4_mobile_det.yml -o Global.save_model_dir=./output/my_det
 
 # 识别
-python tools/train.py -c configs/rec/PP-OCRv4_mobile_rec.yml -o Global.save_model_dir=./output/my_rec
+python tools/train.py -c configs/ocr/rec/PP-OCRv4_mobile_rec.yml -o Global.save_model_dir=./output/my_rec
 ```
 
 `-c` 指定配置文件；`-o` 用于**覆盖**配置里的任意字段（见 5.2）。
@@ -387,7 +440,7 @@ python tools/train.py -c configs/rec/PP-OCRv4_mobile_rec.yml -o Global.save_mode
 - 只有**值里含空格**时才需要引号，且用双引号包住整个 `键=值`：`"Train.dataset.data_dir=D:/my data/det"`。
 
 ```powershell
-python tools/train.py -c configs/det/PP-OCRv4_mobile_det.yml -o Global.epoch_num=20 -o Global.save_model_dir=./output/quick -o Global.device=gpu:0 -o Train.dataset.data_dir=D:/mydata/det -o Train.dataset.label_file_list=D:/mydata/det/train.txt -o Train.loader.batch_size_per_card=8 -o Optimizer.lr.learning_rate=0.001 -o Global.eval_batch_step=[0,100]
+python tools/train.py -c configs/ocr/det/PP-OCRv4_mobile_det.yml -o Global.epoch_num=20 -o Global.save_model_dir=./output/quick -o Global.device=gpu:0 -o Train.dataset.data_dir=D:/mydata/det -o Train.dataset.label_file_list=D:/mydata/det/train.txt -o Train.loader.batch_size_per_card=8 -o Optimizer.lr.learning_rate=0.001 -o Global.eval_batch_step=[0,100]
 ```
 
 > 上面的写法在 **cmd / PowerShell / Bash 都能直接跑**（无引号最省事）。
@@ -431,11 +484,11 @@ config.yml            # ★ 本次实际生效的完整配置（含所有 -o 覆
 
 ```powershell
 # Linux 单机 4 卡（NCCL 后端，效率最高）
-torchrun --nproc_per_node=4 tools/train.py -c configs/det/PP-OCRv5_server_det.yml `
+torchrun --nproc_per_node=4 tools/train.py -c configs/ocr/det/PP-OCRv5_server_det.yml `
   -o Global.save_model_dir=./output/ddp_v5
 
 # 指定用哪几张卡（每个 rank 一个）：gpu:0,1,2,3
-torchrun --nproc_per_node=4 tools/train.py -c configs/det/PP-OCRv5_server_det.yml `
+torchrun --nproc_per_node=4 tools/train.py -c configs/ocr/det/PP-OCRv5_server_det.yml `
   -o Global.device=gpu:0,1,2,3 Global.save_model_dir=./output/ddp_v5
 ```
 
@@ -444,7 +497,7 @@ torchrun --nproc_per_node=4 tools/train.py -c configs/det/PP-OCRv5_server_det.ym
 不启动 torchrun，直接把多张卡写进 `Global.device`：
 
 ```powershell
-python tools/train.py -c configs/det/PP-OCRv5_mobile_det.yml `
+python tools/train.py -c configs/ocr/det/PP-OCRv5_mobile_det.yml `
   -o Global.device=gpu:0,1 Global.save_model_dir=./output/dp_v5
 ```
 
@@ -567,22 +620,22 @@ Config: pretrained=... checkpoints=None save_dir=output/cfg_test
 
 ```yaml
 Global:
-  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/PytorchOCR/resolve/master/pretrained/PP-OCRv6_tiny_det_ptocr.pth
+  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/master/pretrained/PP-OCRv6_tiny_det.pth
 ```
 
 首次训练时：
 
 ```
-Downloading pretrained weights to C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det_ptocr.pth
-Saved pretrained weights to C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det_ptocr.pth
-Pretrained source: https://.../PP-OCRv6_tiny_det_ptocr.pth -> C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det_ptocr.pth
+Downloading pretrained weights to C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det.pth
+Saved pretrained weights to C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det.pth
+Pretrained source: https://.../PP-OCRv6_tiny_det.pth -> C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det.pth
 Loaded pretrained: ... (missing=0 unexpected=0)
 ```
 
 第二次及以后：
 
 ```
-Pretrained weights already cached: C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det_ptocr.pth
+Pretrained weights already cached: C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6_tiny_det.pth
 ```
 
 > 参考实现：PaddleOCR 的 `ppocr/utils/network.py::maybe_download_params()` 也是把 URL 下到 `~/.paddleocr/models/`（带进度条、3 次重试）。本项目等价实现见 `torchkiln/ocr/utils/pretrained.py`，缓存目录为 `~/.torchkiln/ocr/pretrained/`（Windows 下自动隐藏）。多卡时只由 rank0 下载，其余 rank 等待文件出现。
@@ -591,7 +644,7 @@ Pretrained weights already cached: C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6
 
 | 写法 | 行为 |
 |---|---|
-| `https://.../xx_ptocr.pth` | **推荐**。没有则下载到缓存，有则直接用 |
+| `https://.../xx.pth` | **推荐**。没有则下载到缓存，有则直接用 |
 | `E:/dx_ocr/det_checkpoint/2/best_accuracy.pth` | 用本地文件（自己训练的权重，见下） |
 | `PP-OCRv6_tiny_det` | 裸名字：查缓存 → 没有就按官方 URL 下载 |
 | `null` | 从零训练 |
@@ -600,7 +653,7 @@ Pretrained weights already cached: C:\Users\<你>\.torchkiln\pretrained\PP-OCRv6
 
 ```powershell
 # 从零训练（不要预训练）
-python tools/train.py -c configs/det/PP-OCRv6_tiny_det.yml -o Global.pretrained_model=null
+python tools/train.py -c configs/ocr/det/PP-OCRv6_tiny_det.yml -o Global.pretrained_model=null
 
 # 提前把权重全部下载好（或指定几个）
 python tools/download_pretrained.py
@@ -608,9 +661,9 @@ python tools/download_pretrained.py PP-OCRv6_tiny_det PP-OCRv5_mobile_rec
 python tools/download_pretrained.py --list        # 查看缓存与其实际命中的路径
 
 # 评估 / 导出 / 推理的 --weights 同样支持 URL、路径、名字
-python tools/eval.py -c configs/det/PP-OCRv6_tiny_det.yml --weights PP-OCRv6_tiny_det
-python tools/export.py -c configs/det/PP-OCRv6_tiny_det.yml --weights PP-OCRv6_tiny_det --save-dir output/exp
-python tools/infer/predict_rec.py -c configs/rec/PP-OCRv5_mobile_rec.yml --weights PP-OCRv5_mobile_rec --input xx.jpg
+python tools/eval.py -c configs/ocr/det/PP-OCRv6_tiny_det.yml --weights PP-OCRv6_tiny_det
+python tools/export.py -c configs/ocr/det/PP-OCRv6_tiny_det.yml --weights PP-OCRv6_tiny_det --save-dir output/exp
+python tools/infer/predict_rec.py -c configs/ocr/rec/PP-OCRv5_mobile_rec.yml --weights PP-OCRv5_mobile_rec --input xx.jpg
 ```
 
 **用自己训练出来的权重**（路径形式，最常用）
@@ -618,7 +671,7 @@ python tools/infer/predict_rec.py -c configs/rec/PP-OCRv5_mobile_rec.yml --weigh
 `pretrained_model` 也可以直接给**路径**——例如"拿上次训练最好的模型再训"：
 
 ```powershell
-python tools/train.py -c configs/det/PP-OCRv6_tiny_det.yml -o Global.pretrained_model=E:/dx_ocr/det_checkpoint/2/best_accuracy.pth -o Global.save_model_dir=E:/dx_ocr/det_checkpoint/3
+python tools/train.py -c configs/ocr/det/PP-OCRv6_tiny_det.yml -o Global.pretrained_model=E:/dx_ocr/det_checkpoint/2/best_accuracy.pth -o Global.save_model_dir=E:/dx_ocr/det_checkpoint/3
 ```
 
 - `best_accuracy.pth` / `final.pth` / `epoch_N.pth`（纯权重）和 **`latest.pth`（含优化器/EMA，会自动取其中的 `model`）** 都能这么用 —— 实测四种来源都是 `missing=0 unexpected=0`。
@@ -642,7 +695,7 @@ python tools/train.py -c configs/det/PP-OCRv6_tiny_det.yml -o Global.pretrained_
 - Windows 下 `~/.torchkiln` 会被**自动设为隐藏文件夹**（资源管理器里默认看不到）。
 - **缓存为空 ≠ 出错**：配置里虽然写的是 URL，但若 `~/.torchkiln/ocr/pretrained/` **或仓库的 `~/.torchkiln/pretrained/`** 里已有同名 `.pth`，就直接用它、不重复下载。这就是为什么在开发目录里跑训练时缓存可能是空的：
   ```
-  Using local pretrained weights: E:\TorchKiln\_downloads\official\PP-OCRv6_tiny_rec_ptocr.pth
+  Using local pretrained weights: E:\TorchKiln\_downloads\official\PP-OCRv6_tiny_rec.pth
   ```
 - **想把缓存真正填满**（例如想脱离仓库运行、或验证下载）：
   ```powershell
@@ -655,7 +708,7 @@ python tools/train.py -c configs/det/PP-OCRv6_tiny_det.yml -o Global.pretrained_
 
 **识别模型注意字典**（权重和字典必须匹配）；例如：
 ```powershell
-python tools/train.py -c configs/rec/PP-OCRv5_mobile_rec.yml -o Global.character_dict_path=./torchkiln/ocr/utils/dict/ppocrv5_dict.txt -o Global.save_model_dir=./output/finetune_rec
+python tools/train.py -c configs/ocr/rec/PP-OCRv5_mobile_rec.yml -o Global.character_dict_path=./torchkiln/ocr/utils/dict/ppocrv5_dict.txt -o Global.save_model_dir=./output/finetune_rec
 ```
 
 ### 6.2 断点续训
@@ -663,7 +716,7 @@ python tools/train.py -c configs/rec/PP-OCRv5_mobile_rec.yml -o Global.character
 用 `Global.checkpoints` 指向**上次训练目录里的 `latest.pth`**：
 
 ```powershell
-python tools/train.py -c configs/det/PP-OCRv4_mobile_det.yml -o Global.checkpoints=./output/my_det/latest.pth -o Global.save_model_dir=./output/my_det
+python tools/train.py -c configs/ocr/det/PP-OCRv4_mobile_det.yml -o Global.checkpoints=./output/my_det/latest.pth -o Global.save_model_dir=./output/my_det
 ```
 
 会恢复 **模型 + 优化器 + 学习率调度 + EMA + global_step + best_metric/best_epoch + epoch_num**，并**从下一个 epoch 继续**（不会重跑已训过的 epoch）：
@@ -681,7 +734,7 @@ Continue training from epoch 5 to 6.
 
 ```powershell
 # 之前训了 20 轮，现在想训到 40 轮
-python tools/train.py -c configs/det/PP-OCRv4_mobile_det.yml -o Global.epoch_num=40 -o Global.checkpoints=./output/my_det/latest.pth -o Global.save_model_dir=./output/my_det
+python tools/train.py -c configs/ocr/det/PP-OCRv4_mobile_det.yml -o Global.epoch_num=40 -o Global.checkpoints=./output/my_det/latest.pth -o Global.save_model_dir=./output/my_det
 ```
 
 若 checkpoint 已完成（`epoch >= epoch_num`）且你没调大 `epoch_num`，会直接提示而不重复训练：
@@ -700,8 +753,8 @@ Checkpoint already trained 2/2 epochs; nothing to do. Pass -o Global.epoch_num=<
 ## 7. 评估
 
 ```powershell
-python tools/eval.py -c configs/det/PP-OCRv4_mobile_det.yml `
-  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det_ptocr.pth
+python tools/eval.py -c configs/ocr/det/PP-OCRv4_mobile_det.yml `
+  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det.pth
 ```
 - `-c` 配置（决定验证集与后处理/指标）
 - `--weights` 要评估的 `.pth`（不填则用配置里的 `Global.pretrained_model`）
@@ -721,8 +774,8 @@ python tools/eval.py -c configs/det/PP-OCRv4_mobile_det.yml `
 
 ```powershell
 python tools/infer/predict_det.py `
-  -c configs/det/PP-OCRv4_mobile_det.yml `
-  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det_ptocr.pth `
+  -c configs/ocr/det/PP-OCRv4_mobile_det.yml `
+  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det.pth `
   --input datasets/ocr_det_dataset_examples/images/val_img_61.jpg `
   --output output/vis.jpg `
   --device cuda:0
@@ -742,9 +795,9 @@ python tools/infer/predict_det.py `
 
 ```powershell
 python tools/infer/predict_rec.py `
-  -c configs/rec/PP-OCRv4_mobile_rec.yml `
+  -c configs/ocr/rec/PP-OCRv4_mobile_rec.yml `
   -o Global.character_dict_path=./torchkiln/ocr/utils/ppocr_keys_v1.txt `
-  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_rec_ptocr.pth `
+  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_rec.pth `
   --input datasets/ocr_rec_dataset_examples/images/val_word_1.png `
   --device cuda:0
 ```
@@ -765,8 +818,8 @@ python tools/infer/predict_rec.py `
 ```powershell
 $env:PYTHONIOENCODING="utf-8"   # 本机 GBK 控制台建议设置，避免 torch.onnx 打印报编码 warning
 
-python tools/export.py -c configs/det/PP-OCRv4_mobile_det.yml `
-  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det_ptocr.pth `
+python tools/export.py -c configs/ocr/det/PP-OCRv4_mobile_det.yml `
+  --weights ./~/.torchkiln/pretrained/PP-OCRv4_mobile_det.pth `
   --save-dir output/export/v4_det `
   --fuse --onnx --slim
 ```
@@ -813,7 +866,7 @@ python tools/convert/dump_all.py          # 转换 ~/.torchkiln/pretrained 下�
 
 # 2) ptocr 环境：映射成 torch .pth
 conda activate ptocr
-python tools/convert/convert_all.py       # 生成 ~/.torchkiln/pretrained/<模型名>_ptocr.pth
+python tools/convert/convert_all.py       # 生成 ~/.torchkiln/pretrained/<模型名>.pth
 ```
 
 单独转换一个：
@@ -988,7 +1041,7 @@ $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1
 先看这几点，按影响从大到小：
 
 1. **有没有用官方预训练？** 这是最关键的。官方配置里的指标都是**从官方预训练微调**得到的。从零训练（日志里 `No pretrained weights specified (training from scratch).`）在几百张图的小数据集上，前几十个 epoch 检测不出东西是很常见的。**17 个 yml 默认已带模型名**，不写就是微调；别用 `-o Global.pretrained_model=null`。也可显式写：
-   `-o Global.pretrained_model=https://www.modelscope.cn/models/ChaoII0987/PytorchOCR/resolve/master/pretrained/PP-OCRv6_tiny_det_ptocr.pth`（或直接写模型名 `PP-OCRv6_tiny_det`；默认就是官方 URL，见 [6.1](#61-预训练权重写-url首次自动下载并缓存)）
+   `-o Global.pretrained_model=https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/master/pretrained/PP-OCRv6_tiny_det.pth`（或直接写模型名 `PP-OCRv6_tiny_det`；默认就是官方 URL，见 [6.1](#61-预训练权重写-url首次自动下载并缓存)）
    实测：v6_tiny_det 用同一份数据，**从零训 1 epoch → hmean 0.0**；**加载预训练训 1 epoch → hmean 0.39**。
 2. **学习率是否与总 batch 匹配。** 官方 yml 里 `learning_rate: 0.001 #(8*8c)` 的意思是：这个 lr 按**总 batch = 8 卡 × 8 = 64** 设计。你是单卡 batch 8（总 batch 8），PaddleX 配方用的是 **0.004**：
    `-o Optimizer.lr.learning_rate=0.004`
@@ -1032,7 +1085,7 @@ $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1
 ```powershell
 $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"
 python tools/smoke_all.py
-# 期望输出结尾：76 OK, 0 FAIL（17 个 OCR + 6 个手写 YOLO + 53 个 YAML 图配置）
+# 期望输出结尾：76 OK, 0 FAIL（17 OCR + 53 YOLO + 2 plate + 2 attr + 1 action + 1 video）
 ```
 
 只想快速确认“上游 YAML 是否都能建图 + 前向”（不需要数据集、秒级）：
@@ -1046,29 +1099,29 @@ python tools/check_graph_build.py
 
 ## 14. YOLO 任务（`torchkiln/`）
 
-在同一个训练平台（`ptcore`）上，用**独立实现**的 YOLO 风格模型覆盖 6 个任务。
+在同一个训练平台（`ptcore`）上，用**图模型**（`configs/yolo/*.yml`，小写+横线）覆盖 7 个任务。
 **不依赖也不嵌入 `ultralytics`**（其代码与权重均为 AGPL-3.0），模型按公开架构描述从零编写。
 
-| 任务 | `Architecture.task` | 模型 | 指标 | 配置文件 |
-|---|---|---|---|---|
-| 分类 | `classify` | `ClassifyHead`（CSP 主干 + 全局池化） | top1 / top3 | `configs/yolo/YOLO11n_cls.yml` |
-| 检测 | `detect` | `DetectHead`（无 DFL，anchor-free） | COCO mAP | `configs/yolo/YOLO11n_det.yml` |
-| 旋转框 | `obb` | `DetectHead(reg_channels=5)` + ProbIoU | 旋转框 mAP | `configs/yolo/YOLO11n_obb.yml` |
-| 语义分割 | `semantic` | `SemDecoder`（P3/P4/P5 融合，stride 4） | mIoU / acc | `configs/yolo/YOLO11n_sem.yml` |
-| 实例分割 | `segment` | `SegmentHead` + mask 原型/系数 | mask mAP / box mAP | `configs/yolo/YOLO11n_seg.yml` |
-| 深度估计 | `depth` | `DepthDecoder`（单通道 log-depth） | δ1/δ2/δ3、AbsRel、RMSE | `configs/yolo/YOLO11n_depth.yml` |
+| 任务 | `Architecture.task` | 头 / 损失 / 指标 | 配置文件 |
+|---|---|---|---|
+| 分类 | `classify` | `Classify` + CE（多标签 `-o Loss.multi_label=true`） | `configs/yolo/yolo11-cls.yml` |
+| 检测 | `detect` | `Detect` + TAL + CIoU/DFL | `configs/yolo/yolo11-det.yml` |
+| 旋转框 | `obb` | `OBB` + ProbIoU | `configs/yolo/yolo11-obb.yml` |
+| 语义分割 | `semantic` | `SemanticSegment` | `configs/yolo/yolo26-sem.yml` |
+| 实例分割 | `segment` | `Segment` + mask 原型 | `configs/yolo/yolo11-seg.yml` |
+| 深度估计 | `depth` | `Depth` | `configs/yolo/yolo26-depth.yml` |
 
-**用法与 OCR 完全一致**：
+**用法与 OCR 完全一致**（业务 yml 放 `configs/local/`，仓库只留模板）：
 
 ```powershell
-python tools/train.py -c configs/yolo/YOLO11n_det.yml -o Global.epoch_num=100 -o Train.dataset.data_dir=D:/mydata/det
-python tools/eval.py  -c configs/yolo/YOLO11n_det.yml --weights output/YOLO11n_det/best_accuracy.pth
+python tools/train.py -c configs/yolo/yolo11-det.yml -o Global.epoch_num=100 -o Train.dataset.data_dir=D:/mydata/det
+python tools/eval.py  -c configs/yolo/yolo11-det.yml --weights output/yolo11_g/best_accuracy.pth
 
 # 导出（inference.pth / inference.yml / model.pt / model.onnx / model_slim.onnx）
-python tools/export.py -c configs/yolo/YOLO11n_det.yml --weights output/YOLO11n_det/best_accuracy.pth --save-dir output/exp --onnx --slim
+python tools/export.py -c configs/yolo/yolo11-det.yml --weights output/yolo11_g/best_accuracy.pth --save-dir output/exp --onnx --slim
 
 # 推理（可视化）：cls 打印 top-5；det/obb 画框；seg 画框+掩码叠加；sem 上色；depth 伪彩色
-python tools/infer/predict_yolo.py -c configs/yolo/YOLO11n_det.yml --weights output/YOLO11n_det/best_accuracy.pth --input img.jpg --output vis.jpg
+python tools/infer/predict_yolo.py -c configs/yolo/yolo11-det.yml --weights output/yolo11_g/best_accuracy.pth --input img.jpg --output vis.jpg
 ```
 
 导出说明：YOLO 任务默认 **opset 18**（OCR 仍是 11），因为主干含 `Resize/Interpolate`。
@@ -1113,7 +1166,7 @@ det/obb 导出为**多个输出**（每个尺度一个），seg 额外输出 mas
 上游 `ultralytics/cfg/models` 里**所有可训练的 YAML** 都搬到了 `torchkiln/cfg/models/`，
 并在 `configs/yolo/` 生成了可直接训练的配置：
 
-| 家族 | YAML 目录 | 变体（= 生成的 `*_graph.yml`） | 任务 |
+| 家族 | YAML 目录 | 变体（= 生成的 `*.yml`） | 任务 |
 |---|---|---|---|
 | v3 | `v3/` | `yolov3` `yolov3-spp` `yolov3-tiny` | det |
 | v5 | `v5/` | `yolov5` `yolov5-p6` | det |
@@ -1214,8 +1267,8 @@ Train:
 python tools/convert/dump_ultralytics.py yolo11n.pt --out _downloads/upstream
 
 # ② 在 ptocr 环境里微调（我们的 loader 会按名字+形状自动匹配）
-python tools/train.py -c configs/yolo/yolo11_graph.yml ^
-  -o Global.pretrained_model=_downloads/upstream/yolo11n_state.pth ^
+python tools/train.py -c configs/yolo/yolo11-det.yml ^
+  -o Global.pretrained_model=_downloads/upstream/yolo11n.pth ^
   -o Global.epoch_num=100
 ```
 实测：一个上游 yolo11n 检测权重 **708 个张量中 546 个（77.1%）可直接加载，0 形状冲突**，
@@ -1242,7 +1295,7 @@ python tools/smoke_all.py
 * **不需要改 YAML 就能对齐上游**：`scales`/`depth_multiple` 自动缩放、`-p2/-p6` 多尺度、
   `CBLinear/CBFuse`（v9 的 GELAN 辅助分支）、`AreaAttention`（v12）、
   `RepConv/RepNCSPELAN4/SPPELAN/ELAN1/AConv`（v9）、`C3Ghost/GhostConv`（v8-ghost）都已实现。
-* **配置必须带 `Optimizer` 段**（`configs/yolo/*_graph.yml` 已自动生成 `Adam + Cosine`），
+* **配置必须带 `Optimizer` 段**（`configs/yolo/*.yml` 已自动生成 `Adam + Cosine`），
   否则训练器会以 `KeyError: 'Optimizer'` 报错——这是有意的（避免静默用错学习率）。
 * **上游没有的/不做的**：`rt-detr`/`yolov8-rtdetr`（RT-DETR）、`yoloe-*`、`yolov8-world*`、
   `sam*` 以及 `*-cls-resnet*`（TorchVision/ResNet 主干）。这些要么不支持训练、
@@ -1270,8 +1323,8 @@ python tools/convert/convert_plate_weights.py `
   --out    _downloads/plate
 
 # ② 训练 / 评估(用官方权重微调)
-python tools/train.py -c configs/plate/plate_det.yml -o Global.pretrained_model=_downloads/plate/plate_detect_state.pth
-python tools/train.py -c configs/plate/plate_rec.yml -o Global.pretrained_model=_downloads/plate/plate_rec_color_state.pth
+python tools/train.py -c configs/plate/plate_det.yml -o Global.pretrained_model=_downloads/plate/plate_detect.pth
+python tools/train.py -c configs/plate/plate_rec.yml -o Global.pretrained_model=_downloads/plate/plate_rec_color.pth
 python tools/eval.py  -c configs/plate/plate_det.yml --weights output/plate_det/best_accuracy.pth
 
 # ③ 对齐校验
@@ -1309,13 +1362,13 @@ python tools/check_plate_models.py   # 检测 500/500、识别 86/86 张量;识�
 & C:\ProgramData\miniconda3\envs\paddlex\python.exe tools/convert/dump_attribute_paddle.py `
   --weights ~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute_pretrained.pdparams --out ~/.torchkiln/pretrained/ped_attr_paddle.pkl
 python tools/convert/convert_attribute_weights.py --pkl ~/.torchkiln/pretrained/ped_attr_paddle.pkl --num-classes 26 `
-  --out ~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
+  --out ~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute.pth
 
 # 训练 / 评估
 python tools/train.py -c configs/attr/pedestrian_attribute.yml `
-  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
+  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_pedestrian_attribute.pth
 python tools/train.py -c configs/attr/vehicle_attribute.yml `
-  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
+  -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_vehicle_attribute.pth
 python tools/eval.py  -c configs/attr/vehicle_attribute.yml --weights output/PP-LCNet_x1_0_vehicle_attribute/best_accuracy.pth
 ```
 
@@ -1342,7 +1395,7 @@ E:\TorchKiln
 │                       data(augment/det/seg/pose/sem/depth/plate)、tasks/(每任务一个文件:
 │                       classify/detect/obb/segment/pose/semantic/depth/plate_det/plate_rec/
 │                       attribute/pose_action/video_cls + _base/_cls)、cfg/models(上游 YAML 53 个)
-├─ configs/             det(9) rec(8) yolo(59) plate(2) attr(2) debug(5)
+├─ configs/             ocr/det(9) ocr/rec(8) yolo(53) plate(2) attr(2) action(1) video(1) + 本地 local/_parity(不入库)
 ├─ tools/               train / eval / export / smoke_all / check_graph_build / check_plate_models /
 │                       gen_configs / download_pretrained / infer(predict_{det,rec,yolo})
 │  └─ convert/          dump_*(paddlex/ultralytics 环境) + convert_*(ptocr 环境) + parity_*(数值对比)
@@ -1357,7 +1410,7 @@ E:\TorchKiln
 
 | 命令 | 期望 |
 |---|---|
-| `python tools/smoke_all.py` | `80 OK, 0 FAIL`(每配置 1 步训练 + 1 步评估)|
+| `python tools/smoke_all.py` | `76 OK, 0 FAIL`(每配置 1 步训练 + 1 步评估;跳过 `_parity`/`local`)|
 | `python tools/check_graph_build.py` | `53 configs: 53 OK, 0 FAIL` |
 | `python tools/check_plate_models.py` | 检测 500/500、识别 86/86,识别 ONNX `max|diff| ≈ 1e-5` |
 

@@ -1,0 +1,198 @@
+﻿Global:
+  model_name: PP-OCRv6_tiny_det
+  debug: false
+  use_gpu: true
+  device: null
+  epoch_num: 500
+  log_smooth_window: 20
+  print_batch_step: 10
+  save_model_dir: ./output/PP-OCRv6_tiny_det
+  save_epoch_step: 10
+  eval_batch_step:
+  - 0
+  - 1500
+  cal_metric_during_train: false
+  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/master/pretrained/PP-OCRv6_tiny_det.pth
+  checkpoints: null
+  save_inference_dir: null
+  output: null
+  use_visualdl: false
+  infer_img: doc/imgs_en/img_10.jpg
+  distributed: false
+  dist_backend: null
+  dist_init_method: null
+  seed: 1024
+  use_ema: true
+  ema_decay: 0.9998
+  ema_decay_type: threshold
+  show_eval_progress: true
+  amp: false
+  save_res_path: ./checkpoints/det_db/predicts_db.txt
+  d2s_train_image_shape:
+  - 3
+  - 640
+  - 640
+Architecture:
+  model_type: det
+  algorithm: DB
+  Transform: null
+  Backbone:
+    name: PPLCNetV4
+    det: true
+    model_size: tiny
+  Neck:
+    name: RepLKFPN
+    out_channels: 64
+    dilated_kernel_size: 5
+    shortcut: true
+  Head:
+    name: DBHead
+    k: 50
+    fix_nan: true
+    aux_in_channels: 64
+Loss:
+  name: DBLoss
+  main_loss_type: DiceFocalLoss
+  alpha: 5
+  beta: 10
+  focal_alpha: 0.25
+  focal_gamma: 2.5
+  aux_weight_p4: 0.2
+  aux_weight_p3: 0.3
+  aux_weight_p2: 0.4
+Optimizer:
+  name: Adam
+  beta1: 0.9
+  beta2: 0.999
+  lr:
+    name: Cosine
+    learning_rate: 0.001
+    warmup_epoch: 2
+  regularizer:
+    name: L2
+    factor: 1.0e-06
+PostProcess:
+  name: DBPostProcess
+  thresh: 0.2
+  box_thresh: 0.4
+  max_candidates: 3000
+  unclip_ratio: 1.4
+Metric:
+  name: DetMetric
+  main_indicator: hmean
+Train:
+  dataset:
+    name: SimpleDataSet
+    data_dir: datasets/ocr_det_dataset_examples
+    label_file_list:
+    - datasets/ocr_det_dataset_examples/train.txt
+    transforms:
+    - DecodeImage:
+        img_mode: BGR
+        channel_first: false
+    - DetLabelEncode: null
+    - CopyPaste: null
+    - ColorJitter:
+        brightness: 0.4
+        contrast: 0.4
+        saturation: 0.7
+        hue: 0.1
+    - IaaAugment:
+        augmenter_args:
+        - type: Fliplr
+          args:
+            p: 0.5
+        - type: Affine
+          args:
+            p: 0.5
+            rotate:
+            - -45
+            - 45
+            fit_output: true
+        - type: Resize
+          args:
+            size:
+            - 0.3
+            - 2
+    - RandomCrop:
+        size:
+        - 640
+        - 640
+        max_tries: 50
+        keep_ratio: true
+    - MakeBorderMap:
+        shrink_ratio: 0.4
+        thresh_min: 0.3
+        thresh_max: 0.7
+        total_epoch: 500
+    - MakeShrinkMap:
+        shrink_ratio: 0.4
+        min_text_size: 8
+        total_epoch: 500
+    - NormalizeImage:
+        scale: 1./255.
+        mean:
+        - 0.485
+        - 0.456
+        - 0.406
+        std:
+        - 0.229
+        - 0.224
+        - 0.225
+        order: hwc
+    - ToCHWImage: null
+    - KeepKeys:
+        keep_keys:
+        - image
+        - threshold_map
+        - threshold_mask
+        - shrink_map
+        - shrink_mask
+    ratio_list:
+    - 1.0
+  loader:
+    shuffle: true
+    drop_last: false
+    batch_size_per_card: 8
+    num_workers: 4
+    prefetch_factor: 4
+  resume_path: null
+Eval:
+  dataset:
+    name: SimpleDataSet
+    data_dir: datasets/ocr_det_dataset_examples
+    label_file_list:
+    - datasets/ocr_det_dataset_examples/val.txt
+    transforms:
+    - DecodeImage:
+        img_mode: BGR
+        channel_first: false
+    - DetLabelEncode: null
+    - DetResizeForTest: null
+    - NormalizeImage:
+        scale: 1./255.
+        mean:
+        - 0.485
+        - 0.456
+        - 0.406
+        std:
+        - 0.229
+        - 0.224
+        - 0.225
+        order: hwc
+    - ToCHWImage: null
+    - KeepKeys:
+        keep_keys:
+        - image
+        - shape
+        - polys
+        - ignore_tags
+    ratio_list:
+    - 1.0
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 1
+    num_workers: 0
+    prefetch_factor: 4
+profiler_options: null

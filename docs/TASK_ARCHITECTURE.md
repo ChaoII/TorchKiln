@@ -133,20 +133,20 @@ torchkiln/
 ### 7.1 命令行(已实现:`python -m torchkiln <task> <mode> ...`)
 
 ```powershell
-python -m torchkiln detect    train  -c configs/yolo/yolov8_graph.yml -o Global.epoch_num=100
-python -m torchkiln obb       val    -c configs/yolo/yolov8-obb_graph.yml --weights output/x/best_accuracy.pth
-python -m torchkiln segment   export -c configs/yolo/yolov8-seg_graph.yml  --weights ... --onnx
-python -m torchkiln pose      predict -c configs/yolo/yolov8-pose_graph.yml --weights ... --input imgs
-python -m torchkiln classify  train  -c configs/yolo/yolo11-cls_graph.yml
-python -m torchkiln semantic  train  -c configs/yolo/yolo26-sem_graph.yml
-python -m torchkiln depth     train  -c configs/yolo/yolo26-depth_graph.yml
+python -m torchkiln detect    train  -c configs/yolo/yolov8-det.yml -o Global.epoch_num=100
+python -m torchkiln obb       val    -c configs/yolo/yolov8-obb.yml --weights output/x/best_accuracy.pth
+python -m torchkiln segment   export -c configs/yolo/yolov8-seg.yml  --weights ... --onnx
+python -m torchkiln pose      predict -c configs/yolo/yolov8-pose.yml --weights ... --input imgs
+python -m torchkiln classify  train  -c configs/yolo/yolo11-cls.yml
+python -m torchkiln semantic  train  -c configs/yolo/yolo26-sem.yml
+python -m torchkiln depth     train  -c configs/yolo/yolo26-depth.yml
 python -m torchkiln plate_det train  -c configs/plate/plate_det.yml
 python -m torchkiln plate_rec train  -c configs/plate/plate_rec.yml
 python -m torchkiln attribute train  -c configs/attr/vehicle_attribute.yml
-python -m torchkiln ocr_det   train  -c configs/det/PP-OCRv5_mobile_det.yml
-python -m torchkiln ocr_rec   train  -c configs/rec/PP-OCRv5_mobile_rec.yml
+python -m torchkiln ocr_det   train  -c configs/ocr/det/PP-OCRv5_mobile_det.yml
+python -m torchkiln ocr_rec   train  -c configs/ocr/rec/PP-OCRv5_mobile_rec.yml
 
-python -m torchkiln detect    check  -c configs/yolo/yolov8_graph.yml   # 只构建 + 打印摘要(不训练)
+python -m torchkiln detect    check  -c configs/yolo/yolov8-det.yml   # 只构建 + 打印摘要(不训练)
 python -m torchkiln --help
 ```
 
@@ -196,5 +196,5 @@ torchkiln/
 | `torchkiln/task.py` | 兼容层:`from torchkiln.tasks import *`,旧 import 不破 |
 
 步骤:① 建 `tasks/` 与 `_base.py` → ② 逐个搬适配器并改 `build_task` 查表 → ③ `task.py` 变兼容层 →
-④ 跑三条基线复绿(`smoke_all` 80 OK / `check_graph_build` 53 OK / `check_plate_models`)→
+④ 跑三条基线复绿(`smoke_all` 76 OK / `check_graph_build` 53 OK / `check_plate_models`)→
 ⑤ 更新本文档与 `docs/STRUCTURE.md` 的路径。对外(`configs/*.yml`、`Architecture.task`、CLI)完全不变。

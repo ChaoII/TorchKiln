@@ -4,7 +4,7 @@ Run this in the **ptocr** environment (needs torch only)::
 
     python tools/convert/convert_attribute_weights.py \
         --pkl _downloads/official/ped_attr_paddle.pkl  --num-classes 26 \
-        --out _downloads/official/PP-LCNet_x1_0_pedestrian_attribute_ptocr.pth
+        --out _downloads/official/PP-LCNet_x1_0_pedestrian_attribute.pth
 
 Key mapping (PaddleClas -> torchkiln):
 

@@ -2,6 +2,9 @@
 
 单一实现来源:分类相关的 ``ClsLoss`` / ``ClsPostProcess`` / ``ClsMetric`` 以及它们的
 build 函数都放这里,避免在每个任务文件里复制一份。
+
+多标签开关:配置里写 ``Loss.multi_label: true``（或命令行 ``-o Loss.multi_label=true``）
+即可自动切换 BCE 多标签损失 / 阈值后处理 / mAP·mA 指标,无需再写一串 name。
 """
 from __future__ import absolute_import
 
@@ -15,6 +18,8 @@ __all__ = [
     "ClsMetric",
     "build_cls_loss",
     "build_cls_metric",
+    "build_cls_post_process",
+    "is_multi_label_loss_cfg",
 ]
 
 
@@ -80,15 +85,68 @@ class ClsMetric(object):
         return metrics
 
 
+def is_multi_label_loss_cfg(loss_cfg):
+    cfg = loss_cfg or {}
+    name = str(cfg.get("name") or "CrossEntropy")
+    return bool(cfg.get("multi_label")) or name in ("MultiLabelLoss", "MultiLabel")
+
+
 def build_cls_loss(loss_cfg):
     cfg = dict(loss_cfg or {})
+    multi = bool(cfg.pop("multi_label", False)) or str(
+        cfg.get("name", "CrossEntropy")
+    ) in ("MultiLabelLoss", "MultiLabel")
     name = cfg.pop("name", "CrossEntropy")
+    if multi or name in ("MultiLabelLoss", "MultiLabel"):
+        from torchkiln.tasks.attribute import MultiLabelLoss
+
+        # classify 友好默认:mean 聚合、不做类平衡 ratio(需 label_ratio 时再显式开)
+        cfg.setdefault("size_sum", False)
+        cfg.setdefault("weight_ratio", False)
+        # 丢掉单标签 CE / 检测风格残留键
+        for key in ("topk", "alpha", "beta", "cls_gain", "box_gain", "label_smoothing"):
+            cfg.pop(key, None)
+        return MultiLabelLoss(**cfg)
     if name not in ("CrossEntropy", "ClsLoss"):
         raise ValueError("Unknown cls loss: {}".format(name))
     return ClsLoss(**cfg)
 
 
-def build_cls_metric(metric_cfg):
+def build_cls_metric(metric_cfg, loss_cfg=None):
     cfg = dict(metric_cfg or {})
-    cfg.pop("name", None)
+    name = cfg.pop("name", None)
+    multi = is_multi_label_loss_cfg(loss_cfg) or name in (
+        "AttrMetric",
+        "MultiLabelMetric",
+    )
+    if multi:
+        from torchkiln.tasks.attribute import AttrMetric
+
+        cfg.setdefault("main_indicator", "mAP")
+        cfg.setdefault("threshold", 0.5)
+        # 丢掉 topk 等 ClsMetric 专属键
+        cfg.pop("topk", None)
+        return AttrMetric(**cfg)
     return ClsMetric(**cfg)
+
+
+def build_cls_post_process(post_cfg, loss_cfg=None):
+    cfg = dict(post_cfg or {})
+    name = cfg.pop("name", None)
+    multi = is_multi_label_loss_cfg(loss_cfg) or name in (
+        "MultiLabelThresPostProcess",
+        "MultiLabelThres",
+    )
+    if multi:
+        from torchkiln.tasks.attribute import MultiLabelThresPostProcess
+
+        cfg.pop("topk", None)
+        cfg.pop("conf_thres", None)
+        cfg.pop("iou_thres", None)
+        cfg.pop("strides", None)
+        cfg.setdefault("threshold", 0.5)
+        return MultiLabelThresPostProcess(**cfg)
+    # 单标签:丢掉检测后处理残留键
+    for key in ("conf_thres", "iou_thres", "strides", "threshold", "label_list"):
+        cfg.pop(key, None)
+    return ClsPostProcess(**cfg)

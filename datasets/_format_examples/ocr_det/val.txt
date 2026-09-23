@@ -1,1 +1,0 @@
-images/0001.jpg	[{"transcription": "ABC123", "points": [[10, 10], [50, 10], [50, 30], [10, 30]], "difficult": false}]

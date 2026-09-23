@@ -1,0 +1,88 @@
+# 通用模板：目标检测（yolo11 detect）。业务实验复制到 configs/local/ 再改。
+# 用时改：Head.num_classes、Train/Eval data_dir + label_file_list、names、image_size、batch。
+# 其它任务/家族同目录 *.yml（seg/obb/pose/cls、v8/v12/v26…）。
+Global:
+  model_name: yolo11-det
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 100
+  print_batch_step: 10
+  save_model_dir: ./output/yolo11-det
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: true
+  ema_decay: 0.9999
+  ema_decay_type: exponential
+  show_eval_progress: true
+Architecture:
+  model_family: yolo
+  task: detect
+  algorithm: yolo11
+  yaml_file: torchkiln/cfg/models/11/yolo11.yaml
+  scale: n          # n/s/m/l/x
+  in_channels: 3
+  Head:
+    num_classes: 2   # ← 类别数
+    reg_max: 1       # 检测常用 1 或 16(DFL, 对齐 ultra 预训练)
+Optimizer:
+  name: SGD
+  momentum: 0.937
+  nbs: 64
+  lr:
+    name: Linear
+    learning_rate: 0.01
+    lrf: 0.01
+    warmup_epoch: 3
+    warmup_bias_lr: 0.1
+  regularizer:
+    name: L2
+    factor: 0.0005
+Loss:
+  name: DetLoss
+  topk: 10
+  alpha: 0.5
+  beta: 6.0
+  cls_gain: 0.5
+  box_gain: 7.5
+Metric:
+  name: DetMetric
+  main_indicator: mAP50-95
+PostProcess:
+  name: DetPostProcess
+  conf_thres: 0.001
+  iou_thres: 0.7
+  strides: [8, 16, 32]
+Train:
+  dataset:
+    name: DetDataset
+    data_dir: datasets/det_demo                # ← 数据根目录
+    label_file_list: [datasets/det_demo/train.txt]
+    # names: [cls0, cls1]                      # 类别名
+    kpt_shape: null
+    transform:
+      image_size: 640                          # 常用 640; 须为 32 倍数
+  loader:
+    batch_size_per_card: 8
+    shuffle: true
+    drop_last: false
+    num_workers: 4
+    prefetch_factor: 4
+Eval:
+  dataset:
+    name: DetDataset
+    data_dir: datasets/det_demo
+    label_file_list: [datasets/det_demo/val.txt]
+    kpt_shape: null
+    transform:
+      image_size: 640                          # ← 与 Train 一致
+  loader:
+    batch_size_per_card: 8
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4

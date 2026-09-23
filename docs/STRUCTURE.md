@@ -1,13 +1,13 @@
 # 项目结构
 
 > **2026-09 结构与改名(重要)**
-> * 仓库/包/CLI 改名：**PytorchOCR → TorchKiln**、**pytorchx → torchkiln**、**ptx → tkiln**（外部 ModelScope URL `ChaoII0987/PytorchOCR` 与 `PYTORCHOCR_*` 环境变量**不改**）;
+> * 仓库/包/CLI 改名：**PytorchOCR → TorchKiln**、**pytorchx → torchkiln**、**ptx → tkiln**（外部 ModelScope URL `ChaoII0987/TorchKiln` 与 `PYTORCHOCR_*` 环境变量**不改**）;
 > * 多任务包 pytorchyolo/ → **torchkiln/**(含 YOLO 七任务、上游 YAML 图模型、车牌、属性);
-> * OCR 包 pytorchocr/ → **torchkiln/ocr/**;顶层 pytorchocr/ 仅保留**兼容 shim**(pytorchocr.* 自动别名到 torchkiln.ocr.*);
+> * OCR 包 pytorchocr/ → **torchkiln/ocr/**;顶层兼容包 **pytorchocr/ 已删除**(未发布,不做老 import 别名);
 > * 任务适配器按任务分家:**torchkiln/tasks/<task>.py**(classify/detect/obb/segment/pose/semantic/depth/plate_det/plate_rec/attribute)
 >   + torchkiln/tasks/__init__.py::TASK_REGISTRY / get_task();torchkiln/task.py 变成兼容重导出层;
 > * 命令行:python -m torchkiln <task> <mode> [args](train|val|export|predict|check)，或根目录 `tkiln` / `tkiln.bat`。
-> 下面树中标注的 pytorchyolo/、pytorchocr/ 路径请按上述映射阅读(树本身待下一轮刷新)。
+> 下面树中标注的 pytorchyolo/ 等旧路径请按上述映射阅读(树本身待下一轮刷新)。
 
 `E:\TorchKiln` 是一个**统一的 PyTorch 训练/推理平台**,同时承载三条产品线:
 
@@ -36,7 +36,7 @@ E:\TorchKiln
 │  ├─ precision.py              AMP(fp16/bf16)+ GradScaler
 │  ├─ ema.py                    EMA 权重
 │  ├─ batch_sampler.py          与 Paddle 一致的乱序采样(含多卡分片)
-│  ├─ task.py                   TaskAdapter 抽象(torchkiln / pytorchocr 各自实现)
+│  ├─ task.py                   TaskAdapter 抽象(torchkiln / torchkiln.ocr 各自实现)
 │  ├─ trainers/                 每个任务一个 trainer(共享 base 训练循环)
 │  │  ├─ base.py                BaseTrainer:训练循环/评估/EMA/断点续训/多卡/日志/保存
 │  │  ├─ detect.py segment.py pose.py classify.py obb.py semantic.py depth.py
@@ -109,15 +109,17 @@ E:\TorchKiln
 │  └─ utils/                    属性名表、字符集等资源文件
 │
 ├─ configs/                     可直接训练/评估的配置
-│  ├─ det/ (9)  rec/ (8)        OCR
-│  ├─ yolo/ (59)                YOLO:53 个 YAML 图配置 + 6 个手写模型
+│  ├─ ocr/det/ (9)  ocr/rec/ (8)  OCR(检测 + 识别)
+│  ├─ yolo/ (53)                YOLO:全小写+横线的 YAML 图配置(唯一一套)
 │  ├─ plate/ (2)                plate_det.yml / plate_rec.yml
 │  ├─ attr/ (2)                 pedestrian_attribute.yml / vehicle_attribute.yml
-│  └─ debug/ (5)                调试用小配置
+│  ├─ action/ (1)  video/ (1)   动作 / 视频分类
+│  ├─ local/ (5)                业务实验(gitignore,不入库)
+│  └─ _parity/ (22)             对照验收与消融(gitignore,不入库;含 debug/)
 │
 ├─ tools/
 │  ├─ train.py / eval.py / export.py        三个通用 CLI(按 model_family 自动分派)
-│  ├─ smoke_all.py                           全量自检:每个配置 1 步训练 + 1 步评估(当前 80 OK)
+│  ├─ smoke_all.py                           全量自检:每配置 1 步训练 + 1 步评估(跳过 _parity/local;76 OK)
 │  ├─ check_graph_build.py                   只建图+前向:校验 53 个 YAML 图配置
 │  ├─ check_plate_models.py                  车牌:上游权重/ONNX 张量与数值对齐校验
 │  ├─ download_pretrained.py                 预下载 OCR 预训练权重到本地缓存
@@ -140,8 +142,8 @@ E:\TorchKiln
 │  └─ pedestrian_attribute_demo / vehicle_attribute_demo       属性合成样例
 │
 ├─ _downloads/                  第三方源码与权重(不入库逻辑,仅本地缓存)
-│  ├─ official/                 官方权重 + 转换后的 *_ptocr.pth(OCR 与属性)
-│  ├─ upstream/                 上游 YOLO 权重/配置(user_det_state.pth、user_det.yaml)
+│  ├─ official/                 官方权重 + 转换后的 *.pth(OCR 与属性)
+│  ├─ upstream/                 上游 YOLO 权重/配置(user_det.pth、user_det.yaml)
 │  ├─ plate/                    车牌转换后的 state_dict
 │  ├─ Chinese_license_plate_detection_recognition/  车牌上游仓库(含 weights/)
 │  ├─ PaddleOCR/ PaddleOCR2Pytorch/ paddle_cfg/     参考实现与配置

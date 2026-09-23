@@ -1,6 +1,6 @@
 """Dataset downloader for the ModelScope-hosted sample data.
 
-仓库只入库 label 文本;图片打包在 ModelScope(见 ``datasets/manifest.yml``)。
+仓库不入库 datasets/（label 与图片均本地）;示例可放 ModelScope(见 ``datasets/manifest.yml``)。
 
     tkiln data list                 # 查看每个数据集:URL / label / 图片 是否就绪
     tkiln data get plate_det_demo   # 下载 + 解包到 datasets/plate_det_demo/

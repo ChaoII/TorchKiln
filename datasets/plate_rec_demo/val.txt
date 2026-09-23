@@ -1,8 +1,0 @@
-images/val_000.jpg 60 61 74 42 37 15 56 2
-images/val_001.jpg 33 44 72 77 45 65 1 2
-images/val_002.jpg 56 43 4 38 32 15 8 4
-images/val_003.jpg 72 73 4 15 56 3 34 2
-images/val_004.jpg 1 53 23 45 24 11 62 1
-images/val_005.jpg 3 21 3 15 21 55 59 1
-images/val_006.jpg 41 41 24 19 64 13 39 4
-images/val_007.jpg 39 75 18 13 67 39 36 0

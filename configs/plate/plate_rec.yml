@@ -1,4 +1,4 @@
-Global:
+﻿Global:
   model_name: plate_rec
   use_gpu: true
   epoch_num: 100
@@ -6,7 +6,7 @@ Global:
   save_model_dir: ./output/plate_rec
   save_epoch_step: 10
   eval_batch_step: [0, 200]
-  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/PytorchOCR/resolve/master/pretrained/plate_rec_color_state.pth
+  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/master/pretrained/plate_rec_color.pth
   checkpoints: null
   distributed: false
   seed: 1024

@@ -29,7 +29,7 @@ def main():
     cfg = load_config(CFG)
     dev = torch.device("cuda:0")
     m = BaseModel(cfg["Architecture"]).to(dev)
-    st = torch.load(os.path.join(OFF, "PP-OCRv4_mobile_det_ptocr.pth"), map_location="cpu")
+    st = torch.load(os.path.join(OFF, "PP-OCRv4_mobile_det.pth"), map_location="cpu")
     own = m.state_dict()
     m.load_state_dict({k: v for k, v in st.items() if k in own and tuple(own[k].shape) == tuple(v.shape)}, strict=False)
     loss_fn = build_loss(cfg["Loss"]).to(dev)

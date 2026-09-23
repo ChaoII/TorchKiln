@@ -8,8 +8,8 @@ model YAML, which our loader can then consume:
     python tools/convert/dump_ultralytics.py yolo11n.pt --out _downloads/upstream
 
     # 2) in the ptocr env: fine-tune with the dumped weights
-    python tools/train.py -c configs/yolo/yolo11_graph.yml \
-        -o Global.pretrained_model=_downloads/upstream/yolo11n_state.pth
+    python tools/train.py -c configs/yolo/yolo11-det.yml \
+        -o Global.pretrained_model=_downloads/upstream/yolo11n.pth
 
 Notes
 -----
@@ -45,7 +45,7 @@ def main():
 
     model = YOLO(args.weights).model.float()
     state = model.state_dict()
-    pth = os.path.join(args.out, stem + "_state.pth")
+    pth = os.path.join(args.out, stem + ".pth")
     torch.save(state, pth)
 
     yml = os.path.join(args.out, stem + ".yaml")

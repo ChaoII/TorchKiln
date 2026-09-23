@@ -1,8 +1,0 @@
-images/train_000.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
-images/train_001.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
-images/train_002.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
-images/train_003.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
-images/train_004.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
-images/train_005.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
-images/train_006.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]
-images/train_007.jpg	[{"transcription": "ABCDEF", "points": [[6, 6], [190, 6], [190, 44], [6, 44]]}]

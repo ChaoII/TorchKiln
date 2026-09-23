@@ -12,25 +12,25 @@ from torchkiln.nn.graph import task_head
 
 
 from torchkiln.tasks._cls import (
-    ClsLoss,
-    ClsMetric,
-    ClsPostProcess,
     build_cls_loss,
     build_cls_metric,
+    build_cls_post_process,
+    is_multi_label_loss_cfg,
     num_classes_of,
 )
 from torchkiln.tasks._base import num_classes_of  # noqa: F401
 
 
 class YoloClsTask(TaskAdapter):
-    """Image classification (``Architecture.task: classify``)."""
+    """Image classification (``Architecture.task: classify``).
+
+    多标签:``-o Loss.multi_label=true`` 自动切 BCE + sigmoid 阈值后处理 + mAP。
+    """
 
     name = "yolo_cls"
 
     def build_post_process(self, config):
-        cfg = dict(config.get("PostProcess") or {})
-        cfg.pop("name", None)
-        return ClsPostProcess(**cfg)
+        return build_cls_post_process(config.get("PostProcess"), config.get("Loss"))
 
     def build_model(self, config, post_process):
         from torchkiln.models import build_arch_model
@@ -38,10 +38,16 @@ class YoloClsTask(TaskAdapter):
         return build_arch_model(config["Architecture"], "classify")
 
     def build_loss(self, config, model):
-        return build_cls_loss(config.get("Loss"))
+        loss = build_cls_loss(config.get("Loss"))
+        # 多标签一键开关:trainer 的 best 指标在 Metric.main_indicator;默认 acc 时改 mAP
+        if is_multi_label_loss_cfg(config.get("Loss")):
+            mcfg = config.setdefault("Metric", {})
+            if str(mcfg.get("main_indicator") or "acc") in ("acc", "top1", "hmean", ""):
+                mcfg["main_indicator"] = "mAP"
+        return loss
 
     def build_metric(self, config):
-        return build_cls_metric(config.get("Metric"))
+        return build_cls_metric(config.get("Metric"), config.get("Loss"))
 
     def build_datasets(self, config, logger):
         train_ds = ClsDataset(config, "Train", logger)
@@ -68,14 +74,16 @@ class YoloClsTask(TaskAdapter):
         arch = config.get("Architecture", {}) or {}
         head = arch.get("Head") or {}
         backed = arch.get("Backbone") or {}
+        multi = is_multi_label_loss_cfg(config.get("Loss"))
         return [
-            "task=classify backbone={} scale={} num_classes={} image_size={}".format(
+            "task=classify backbone={} scale={} num_classes={} image_size={} multi_label={}".format(
                 backed.get("name", "YOLOBackbone"),
                 backed.get("scale"),
                 head.get("num_classes"),
                 (config.get("Train", {}).get("dataset", {}).get("transform") or {}).get(
                     "image_size"
                 ),
+                multi,
             )
         ]
 

@@ -1,4 +1,4 @@
-Global:
+﻿Global:
   model_name: PP-LCNet_x1_0_vehicle_attribute
   use_gpu: true
   epoch_num: 20
@@ -6,7 +6,7 @@ Global:
   save_model_dir: ./output/PP-LCNet_x1_0_vehicle_attribute
   save_epoch_step: 1
   eval_batch_step: [0, 200]
-  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/PytorchOCR/resolve/master/pretrained/PP-LCNet_x1_0_vehicle_attribute_ptocr.pth
+  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/master/pretrained/PP-LCNet_x1_0_vehicle_attribute.pth
   checkpoints: null
   distributed: false
   seed: 1024

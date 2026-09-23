@@ -1,7 +1,7 @@
 """训练对齐对照:同一份数据、同一套超参,分别跑「我们」与「原版 ultralytics」,输出对照表。
 
-    python tools/parity_train.py --data datasets/dx_det --config configs/yolo/yolo11_graph.yml \
-        --ours-weights yolo11n_state.pth --ultra-pt _downloads/ultralytics_pt/yolo11n.pt \
+    python tools/parity_train.py --data datasets/dx_det --config configs/yolo/yolo11-det.yml \
+        --ours-weights yolo11n.pth --ultra-pt _downloads/ultralytics_pt/yolo11n.pt \
         --epochs 10 --imgsz 640 --batch 8 --nc 1
 
 * 我们侧:走平台 trainer(读 ``--config``,数据用 ``-o`` 覆盖),最终 mAP 从控制台/日志抓取;
@@ -92,8 +92,8 @@ def run_ultra(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="datasets/dx_det")
-    ap.add_argument("--config", default="configs/yolo/yolo11_graph.yml")
-    ap.add_argument("--ours-weights", default="yolo11n_state.pth")
+    ap.add_argument("--config", default="configs/yolo/yolo11-det.yml")
+    ap.add_argument("--ours-weights", default="yolo11n.pth")
     ap.add_argument("--ultra-pt", default="_downloads/ultralytics_pt/yolo11n.pt")
     ap.add_argument("--ultra-python",
                     default=r"C:\ProgramData\miniconda3\envs\ultralytics\python.exe")

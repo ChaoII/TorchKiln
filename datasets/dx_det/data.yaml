@@ -1,7 +1,0 @@
-# ultralytics dataset
-path: E:/dx_ocr/ultralytics
-train: images/train
-val: images/val
-nc: 1
-names:
-  0: plate

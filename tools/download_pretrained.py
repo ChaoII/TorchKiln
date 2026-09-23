@@ -5,7 +5,7 @@ Usage:
     python tools/download_pretrained.py PP-OCRv6_tiny_det PP-OCRv5_mobile_rec
     python tools/download_pretrained.py --list          # show where each name resolves
 
-The cache lives in ``~/.torchkiln/ocr/pretrained`` (override with
+The cache lives in ``~/.torchkiln/pretrained`` (override with
 ``PYTORCHOCR_HOME`` / ``PYTORCHOCR_PRETRAINED_DIR``).  Unlike training, this
 tool always fills the *cache*: it will not silently reuse the weights that may
 already sit in ``_downloads/official`` inside this repo.
@@ -49,7 +49,7 @@ ALL_MODELS = [
 
 
 def _filename(name):
-    return name if name.endswith(".pth") else name + "_ptocr.pth"
+    return name if name.endswith(".pth") else name + ".pth"
 
 
 def main():

@@ -13,4 +13,4 @@ dependencies = ["torch", "numpy", "opencv-python", "PyYAML"]
 tkiln = "torchkiln.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["torchkiln*", "ptcore*", "pytorchocr*"]
+include = ["torchkiln*", "ptcore*"]

@@ -9,21 +9,20 @@
   | CLI 命令 | `ptx` / `ptx.bat` / `python -m pytorchx` | **`tkiln`** / `tkiln.bat` / `python -m torchkiln` |
 - **改名原因**：`TrainForge`/`trainforge`（组织+PyPI）、`PytorchX`/`pytorchx`（wang-xinyu 200★ 同名且也做 YOLO）、`TorchForge`（Meta 官方）均已占用；`kiln` 命令被 Kiln-AI(5k★) 占用故 CLI 用 **`tkiln`**；`torchkiln` GitHub/PyPI 搜索干净。
 - **必须保留、禁止改（外部契约）**：
-  - ModelScope 外部 URL / 模型名：`ChaoII0987/PytorchOCR`（configs 里 `pretrained_model`、`MODELSCOPE_MODEL = "PytorchOCR"`、`datasets/manifest.yml` 的 prefix）。
+  - ModelScope 外部 URL / 模型名：**`ChaoII0987/TorchKiln`**（2026-09-23 由 `ChaoII0987/PytorchOCR` 迁移；configs `pretrained_model`、`MODELSCOPE_MODEL = "TorchKiln"`、`datasets/manifest.yml` 的 prefix 均已切换）。本地镜像仓库：`\\tsclient\E\TorchKiln`（含 `pretrained/`、`onnx/`）。
   - 环境变量名保持 **`PYTORCHOCR_*`**（`PYTORCHOCR_HOME` / `PRETRAINED_DIR` / `AUTO_DOWNLOAD` / `ALLOW_LOCAL_REPO` / `TF32` / `CUDNN_BENCHMARK`）——改了会破坏用户已有环境变量与文档。
-  - 兼容包 **`pytorchocr/`** 目录与 `_PREFIX = "pytorchocr"`（老 import 别名到 `torchkiln.ocr`）；`pyproject` 的 `include` 含 `pytorchocr*`。
+  - 兼容包 **`pytorchocr/` 已删除**（2026-09-23，未发布故无需兼容）；只认 `torchkiln` / `torchkiln.ocr`，`pyproject` 的 `include` 也不再含 `pytorchocr*`。
   - conda 环境名 **`ptocr`** 不变（与仓库名无关）。
-- **缓存路径**：
-  - 新默认：`~/.torchkiln/pretrained/`（及 OCR 子路径 `~/.torchkiln/ocr/pretrained/`）。
-  - **旧缓存 `~/.pytorchocr/pretrained/` 仍会被回退查找**（`ptcore/pretrained.py::_local_search_dirs` 追加 legacy 目录），已下载权重不用重下。
-  - 可迁移：`Move-Item $env:USERPROFILE\.pytorchocr $env:USERPROFILE\.torchkiln`（可选）。
+  - **缓存路径**：新默认 `~/.torchkiln/pretrained/`；**不再回退查找**旧 `~/.pytorchocr/pretrained/`（已删除兼容）。
+  - 旧目录可自行删除；若曾迁移可 `Move-Item $env:USERPROFILE\.pytorchocr $env:USERPROFILE\.torchkiln`（可选）。
+  - 权重文件名**不再**带 `_ptocr` / `_state` 后缀（配置 URL 与缓存均为裸名 `.pth`）。
 - **标签缓存**：`CACHE_VERSION = "tkiln-labels-1.0"`（由 `ptx-labels-1.0` 改来），旧 `.labels_cache_*.pkl` 会自动失效重扫，无害。
 - **启动器**：根目录 `tkiln`（sh）与 `tkiln.bat`；`pip install -e .` 后 `pyproject.toml` 注册 console script `tkiln = torchkiln.cli:main`。
 - **批量替换踩坑（复盘，勿重蹈）**：
   1. PowerShell `-replace` **默认大小写不敏感**——会把 `pytorchocr`/`PYTORCHOCR_*` 误替换成 `TorchKiln`。必须用 `.NET` 的 `.Replace()`（大小写敏感）或 `-creplace`。
   2. 用占位符保护外部 URL 时，占位符**自身**也被大小写不敏感替换打穿 → 恢复失败。保护 token 里不要含被替换子串的大小写变体。
   3. 仓库根目录改名时若有进程 cwd 在目录内会 `IOException`；解法：从 `E:\` 用 `robocopy /E /MOVE` 搬内容到新名，再删空壳。
-- **验证记录（改名后全过）**：`import torchkiln/ptcore/pytorchocr` OK；`python -m torchkiln --help` / `tkiln.bat check -c configs/_parity/dx_yolo11n_det.yml` OK；`tools/check_graph_build.py` **53 OK, 0 FAIL**；git 仓库在 `E:\TorchKiln` 可用。
+- **验证记录（改名后全过）**：`import torchkiln/ptcore` OK（`pytorchocr` 兼容包已删）；`python -m torchkiln --help` / `tkiln.bat check -c configs/_parity/dx_yolo11n_det.yml` OK；`tools/check_graph_build.py` **53 OK, 0 FAIL**；git 仓库在 `E:\TorchKiln` 可用。
 - **opencode 配置（`opencode.jsonc`，项目根）**：
   - `instructions` 挂了本文件；`references.rename` 指向本改名节。
   - 自带 `/rename-map` 命令：打印旧→新对照与不可改项。
@@ -150,7 +149,8 @@
   - 清单文件：`datasets/dota128/train.txt`、`datasets/dota128/val.txt`（图片相对路径，供框架 DetDataset 使用）。
   - ultralytics 侧数据配置：`datasets/dota128/dota128.yaml`。
   - 类别：15 类（plan/ship/storage-tank/... 见 dota128.yaml）。
-- 图片与权重一律**不入库**（由 `.gitignore` 忽略），只保留标签文本与清单文件。
+- **`datasets/` 整目录不入库**（2026-09-23；含 label/清单/图片；需要示例时另放 ModelScope 或本地 `make_demo_data.py` 生成）。
+- 权重与 `datasets/` 均由 `.gitignore` 忽略。
 
 ## OBB（旋转框）与 ultralytics 的对齐（已完成并验证）
 - **旋转框 NMS**：`torchkiln/det/rbox.py::nms_rotated` 由 O(N²) 纯 NumPy 多边形裁剪（2000 框 87s）
@@ -332,7 +332,7 @@
   ⑤ 端到端训练 mAP 收敛后差 ≤0.02-0.03（含随机种子噪声）。**1-4 项对齐即复现成功**；第 5 项天生有噪声。
 - **外部 person 检测数据集**：`E:\20260921\export_yolo_dataset`（2560×1440，1606/402，`cls cx cy w h` 归一化），
   预缩放副本 `datasets/export_yolo_1280/`（含 `train/val.txt` 相对 + `*_abs.txt` ultra + `pkgsub_ultra.yaml`），
-  配置 `configs/export_yolo/yolo26n_det.yml`（yolo26n, imgsz1280, batch8, MuSGD/auto, mosaic_crop=false, 预训练 `weights/yolo26n_det.pt`）。
+  配置 `configs/local/export_yolo_yolo26n_det.yml`（yolo26n, imgsz1280, batch8, MuSGD/auto, mosaic_crop=false, 预训练 `weights/yolo26n_det.pt`；已移入 local，gitignore）。
 
 ## 复现/对比 ultralytics 的常见坑（避雷清单）
 - **口径必须一致**：ultra 自报的 mAP 默认用 `rect=True`（val 矩形 letterbox）会抬高数值；框架是方图。
@@ -424,8 +424,8 @@
 
 ## git 约定
 - 仓库已在 `E:\TorchKiln` 初始化。
-- `.gitignore` 会忽略：`__pycache__`、`output/`、`*.log`、权重(`*.pt/*.pth`)、数据集图片、
-  数据集压缩包(`*.zip/*.tgz/*.tar`)、缓存(`*.cache`、`.labels_cache_*.pkl`)、`_downloads/`、`_ref/`。
+- `.gitignore` 会忽略：`__pycache__`、`output/`、`weights/`、`*.log`、权重(`*.pt/*.pth`)、**`datasets/` 整目录**、
+  缓存目录、`_downloads/`、`_ref/`、`configs/local/`、`configs/_parity/`（后两者已 `git rm --cached`）。
 - 提交信息使用中文、简洁说明改动即可。
 
 ## 端到端训练对比（dx_ocr 车牌数据集，yolo11n，已验证逐 epoch mAP 对齐）

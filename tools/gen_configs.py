@@ -98,8 +98,8 @@ def _rel(path):
 
 def _pretrained_url(name):
     return (
-        "https://www.modelscope.cn/models/ChaoII0987/PytorchOCR"
-        "/resolve/master/pretrained/{}_ptocr.pth".format(name)
+        "https://www.modelscope.cn/models/ChaoII0987/TorchKiln"
+        "/resolve/master/pretrained/{}.pth".format(name)
     )
 
 

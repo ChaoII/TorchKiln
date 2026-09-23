@@ -4,9 +4,9 @@ Run this with the *PyTorch* interpreter (the `ptocr` conda env).
 
 Usage:
     python tools/convert/convert_det.py \
-        --config configs/det/PP-OCRv4_mobile_det.yml \
+        --config configs/ocr/det/PP-OCRv4_mobile_det.yml \
         --paddle-pkl _downloads/det_v4/v4_det.pkl \
-        --output _downloads/det_v4/ch_ptocr_v4_det.pth
+        --output _downloads/det_v4/ch_PP-OCRv4_det_mobile.pth
 """
 from __future__ import absolute_import
 from __future__ import division

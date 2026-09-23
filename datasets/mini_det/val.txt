@@ -1,2 +1,0 @@
-images/val/val_000.jpg
-images/val/val_001.jpg

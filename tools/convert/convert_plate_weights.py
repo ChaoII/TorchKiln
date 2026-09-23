@@ -101,9 +101,9 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "_downloads", "plate"))
     args = ap.parse_args()
     if args.detect:
-        convert(args.detect, os.path.join(args.out, "plate_detect_state.pth"))
+        convert(args.detect, os.path.join(args.out, "plate_detect.pth"))
     if args.rec:
-        convert(args.rec, os.path.join(args.out, "plate_rec_color_state.pth"))
+        convert(args.rec, os.path.join(args.out, "plate_rec_color.pth"))
     if not (args.detect or args.rec):
         print("nothing to do (pass --detect and/or --rec)")
 

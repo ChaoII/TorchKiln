@@ -73,11 +73,19 @@ def main():
     args = ap.parse_args()
 
     ok, fail = 0, 0
-    for cfg_path in sorted(glob.glob(os.path.join(ROOT, "configs", "*", "*.yml"))):
+    patterns = (
+        os.path.join(ROOT, "configs", "*", "*.yml"),
+        os.path.join(ROOT, "configs", "*", "*", "*.yml"),
+    )
+    cfg_paths = sorted({p for pat in patterns for p in glob.glob(pat)})
+    skip_tops = {"_parity", "local", "debug"}
+    for cfg_path in cfg_paths:
+        rel = os.path.relpath(cfg_path, os.path.join(ROOT, "configs"))
+        top = rel.split(os.sep)[0]
+        if top in skip_tops:
+            continue
         name = os.path.splitext(os.path.basename(cfg_path))[0]
         kind = os.path.basename(os.path.dirname(cfg_path))
-        if kind == "debug":
-            continue
         try:
             config = load_config(cfg_path)
             config["Global"]["epoch_num"] = 1
@@ -90,7 +98,7 @@ def main():
             if config.get("Eval"):
                 config["Eval"]["loader"]["num_workers"] = 0
                 config["Eval"]["loader"]["batch_size_per_card"] = 2
-            pt = os.path.join(args.pretrained_dir, name + "_ptocr.pth")
+            pt = os.path.join(args.pretrained_dir, name + ".pth")
             config["Global"]["pretrained_model"] = pt if os.path.isfile(pt) else None
             if kind == "rec":
                 config["Global"]["character_dict_path"] = char_dict_for(name)

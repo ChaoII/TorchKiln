@@ -54,7 +54,7 @@ def main():
     for cfg in sorted(glob.glob(os.path.join(ROOT, "configs", "*", "*.yml"))):
         name = os.path.splitext(os.path.basename(cfg))[0]
         kind = os.path.basename(os.path.dirname(cfg))
-        w = os.path.join(OFFICIAL, name + "_ptocr.pth")
+        w = os.path.join(OFFICIAL, name + ".pth")
         if not os.path.isfile(w):
             continue
         config = load_config(cfg)

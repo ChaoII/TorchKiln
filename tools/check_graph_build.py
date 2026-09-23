@@ -1,4 +1,4 @@
-"""Build every YAML-graph config and run one dummy forward pass.
+"""Build every YOLO task config and run one dummy forward pass.
 
 Usage:
     python tools/check_graph_build.py [--family v8] [--shape 320]
@@ -38,10 +38,10 @@ def main():
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
-    files = sorted(glob.glob(os.path.join(_ROOT, "configs", "yolo", "*_graph.yml")))
+    files = sorted(glob.glob(os.path.join(_ROOT, "configs", "yolo", "*.yml")))
     ok, fail = [], []
     for path in files:
-        name = os.path.basename(path).replace("_graph.yml", "")
+        name = os.path.basename(path).replace(".yml", "")
         if args.family and args.family not in name:
             continue
         try:

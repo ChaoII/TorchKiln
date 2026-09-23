@@ -1,30 +1,30 @@
 # 模型总表
 
-平台共 **4 条产品线 / 88 个可训练配置**,全部通过 `tools/smoke_all.py` 验证(80 OK,0 FAIL)。
+平台共 **4 条产品线 / 76 个可训练配置**,全部通过 `tools/smoke_all.py` 验证(76 OK,0 FAIL)。
 
 ---
 
 ## 1. OCR 文本检测(det,9 个配置)
 
-`configs/det/*.yml` · 任务 `Architecture.task: det` · 指标 `DetMetric`(hmean / precision / recall)
+`configs/ocr/det/*.yml` · 任务 `Architecture.task: det` · 指标 `DetMetric`(hmean / precision / recall)
 
 | 配置 | 主干 / 结构 | 预训练权重(缓存于 `~/.torchkiln/pretrained/`) |
 |---|---|---|
-| `ch_PP-OCRv3_det_student` | MobileNetV3 + RSEFPN + DBHead | `ch_PP-OCRv3_det_student_ptocr.pth` |
-| `ch_PP-OCRv4_det_mobile` | MobileNetV3 + RSEFPN + PFHeadLocal | `ch_PP-OCRv4_det_mobile_ptocr.pth` |
-| `ch_PP-OCRv4_det_server` | ResNet_vd + LKPAN + PFHeadLocal | `ch_PP-OCRv4_det_server_ptocr.pth` |
-| `ch_PP-OCRv4_det_cml` | ResNet_vd + LKPAN(多教师) | `ch_PP-OCRv4_det_cml_ptocr.pth` |
-| `PP-OCRv5_mobile_det` | PPLCNetV3 + RepLKFPN + PFHeadLocal | `PP-OCRv5_mobile_det_ptocr.pth` |
-| `PP-OCRv5_server_det` | PPHGNetV2_B4 + RepLKPAN + PFHeadLocal | `PP-OCRv5_server_det_ptocr.pth` |
-| `PP-OCRv6_{tiny,small,medium}_det` | PPHGNetV2 + (R)LKPAN + PFHeadLocal(+v6 结构) | `PP-OCRv6_*_det_ptocr.pth` |
+| `ch_PP-OCRv3_det_student` | MobileNetV3 + RSEFPN + DBHead | `ch_PP-OCRv3_det_student.pth` |
+| `ch_PP-OCRv4_det_mobile` | MobileNetV3 + RSEFPN + PFHeadLocal | `ch_PP-OCRv4_det_mobile.pth` |
+| `ch_PP-OCRv4_det_server` | ResNet_vd + LKPAN + PFHeadLocal | `ch_PP-OCRv4_det_server.pth` |
+| `ch_PP-OCRv4_det_cml` | ResNet_vd + LKPAN(多教师) | `ch_PP-OCRv4_det_cml.pth` |
+| `PP-OCRv5_mobile_det` | PPLCNetV3 + RepLKFPN + PFHeadLocal | `PP-OCRv5_mobile_det.pth` |
+| `PP-OCRv5_server_det` | PPHGNetV2_B4 + RepLKPAN + PFHeadLocal | `PP-OCRv5_server_det.pth` |
+| `PP-OCRv6_{tiny,small,medium}_det` | PPHGNetV2 + (R)LKPAN + PFHeadLocal(+v6 结构) | `PP-OCRv6_*_det.pth` |
 
 其他手写/参考配置:`det_mv3_db`、`det_r50_vd_db`、`det_mv3_east`、`det_mv3_pse`、`det_r50_vd_east`、
-`det_r50_vd_sast_*`、`det_r50_vd_fce_ctw`(`configs/debug/` 与 `_downloads/paddle_cfg/` 内有参考)。
+`det_r50_vd_sast_*`、`det_r50_vd_fce_ctw`(`configs/_parity/debug/` 与 `_downloads/paddle_cfg/` 内有参考)。
 损失:DB 系列 Shrink(Dice/BCE+OHEM)+ Threshold(L1)+ Binary(Dice);后处理 `DBPostProcess`(Paddle 原版)。
 
 ## 2. OCR 文本识别(rec,8 个配置)
 
-`configs/rec/*.yml` · 任务 `task: rec` · 指标 `RecMetric`(acc / norm_edit_dis)
+`configs/ocr/rec/*.yml` · 任务 `task: rec` · 指标 `RecMetric`(acc / norm_edit_dis)
 
 | 配置 | 结构 |
 |---|---|
@@ -37,18 +37,19 @@
 
 字符集放在 `torchkiln/ocr/utils/dict/`(v5: `ppocrv5_dict.txt`、v6: `ppocrv6_dict.txt`、v6-tiny: `ppocrv6_tiny_dict.txt`)。
 
-## 3. YOLO 家族(7 任务,59 个配置)
+## 3. YOLO 家族(7 任务,53 个配置)
 
-* 图模型(YAML 驱动,NMS-free/多尺度/各家族的模块都支持):`configs/yolo/*_graph.yml` **53 个**
-* 手写模型:`YOLO11n_{det,seg,obb,pose,cls,sem,depth}.yml` + `yolov8n_det.yml` 等 **6 个**
+* 图模型(YAML 驱动,NMS-free/多尺度/各家族的模块都支持):`configs/yolo/*.yml` **53 个**（小写+横线,唯一一套）
+* 多标签分类:**无独立模板**,任意 `*-cls.yml` + `-o Loss.multi_label=true`（见 `docs/FAQ.md` / `USER_GUIDE.md` §3.7）
+* 业务实验 yml 放 `configs/local/`、对照/消融放 `configs/_parity/`（均 `.gitignore`，不入库）
 
 | 任务 | `Architecture.task` | 头 / 损失 / 指标 | 数据格式 |
 |---|---|---|---|
 | 检测 | `detect` | `Detect(26/DFL)` + TAL + CIoU/DFL + BCE;COCO mAP50-95 | `cls cx cy w h`(归一化)|
-| 旋转框 | `obb` | `OBB` + ProbIoU;mAP | `cls cx cy w h angle`(弧度,le90)|
+| 旋转框 | `obb` | `OBB` + ProbIoU;mAP | **`cls x1 y1 … x4 y4`**(4 角点归一化,9 个数;`box_format: xywhr`)|
 | 实例分割 | `segment` | `Segment` + mask 原型/系数;box_mAP + mask_mAP | 检测标签 + 每实例多边形/掩码 |
 | 关键点 | `pose` | `Pose`(kpt_shape,OKS);OKS-mAP | `cls cx cy w h px py v ...` |
-| 分类 | `classify` | `Classify` + CE;top1/top5 | `路径 类别号` |
+| 分类 | `classify` | `Classify` + CE;top1/top5(多标签:`-o Loss.multi_label=true` → BCE + mAP)| `路径 类别号`;多标签 `路径 v1..vC` |
 | 语义分割 | `semantic` | `SemanticSegment`;mIoU / acc | 掩码 PNG(类别索引)|
 | 深度 | `depth` | `Depth`;δ1/δ2/δ3、AbsRel、RMSE | 深度图(16bit PNG/npy)|
 

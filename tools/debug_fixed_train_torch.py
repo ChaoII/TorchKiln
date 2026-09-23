@@ -24,7 +24,7 @@ def main():
     cfg = load_config(CFG)
     dev = torch.device("cuda:0")
     model = BaseModel(cfg["Architecture"]).to(dev)
-    st = torch.load(os.path.join(OFF, "PP-OCRv4_mobile_det_ptocr.pth"), map_location="cpu")
+    st = torch.load(os.path.join(OFF, "PP-OCRv4_mobile_det.pth"), map_location="cpu")
     own = model.state_dict()
     model.load_state_dict(
         {k: v for k, v in st.items() if k in own and tuple(own[k].shape) == tuple(v.shape)},

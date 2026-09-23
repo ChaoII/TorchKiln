@@ -2,8 +2,8 @@
 
 Examples::
 
-    python tools/infer/predict_yolo.py -c configs/yolo/YOLO11n_det.yml --weights output/YOLO11n_det/best_accuracy.pth --input img.jpg
-    python tools/infer/predict_yolo.py -c configs/yolo/YOLO11n_sem.yml --weights ... --input img.jpg --output out.png
+    python tools/infer/predict_yolo.py -c configs/yolo/yolo11-det.yml --weights output/yolo11_g/best_accuracy.pth --input img.jpg
+    python tools/infer/predict_yolo.py -c configs/yolo/yolo26-sem.yml --weights ... --input img.jpg --output out.png
 
 The image is letterboxed to the training size (``Train.dataset.transform.image_size``),
 results are mapped back to the original resolution.
@@ -99,11 +99,33 @@ def main():
     h0, w0 = img0.shape[:2]
 
     if task_name == "classify":
-        probs = torch.softmax(raw, dim=1)[0].cpu().numpy()
-        top = probs.argsort()[::-1][:5]
-        print("top-5:", [(int(i), names[i] if names else int(i), round(float(probs[i]), 4)) for i in top])
-        cv2.putText(vis, "{} {:.3f}".format(names[int(top[0])] if names else int(top[0]), probs[top[0]]),
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        from torchkiln.tasks._cls import is_multi_label_loss_cfg
+
+        multi = (
+            "MultiLabel" in type(post).__name__
+            or is_multi_label_loss_cfg(config.get("Loss"))
+        )
+        if multi:
+            r = result[0]
+            sc = r["scores"]
+            hit = [
+                (int(i), names[int(i)] if names else int(i), round(float(sc[i]), 4))
+                for i in r["labels"]
+            ]
+            print("multi-label hits:", hit or "(none)")
+            labels_txt = ", ".join(
+                "{}:{:.3f}".format(names[int(i)] if names else int(i), float(sc[i]))
+                for i in r["labels"]
+            ) or "none"
+            cv2.putText(
+                vis, labels_txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
+            )
+        else:
+            probs = torch.softmax(raw, dim=1)[0].cpu().numpy()
+            top = probs.argsort()[::-1][:5]
+            print("top-5:", [(int(i), names[i] if names else int(i), round(float(probs[i]), 4)) for i in top])
+            cv2.putText(vis, "{} {:.3f}".format(names[int(top[0])] if names else int(top[0]), probs[top[0]]),
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
     elif task_name in ("detect", "segment"):
         r = result[0]

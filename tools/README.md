@@ -7,18 +7,24 @@
 
 | 脚本 | 作用 |
 |---|---|
-| `train.py` | 训练入口:`-c <cfg>` 必填;`-o A.B=v` 覆盖任意配置;按 `model_family` 自动分派 Trainer |
-| `eval.py` | 独立评估:`-c <cfg> --weights <pth>` |
-| `export.py` | 导出 `inference.pth / inference.yml / model.pt / model.onnx / model_slim.onnx`(`--onnx --slim`) |
-| `infer/predict_det.py` / `infer/predict_rec.py` | OCR 检测 / 识别推理与可视化 |
-| `infer/predict_yolo.py` | YOLO 七任务推理(按 `task` 自动可视化:框/掩码/关键点/上色/伪彩) |
-| `download_pretrained.py` | 预下载 OCR 官方权重到本地缓存 |
+| `train.py` | 训练入口:`-c <cfg>` 必填;`-o A.B=v` 覆盖任意配置;按 `model_family` 自动分派 Trainer;多卡用 `torchrun` + `-o Global.device=gpu:0,1` |
+| `eval.py` | 独立评估:`-c <cfg> --weights <pth>`(强制 `use_ema=false`) |
+| `export.py` | 导出 `inference.pth / inference.yml / model.pt / model.onnx / model_slim.onnx`(`--onnx --slim`;slim 依赖已有 onnx) |
+| `infer/predict_det.py` / `infer/predict_rec.py` | OCR 检测 / 识别推理;参数 **`--input` 单图**(无 `--image_dir`) |
+| `infer/predict_yolo.py` | YOLO 七任务推理(按 `task` 自动可视化);同样 **`--input`** |
+| `download_pretrained.py` | 预下载 OCR 官方权重到 `~/.torchkiln/pretrained/` |
+| `make_demo_data.py` | 生成占位图 + 标签(仅 smoke 自检) |
+| `make_format_examples.py` | 各任务标签/配置片段模板 → `datasets/_format_examples/` |
+| `convert/dataset_format.py` | 格式互转(当前仅 `yolo_det` ↔ `ocr_det`) |
+
+> 数据集清单/下载入口是 CLI 子命令 **`tkiln data list|get`**(`torchkiln/datasets.py`),**没有** `tools/download_dataset.py`。
+> 完整命令链见 [`docs/TRAINING.md`](../docs/TRAINING.md)。
 
 ## 自检与诊断
 
 | 脚本 | 作用 | 期望输出 |
 |---|---|---|
-| `smoke_all.py` | 全量自检:每配置建模型 + 取 1 batch + 1 步训练 + 1 步评估 | `80 OK, 0 FAIL` |
+| `smoke_all.py` | 全量自检:每配置建模型 + 取 1 batch + 1 步训练 + 1 步评估 | `76 OK, 0 FAIL` |
 | `check_graph_build.py` | 只建图 + 前向,校验全部 YAML 图配置(秒级,不需要数据) | `53 configs: 53 OK, 0 FAIL` |
 | `check_plate_models.py` | 车牌:上游权重张量对齐 + 与出厂 ONNX 的数值对齐 | 检测 `500/500`、识别 `86/86`,识别 `max|diff| ~1e-5` |
 | `test_build_all.py` / `debug_*.py` | 历史调试脚本(建图/序列/对齐排查),保留备查 |

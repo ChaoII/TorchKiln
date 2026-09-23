@@ -1,9 +1,85 @@
 # 各任务数据集:标注格式示例 + 组织形式
 
+> 命令/参数全表见 [`USER_GUIDE.md`](USER_GUIDE.md);本文件专注**标签格式 + 从零接入**。
+
 > 原则:**每个模型都用它原生的数据格式**(YOLO 系 = ultralytics 原生;OCR 系 = PaddleOCR 原生),
 > 不做强行统一;跨格式用 `tools/convert/dataset_format.py` 转一次即可。
-> 所有路径都写在配置里:`Train/Eval.dataset.data_dir` + `label_file_list`;
-> 图片路径**相对 `data_dir`**。
+> 所有路径都写在配置里:`Train/Eval.dataset.data_dir` + `label_file_list`(**没有** `train_list`/`val_list` 字段);
+> 清单里图片路径**相对 `data_dir`**(或写绝对路径,见下)。
+
+## 0. 从零接入一个自定义数据集(完整步骤)
+
+以 **YOLO 单类检测** 为例(其它任务只改标签行与少量 `-o` 字段):
+
+```powershell
+# 1) 按 §3 摆好目录(标签格式看对应任务小节;模板可拷 datasets/_format_examples/det/)
+#    D:/mydata/det/
+#      images/train/*.jpg  images/val/*.jpg
+#      labels/train/*.txt  labels/val/*.txt
+#      train.txt  val.txt                       # 每行一个相对路径,如 images/train/0001.jpg
+
+# 2) 用 -o 指向数据(不改 yml;绝对路径 label 也合法)
+.\tkiln.bat check -c configs/yolo/yolo11-det.yml `
+  -o Train.dataset.data_dir=D:/mydata/det `
+  -o Train.dataset.label_file_list=train.txt `
+  -o Architecture.Head.num_classes=1 `
+  -o Train.dataset.names=[plate]
+
+# 3) 训练 / 评估 / 推理 / 导出(完整参数见 docs/TRAINING.md)
+.\tkiln.bat train -c configs/yolo/yolo11-det.yml `
+  -o Train.dataset.data_dir=D:/mydata/det `
+  -o Train.dataset.label_file_list=train.txt `
+  -o Eval.dataset.data_dir=D:/mydata/det `
+  -o Eval.dataset.label_file_list=val.txt `
+  -o Architecture.Head.num_classes=1 `
+  -o Train.dataset.names=[plate] `
+  -o Global.save_model_dir=./output/my_y11 `
+  -o Global.device=cuda:0 `
+  -o Global.epoch_num=100
+
+.\tkiln.bat val -c configs/yolo/yolo11-det.yml `
+  --weights output/my_y11/best_accuracy.pth `
+  -o Eval.dataset.data_dir=D:/mydata/det -o Eval.dataset.label_file_list=val.txt
+
+.\tkiln.bat predict -c configs/yolo/yolo11-det.yml `
+  --weights output/my_y11/best_accuracy.pth --input D:/img.jpg --output out.jpg
+
+.\tkiln.bat export -c configs/yolo/yolo11-det.yml `
+  --weights output/my_y11/best_accuracy.pth --save-dir output/exp/y11 --onnx --slim
+```
+
+路径语义(`torchkiln/data/det.py` 等):
+
+| `label_file_list` 项 | 解析 |
+|---|---|
+| 不是绝对路径、且当前不是已存在文件 | 拼到 `data_dir` 下 |
+| 已是存在的文件(含绝对路径) | 直接打开 |
+
+因此 `-o Train.dataset.label_file_list=train.txt` 与
+`-o ...=D:/mydata/det/train.txt` 等价(后者依赖文件已存在)。
+
+各任务**必须额外对齐**的字段(在 3 的基础上加):
+
+| 任务 | 额外 `-o` / 配置字段 |
+|---|---|
+| OBB | `Train/Eval.dataset.box_format=xywhr` + **9 字段角点标签**(§4) |
+| pose | `kpt_shape` 写三处:`Architecture.Head` + `Loss` + `Train/Eval.dataset` |
+| seg | `transform.mask_stride`(默认 4);多边形或 `masks/` |
+| cls | `names` + `Architecture.Head.num_classes` |
+| plate_det | `dataset.kpt_shape=[4,2]` + `Head.kpt_label=4` + `Head.num_classes=2` |
+| plate_rec | `transform.image_size=[48,168]` + `Head.color_num=5` |
+| attribute | `dataset.label_ratio=true` + `Head.label_list` |
+| OCR det/rec | `dataset.name=SimpleDataSet` + **`transforms:` 列表**(不是 YOLO 的 `transform:`) |
+| OCR rec | 另加 `Global.character_dict_path`、`max_text_length` |
+
+数据集就绪与下载:
+
+```powershell
+tkiln data list                 # datasets/manifest.yml 就绪性
+tkiln data get <name>           # ModelScope zip → datasets/<name>/
+python tools/make_demo_data.py --all          # 本地占位图(仅 smoke 自检)
+python tools/make_format_examples.py          # 各任务标签+配置片段模板
+```
 
 ## 通用组织约定
 
@@ -70,14 +146,22 @@ nc: 1
 names: {0: plate}
 ```
 
-## 4. 旋转框 / OBB(`task: obb`)
+## 4. 旋转框 / OBB(`task: obb`)—— 加载器要求 **9 字段角点**
 
-**组织形式**同 detect;**标注示例**
+**组织形式**同 detect(`images/<split>` + `labels/<split>` + `train.txt`/`val.txt`)。
+
+**标注示例**(`labels/train/xxx.txt`,每行 **cls + 4 个归一化角点 = 9 个数**):
 ```
-0 0.512000 0.402000 0.210000 0.070000 0.7854
+0 0.310000 0.360000 0.650000 0.360000 0.710000 0.440000 0.370000 0.440000
 ```
-* `cls cx cy w h angle`,角度**弧度**,范围 `[-π/2, π/2)`(le90);
-* 配置:`Train.dataset.box_format: xywhr`(平台据此按旋转框解析/增广/评估)。
+* 顺序:`cls x1 y1 x2 y2 x3 y3 x4 y4`,**全部归一化 [0,1]**;角点可顺/逆时针(内部 `cv2.minAreaRect` 规整);
+* 加载真值:`torchkiln/data/det.py::_load_raw_labels` —— `box_format=xywhr` 时 **`len(parts) < 9` 整行丢弃**,
+  再 `poly2rbox` 转成内部 `(N,6) xywhr`;**不是** 6 字段 `cls cx cy w h angle`。
+* 配置:`Train/Eval.dataset.box_format: xywhr`(增广/评估按旋转框走);
+* 与 DOTA/ultralytics 四角点导出一致;若只有 `xywhr`,请先用 `poly2rbox`/`xywhr2xyxyxyxy` 转成四角点。
+
+> ⚠️ 旧文档与 `tools/make_format_examples.py` 曾写成 `cls cx cy w h angle`——以**加载器 9 字段角点**为准;
+> `_format_examples/det/README.txt` 已同步更正。
 
 ## 5. 实例分割(`task: segment`)
 
@@ -102,12 +186,37 @@ names: {0: plate}
 ## 7. 图像分类(`task: classify`)
 
 **组织形式**:`images/` + `train.txt`/`val.txt`
+
+### 7.1 单标签(默认)
+
 **标注示例**
 ```
 images/cat_001.jpg 0
 images/dog_002.jpg 1
 ```
 * `路径 类别号`(类别号从 0 开始)。
+
+### 7.2 多标签(一键开关)
+
+**标注示例**
+```
+images/a.jpg 1 0 1 0 0
+images/b.jpg 0 1 1 0 1
+```
+* 第 2 列起为 **0/1 multi-hot**(或 0~1 软标签),长度 = `Head.num_classes`;
+* 打开方式**只需一条开关**(自动切 BCE + sigmoid 阈值后处理 + mAP 指标):
+
+```powershell
+# 命令行（推荐；完整示例见 USER_GUIDE.md §3.7）
+-o Loss.multi_label=true
+
+# 或复制 configs/yolo/yolo11-cls.yml → configs/local/my.yml 后写死:
+# Loss.multi_label: true
+# Train/Eval.dataset.multi_label: true   # 可省;写在 Loss 上即可
+```
+
+* 可选:`PostProcess.threshold`(默认 0.5)、`Metric.main_indicator`(默认 mAP,可改 `mA`);
+* 类平衡:数据集写 `label_ratio: true`,损失开 `Loss.weight_ratio: true`。
 
 ## 8. 语义分割(`task: semantic`)
 
@@ -188,7 +297,20 @@ videos/walk_02.mp4 1
 
 ---
 
-## 格式转换(`tools/convert/dataset_format.py`,纯 CPU)
+## 15. 标签模板与格式转换
+
+### 15.1 `_format_examples`(可整目录拷走)
+
+```powershell
+python tools/make_format_examples.py              # 全部任务
+python tools/make_format_examples.py --task det --task pose   # 指定任务
+```
+
+生成 `datasets/_format_examples/<task>/{images, labels?, train.txt, val.txt, README.txt}`;
+`README.txt` 含字段说明 + 对应配置片段。已含任务:
+`det/segment/pose/classify/semantic/depth/plate_rec/attribute/pose_action/video_cls/ocr_det/ocr_rec`。
+
+### 15.2 格式转换(`tools/convert/dataset_format.py`,纯 CPU)
 
 ```powershell
 # 原生 YOLO  ->  PaddleOCR 检测(内联 JSON)
@@ -201,4 +323,4 @@ python tools/convert/dataset_format.py --from ocr_det --to yolo_det --src <src> 
 python tools/convert/dataset_format.py --from yolo_det --to yolo_det --src <src> --dst <dst>
 ```
 已往返自检:`yolo → ocr_det → yolo`,1014 框,**不一致 0**。
-需要 `ocr_rec`(路径↔文本)、`cls`、`seg`(多边形↔掩码)方向时,在脚本里加一对 reader/writer 即可(同一框架)。
+**当前 READERS/WRITERS 仅实现 `yolo_det` 与 `ocr_det`**;`ocr_rec` / `cls` / `seg` 等方向需在脚本里加一对 reader/writer(同一框架)。

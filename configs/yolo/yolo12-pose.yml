@@ -1,0 +1,85 @@
+Global:
+  model_name: yolo12-pose
+  use_gpu: true
+  epoch_num: 100
+  print_batch_step: 10
+  save_model_dir: ./output/yolo12-pose
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: true
+  ema_decay: 0.9999
+  ema_decay_type: exponential
+  show_eval_progress: true
+Architecture:
+  model_family: yolo
+  task: pose
+  algorithm: yolo12-pose
+  yaml_file: torchkiln/cfg/models/12/yolo12-pose.yaml
+  scale: n
+  in_channels: 3
+  Head:
+    num_classes: 1
+    reg_max: 1
+    kpt_shape: [4, 3]
+Optimizer:
+  name: SGD
+  momentum: 0.937
+  nbs: 64
+  lr:
+    name: Linear
+    learning_rate: 0.01
+    lrf: 0.01
+    warmup_epoch: 3
+    warmup_bias_lr: 0.1
+    warmup_momentum: 0.8
+  regularizer:
+    name: L2
+    factor: 0.0005
+Loss:
+  name: PoseLoss
+  kpt_shape: [4, 3]
+  topk: 10
+  alpha: 0.5
+  beta: 6.0
+  cls_gain: 0.5
+  box_gain: 7.5
+Metric:
+  name: PoseMetric
+  main_indicator: mAP50-95
+PostProcess:
+  name: PosePostProcess
+  conf_thres: 0.001
+  iou_thres: 0.7
+  strides: [8, 16, 32]
+Train:
+  dataset:
+    name: PoseDataset
+    data_dir: datasets/pose_demo
+    label_file_list: [datasets/pose_demo/train.txt]
+    kpt_shape: [4, 3]
+    transform:
+      image_size: 320
+  loader:
+    batch_size_per_card: 8
+    shuffle: true
+    drop_last: false
+    num_workers: 4
+    prefetch_factor: 4
+Eval:
+  dataset:
+    name: PoseDataset
+    data_dir: datasets/pose_demo
+    label_file_list: [datasets/pose_demo/val.txt]
+    kpt_shape: [4, 3]
+    transform:
+      image_size: 320
+  loader:
+    batch_size_per_card: 8
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4

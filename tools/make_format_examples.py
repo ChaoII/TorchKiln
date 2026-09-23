@@ -86,7 +86,9 @@ def yolo_det():
         "detect / obb",
         "images/<split>/*.jpg + labels/<split>/*.txt + data.yaml + train.txt/val.txt",
         "每行: cls cx cy w h   (全部归一化 0~1)\n"
-        "旋转框(obb): cls cx cy w h angle(弧度;配置加 Train.dataset.box_format=xywhr)"))
+        "旋转框(obb): cls x1 y1 x2 y2 x3 y3 x4 y4(4角点归一化;配置加 Train.dataset.box_format=xywhr)",
+        "  与 detect 相同目录;box_format=xywhr 时每行必须 9 个数,<9 会被整行丢弃(torchkiln/data/det.py)",
+        "  内部再经 poly2rbox 转成 xywhr;不要写 cls cx cy w h angle 的 6 字段格式"))
 
 
 def yolo_pose():

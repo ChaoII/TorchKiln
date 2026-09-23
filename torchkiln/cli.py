@@ -4,13 +4,13 @@
     tkiln <task> <mode> [args...]       # 显式写 task(等价 + 一致性校验)
     python -m torchkiln <mode> ...     # 免安装等价写法
 
-    tkiln train   -c configs/yolo/yolov8_graph.yml -o Global.epoch_num=100
-    tkiln val     -c configs/yolo/yolov8-obb_graph.yml --weights output/x/best_accuracy.pth
+    tkiln train   -c configs/yolo/yolov8-det.yml -o Global.epoch_num=100
+    tkiln val     -c configs/yolo/yolov8-obb.yml --weights output/x/best_accuracy.pth
     tkiln check   -c configs/attr/vehicle_attribute.yml
-    tkiln export  -c configs/yolo/yolov8-pose_graph.yml --weights ... --onnx
-    tkiln predict -c configs/yolo/yolov8-pose_graph.yml --weights ... --input imgs
+    tkiln export  -c configs/yolo/yolov8-pose.yml --weights ... --onnx
+    tkiln predict -c configs/yolo/yolov8-pose.yml --weights ... --input imgs
     tkiln data list | tkiln data get <name>          # 数据集(ModelScope)下载/检查
-  tkiln detect train -c configs/yolo/yolov8_graph.yml        # 显式 task
+  tkiln detect train -c configs/yolo/yolov8-det.yml        # 显式 task
 
 ``mode ∈ {train, val, export, predict, check}``。除 ``<mode>``(与可选 ``<task>``)之外,
 其余参数**原样透传**给 ``tools/{train,eval,export}.py`` / ``tools/infer/predict_{yolo,det,rec}.py``。
@@ -94,14 +94,14 @@ USAGE = """用法: tkiln [task] <mode> [args...]        (task 可省略,由配�
   mode      : {modes}
 
 推荐(省略 task):
-  tkiln train   -c configs/yolo/yolov8_graph.yml -o Global.epoch_num=100
-  tkiln val     -c configs/yolo/yolov8-obb_graph.yml --weights output/x/best_accuracy.pth
+  tkiln train   -c configs/yolo/yolov8-det.yml -o Global.epoch_num=100
+  tkiln val     -c configs/yolo/yolov8-obb.yml --weights output/x/best_accuracy.pth
   tkiln check   -c configs/attr/vehicle_attribute.yml
-  tkiln export  -c configs/yolo/yolov8-pose_graph.yml --weights ... --onnx
-  tkiln predict -c configs/yolo/yolov8-pose_graph.yml --weights ... --input imgs
+  tkiln export  -c configs/yolo/yolov8-pose.yml --weights ... --onnx
+  tkiln predict -c configs/yolo/yolov8-pose.yml --weights ... --input imgs
 
 显式写 task(等价,并做一致性校验):
-  tkiln detect train -c configs/yolo/yolov8_graph.yml
+  tkiln detect train -c configs/yolo/yolov8-det.yml
 
 其余参数与 tools/*.py 完全一致(-c 配置、-o 覆盖、--weights ...)。
 """.format(tasks=" | ".join(sorted(set(TASK_ALIASES))), modes=" | ".join(MODES))

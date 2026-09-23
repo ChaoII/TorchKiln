@@ -204,13 +204,15 @@ class MultiLabelLoss(nn.Module):
 
     def forward(self, preds, batch):
         logits = preds[0] if isinstance(preds, (tuple, list)) else preds
-        labels, ratio = batch[1], batch[2]
+        labels = batch[1]
+        # ratio 仅在 dataset 额外产出(如 label_ratio: true)时存在;无则跳过加权
+        ratio = batch[2] if len(batch) > 2 else None
         target = labels
         if self.epsilon is not None:
             eps = float(self.epsilon)
             target = target * (1.0 - eps) + (1.0 - target) * eps
         cost = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
-        if self.weight_ratio:
+        if self.weight_ratio and ratio is not None:
             mask = (labels > 0.5).float()
             lr = ratio.mean(0).unsqueeze(0).expand_as(mask)
             cost = cost * ratio2weight(mask, lr)
@@ -271,9 +273,12 @@ class AttrMetric(object):
         if self.correct is None:
             return {"mA": 0.0, "mAP": 0.0, "num": 0}
         per_attr = self.correct / np.maximum(self.total, 1)
+        mA = float(per_attr.mean())
         return {
-            "mA": float(per_attr.mean()),
+            "mA": mA,
             "mAP": self._map(),
+            # classify 若未改 main_indicator 仍读 acc 时回落到 mA
+            "acc": mA,
             "num": self.num,
         }
 

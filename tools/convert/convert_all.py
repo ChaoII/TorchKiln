@@ -129,7 +129,7 @@ def main():
         if not os.path.isfile(cfg):
             print("no config for", name)
             continue
-        out = os.path.join(OFFICIAL, name + "_ptocr.pth")
+        out = os.path.join(OFFICIAL, name + ".pth")
         try:
             r = convert(cfg, pkl, out, name)
             flag = "OK " if (not r["mismatch"] and not r["missing"]) else "WARN"

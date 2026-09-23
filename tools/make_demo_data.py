@@ -1,6 +1,6 @@
 """Generate demo datasets (label text + placeholder images) for self-tests.
 
-仓库只入库 label 文本;真实示例图片打包在 ModelScope(见 ``datasets/manifest.yml``)。
+仓库不入库 datasets/（label 与图片均本地）;真实示例图片可打包在 ModelScope(见 ``datasets/manifest.yml``)。
 本脚本生成**占位图片**,让 ``tools/smoke_all.py`` 在没有真实数据时也能跑通
 (图片是随机噪声 + 简单图形,不具备真实标注语义,仅用于验证数据/模型/损失/指标链路)。
 
@@ -98,6 +98,22 @@ def cls_like(name, n_cls=3):
     print("  %-26s images + 单行标签" % name)
 
 
+def cls_ml_like(name, n_cls=4):
+    """多标签 classify demo: path v1 v2 ... vC (0/1 multi-hot)."""
+    d = _dirs(name, "images")
+    for split, n in (("train", 12), ("val", 6)):
+        lines = []
+        for i in range(n):
+            fn = "%s_%03d" % (split, i)
+            _save_img(d, "images/%s.jpg" % fn, _img(96, 96))
+            lb = (RNG.rand(n_cls) < 0.35).astype(int)
+            if lb.sum() == 0:
+                lb[i % n_cls] = 1
+            lines.append("images/%s.jpg %s" % (fn, " ".join(str(v) for v in lb)))
+        _write(d, split, lines)
+    print("  %-26s images + 多标签(%d 维)" % (name, n_cls))
+
+
 def plate_rec_demo(n_train=32, n_val=8):
     d = _dirs("plate_rec_demo", "images")
     for split, n in (("train", n_train), ("val", n_val)):
@@ -162,6 +178,7 @@ BUILDERS = {
     "obb_demo": lambda: yolo_like("obb_demo", 2, box=(0.2, 0.4), angle=True),
     "pose_demo": lambda: yolo_like("pose_demo", 1, kpt_dim=3, kind="person", n_train=12),
     "cls_demo": lambda: cls_like("cls_demo"),
+    "cls_ml_demo": lambda: cls_ml_like("cls_ml_demo"),
     "plate_det_demo": lambda: yolo_like("plate_det_demo", 2, kpt_dim=2, kind="plate", n_train=12),
     "plate_rec_demo": plate_rec_demo,
     "pedestrian_attribute_demo": lambda: attribute_demo("pedestrian_attribute_demo", 26, 12, 4),

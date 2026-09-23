@@ -1,6 +1,0 @@
-images/val_000.jpg 0
-images/val_001.jpg 1
-images/val_002.jpg 2
-images/val_003.jpg 0
-images/val_004.jpg 1
-images/val_005.jpg 2

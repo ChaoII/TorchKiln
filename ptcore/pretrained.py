@@ -11,7 +11,7 @@ Resolution rules (in order):
 
 The local cache lives in a hidden folder under the user home:
 
-    ~/.torchkiln/ocr/pretrained/<name>_ptocr.pth
+    ~/.torchkiln/pretrained/<name>.pth
 
 Override the location with the environment variables ``PYTORCHOCR_HOME`` or
 ``PYTORCHOCR_PRETRAINED_DIR``.
@@ -19,8 +19,9 @@ Override the location with the environment variables ``PYTORCHOCR_HOME`` or
 Accepted names::
 
     PP-OCRv6_tiny_det
-    PP-OCRv6_tiny_det_ptocr
-    PP-OCRv6_tiny_det_ptocr.pth
+    PP-OCRv6_tiny_det.pth
+    yolo11n
+    yolo11n.pth
 """
 from __future__ import absolute_import
 from __future__ import division
@@ -42,7 +43,7 @@ __all__ = [
 ]
 
 MODELSCOPE_NAMESPACE = "ChaoII0987"
-MODELSCOPE_MODEL = "PytorchOCR"
+MODELSCOPE_MODEL = "TorchKiln"
 MODELSCOPE_REVISION = "master"
 PRETRAINED_SUBDIR = "pretrained"
 
@@ -66,7 +67,7 @@ _WAIT_TIMEOUT = 3600
 def model_url(filename):
     """Build the ModelScope download URL for a weight file name."""
     if not filename.endswith(".pth"):
-        filename += "_ptocr.pth"
+        filename += ".pth"
     return MODEL_URL_TEMPLATE.format(filename=filename)
 
 
@@ -108,10 +109,6 @@ def _local_search_dirs():
     # the weights shipped inside this repo.
     if os.environ.get(ENV_HOME) or os.environ.get(ENV_PRETRAINED_DIR):
         return dirs
-    # Legacy cache dir from the pre-rename PytorchOCR layout (keep old downloads working).
-    legacy = os.path.join(os.path.expanduser("~"), ".pytorchocr", PRETRAINED_SUBDIR)
-    if os.path.isdir(legacy) and legacy not in dirs:
-        dirs.append(legacy)
     if os.environ.get(ENV_ALLOW_LOCAL_REPO, "1") == "0":
         return dirs
     # Convenience for the dev checkout: weights next to the repo.
@@ -125,22 +122,11 @@ def _local_search_dirs():
 
 
 def _candidates(name):
+    """Filenames to try for a bare model name."""
     n = os.path.basename(str(name))
-    out = []
     if n.endswith(".pth") or n.endswith(".pdparams"):
-        out.append(n)
-    else:
-        out.append(n + "_ptocr.pth")
-        out.append(n)
-    if not n.endswith("_ptocr.pth") and not n.endswith(".pth"):
-        out.append(n + "_ptocr.pth")
-    seen = set()
-    res = []
-    for x in out:
-        if x not in seen:
-            seen.add(x)
-            res.append(x)
-    return res
+        return [n]
+    return [n + ".pth", n]
 
 
 def _wait_for_file(dst, logger=None):

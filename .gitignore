@@ -13,6 +13,7 @@ inference/
 *.log
 
 # ===== 权重(放 ModelScope / 本地缓存,不入库) =====
+weights/
 *.pth
 *.pt
 *.pdparams
@@ -25,30 +26,17 @@ inference/
 *.bin
 *.part
 
-# ===== 数据集:只保留文本(label 与 train.txt/val.txt 等清单),图片不入库 =====
-datasets/**/images/
-datasets/**/*.jpg
-datasets/**/*.jpeg
-datasets/**/*.png
-datasets/**/*.bmp
-datasets/**/*.npy
-datasets/**/*.tif
-datasets/**/*.tiff
-datasets/**/annotations/
-datasets/**/masks/
-datasets/**/depth/
-datasets/**/*.cache
-datasets/**/.labels_cache_*.pkl
-datasets/**/.labels_cache_*.pkl
-datasets/**/*.zip
-datasets/**/*.tgz
-datasets/**/*.tar
+# ===== 数据集:整目录不入库(需要示例时另放 ModelScope / 本地生成) =====
+datasets/
 
 # ===== 第三方参考/缓存 =====
 _downloads/
 wheels/
 .cache/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 .idea/
 .vscode/
 .DS_Store
@@ -56,3 +44,9 @@ Thumbs.db
 
 # ===== 参考/特殊目录 =====
 _ref/
+
+# ===== 业务/个人实验配置（仓库只放通用模板）=====
+configs/local/
+
+# ===== 对照/验收/消融（本地跑，不入库）=====
+configs/_parity/

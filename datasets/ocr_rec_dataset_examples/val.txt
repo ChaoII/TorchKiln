@@ -1,4 +1,0 @@
-images/val_000.jpg	CDBAAC
-images/val_001.jpg	DFFACC
-images/val_002.jpg	CCCBFB
-images/val_003.jpg	BEFEEC
