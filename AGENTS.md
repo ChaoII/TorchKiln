@@ -574,6 +574,12 @@
     的 `class_weight` 判断由 `if class_weight` 改为 `is not None`（numpy 数组会触发 ambiguous truth value）。
   - **结论**：三个 SOTA 模型的「权重加载 missing=0 + 逐层前向 + 单步 loss」均与 Paddle3D 数值对齐；
     仅剩「真实数据端到端 mAP/mIoU/FScore」需要大数据集（KITTI 3D 已验；SemanticKITTI/Apollo 数据过大/需注册，暂缺）。
+- **ModelScope 托管（2026-09-24）**：3 个 `.pth` 已上传 **`ChaoII0987/TorchKiln`** 的 `pretrained/`（仓库已设为**公开**）：
+  `centerpoint_pillars_kitti.pth`(19.6MB) / `squeezesegv3_rangenet53_semantickitti.pth`(99.7MB) / `bev_lanedet_apollo_576x1024.pth`(168MB)。
+  - **下载链路已验证**：`resolve_pretrained('centerpoint_pillars_kitti')` 从 ModelScope 下载成功（~21MB/s）→
+    `~/.torchkiln/pretrained/` → 加载 **missing=0/unexpected=0**；三个 resolve URL 均 200。
+  - 用法：config 里 `Global.pretrained_model: <裸名>`（不带 `.pth`）即可自动下载缓存。
+  - 注：私有仓库会导致 resolve 404（git 返回 401）——**必须公开**或提供 token（框架当前用公开 URL，无 token）。
   - 坑：`bb` 是 `nn.Sequential(*resnet34.children())`（bb.0..bb.7）；`Upsample` 无参；`fc_transform` Linear 需转置。
   - 数据（训练/验证需）：Apollo 3D Lane（`Apollo_Sim_3D_Lane_Release` + Paddle3D 标注 json）。
 - **Paddle3D 实跑环境**：`paddlex` conda env 装 `paddle3d==1.0.0` + `numba pyquaternion paddleseg h5py scikit-image nuscenes-devkit`；
