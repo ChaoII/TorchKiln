@@ -226,7 +226,7 @@ class SqueezeSegV3Loss(nn.Module):
     def __init__(self, num_classes=20, ignore_index=0, epsilon_w=0.001,
                  class_weight=None, **kwargs):
         super().__init__()
-        w = torch.as_tensor(class_weight, dtype=torch.float32) if class_weight else None
+        w = torch.as_tensor(class_weight, dtype=torch.float32) if class_weight is not None else None
         self.nll = nn.NLLLoss(weight=w, ignore_index=int(ignore_index))
         self.ignore_index = int(ignore_index)
 

@@ -566,6 +566,14 @@
     `data/lane_bev.py`（`LaneBEVDataset`：图像 + BEV GT npz）；`models/lane_bev.py`；配置 `configs/lane/bev_lanedet.yml`（demo，576×1024，batch1）。
     ⚠️ **输入必须 576×1024**（FCTransform 特征尺寸硬编码 18×32 / 9×16）；`smoke_all` 强制 batch=4 也能跑（~5GB）。
     demo 生成器：`tools/make_demo_data.py --dataset lane_bev_demo`。
+- **单步 loss 对齐（数据无关，2026-09-24）**：用同一批合成输入分别跑 Paddle3D 损失与我们的损失：
+  - SqueezeSegV3 `SSGLossComputation` ↔ `SqueezeSegV3Loss`：**17.265526 ↔ 17.265524（差 1.9e-6）**（5 尺度逐尺度一致）。
+  - BEV-LaneDet（BCE+IoU+push-pull+MSE 四分量之和）↔ `BEVLaneDetLoss`：**59.529789 ↔ 59.529793（差 3.8e-6）**。
+  - 踩坑：① Paddle `F.softmax` **默认 axis=-1**（非通道）——对比脚本必须显式 `axis=1`；② PyTorch NLLLoss 加权 `mean`
+    与 Paddle 归一口径不同（Paddle 除以元素数 vs PyTorch 除以权重和），我们按 Paddle 口径对齐；③ `SqueezeSegV3Loss`
+    的 `class_weight` 判断由 `if class_weight` 改为 `is not None`（numpy 数组会触发 ambiguous truth value）。
+  - **结论**：三个 SOTA 模型的「权重加载 missing=0 + 逐层前向 + 单步 loss」均与 Paddle3D 数值对齐；
+    仅剩「真实数据端到端 mAP/mIoU/FScore」需要大数据集（KITTI 3D 已验；SemanticKITTI/Apollo 数据过大/需注册，暂缺）。
   - 坑：`bb` 是 `nn.Sequential(*resnet34.children())`（bb.0..bb.7）；`Upsample` 无参；`fc_transform` Linear 需转置。
   - 数据（训练/验证需）：Apollo 3D Lane（`Apollo_Sim_3D_Lane_Release` + Paddle3D 标注 json）。
 - **Paddle3D 实跑环境**：`paddlex` conda env 装 `paddle3d==1.0.0` + `numba pyquaternion paddleseg h5py scikit-image nuscenes-devkit`；
