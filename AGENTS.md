@@ -585,3 +585,32 @@
 - **Paddle3D 实跑环境**：`paddlex` conda env 装 `paddle3d==1.0.0` + `numba pyquaternion paddleseg h5py scikit-image nuscenes-devkit`；
   1.0.0 缺 develop 独有文件（`mm_resnet`/`bev_lanedet`/`push_pull_loss`/`init_weight`），已用脚本从 api.github.com 拉取补进 site-packages。
   对比脚本在 `_downloads/paddle3d/`（`paddle_forward.py`/`torch_forward.py`/`squeezeseg_paddle.py`/`bev_paddle.py`）。
+
+## ts_forecast（时间序列）SOTA 模型：PaddleTS (paddlets) 移植（2026-09-25）
+- paddlets 1.1.0 装在 `paddlex` conda env；`paddlets.models.forecasting.dl` 提供多档 DL 预测模型。
+- 已完成并**数值对齐**的模型（每模型独立文件，位于 `torchkiln/nn/`）：
+  - `s_rnn.py::RNNBlock`（PaddleTS `_RNNBlock`，LSTM/GRU/SimpleRNN）
+  - `s_lstnet.py::LSTNet`（`_LSTNetModule`，CNN+RNN+skip-RNN+highway）
+  - `s_transformer.py::Transformer`（`_TransformerModule`，paddle nn.Transformer）
+  - `s_scinet.py::SCINet`（`_StackedSCINetModule`，even/odd 树交互+卷积解码）
+  - `s_informer.py::Informer`（`_InformerModule`，ProbSparse 注意力）
+  - `s_deepar.py::DeepAR`（`_DeepAR`，RNN + GaussianLikelihood 概率预测）
+- **统一接口**：输入 dict `{"past_target": (B,T,D)}`，输出 `(B, out_chunk_len, target_dim)`。
+  `torchkiln/models/ts.py::build_ts_model` 已按 `Head.model` 路由（rnn/lstnet/transformer/scinet/informer/deepar）。
+- **逐层前向数值对齐**（`_downloads/paddlets/sota_*.py`，paddle 侧 dump 权重+fwd、torch 侧 load+对比）：
+  - RNN(LSTM) / RNN(GRU) / LSTNet / Transformer / DeepAR(训练 path 出 distribution params)：**maxdiff=0.000000**（逐位一致）。
+  - SCINet：**maxdiff=5e-6**（浮点级）。
+  - Informer：forward 跑通、形状正确；ProbSparse 注意力含随机 key 采样（`torch.randint` vs `paddle.randint` 无法跨框架复现）
+    → **无法做到逐位对齐**，属算法固有随机性，非实现 bug。
+- **关键坑**：
+  1. paddlets 的 Linear weight 是 `[in,out]`（与 torch `[out,in]` 相反）→ 加载需 `.T`；且 LSTM/GRU 的 state_dict 同时暴露
+     `weight_ih_l0...` 与内部 `0.cell.weight_ih...`（重复），加载 torch 用 `l0` 键即可。
+  2. SCINet 的 `_Interactor` 内层卷积用 `paddle.nn.Pad1D`（**零填充**），torch 必须用 `nn.ConstantPad1d(...,0)`，不能 `ReplicationPad1d`。
+  3. SCINet 的 `_decoder1/_decoder2` 是 `Conv1D(in_chunk_len→out_chunk_len, kernel=1)`，paddle NCL 下**通道维=时间轴**，
+     forward 直接 `decoder(x)`（x 形状 `(B,in_chunk_len,D)`），不要 transpose 成 `(B,D,T)`。
+  4. Transformer 的 paddle `nn.Transformer` 用 `self_attn.q_proj/k_proj/v_proj/out_proj`，torch 用 `in_proj_weight/in_proj_bias/out_proj`——
+     **q/k/v 的 weight 拼接为 in_proj_weight、bias 拼接为 in_proj_bias**，对比脚本 `sota_transformer_compare.py` 里有映射。
+- **待办**：**TFT**（`_tft`，~1400 行：GRN/变量选择/可解释多头注意力/静态编码器）**尚未移植**。
+  它需要 known/static covariates + quantile loss，比当前 ts_forecast 任务（仅喂 `past_target` + MSE）的数据/损失接口更复杂，
+  需要先扩展 ts 数据管线；DeepAR 的训练 forward 也需框架任务传入 `future_target` 并改用 NLL/quantile loss 才能真正跑端到端训练。
+- 其余已实现模型（NBEATS/NHiTS/MLP/TCN/DLinear）保持不变，见 `torchkiln/nn/ts_models.py`。
