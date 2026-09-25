@@ -1,0 +1,84 @@
+# 车道线-分割式(lane_seg):掩码语义分割,metric 为 lane_IoU/mIoU。
+# 用时改:Head.num_classes(0=bg,1..C=车道类)、Train/Eval data_dir + label_file_list、image_size、batch。
+Global:
+  model_name: yolo11-lane-seg
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 100
+  print_batch_step: 10
+  save_model_dir: ./output/yolo11-lane-seg
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: true
+  ema_decay: 0.9999
+  ema_decay_type: exponential
+  show_eval_progress: true
+Architecture:
+  model_family: yolo
+  task: lane_seg
+  algorithm: yolo11
+  yaml_file: torchkiln/cfg/models/11/yolo11-sem.yaml
+  scale: n
+  in_channels: 3
+  Head:
+    num_classes: 2          # 0=bg, 1=lane(多车道类可加大)
+Optimizer:
+  name: SGD
+  momentum: 0.937
+  nbs: 64
+  lr:
+    name: Linear
+    learning_rate: 0.01
+    lrf: 0.01
+    warmup_epoch: 3
+    warmup_bias_lr: 0.1
+  regularizer:
+    name: L2
+    factor: 0.0005
+Loss:
+  name: LaneSegLoss
+  dice_weight: 0.5
+  focal_weight: 0.5
+  focal_gamma: 2.0
+  ignore_index: 255
+Metric:
+  name: LaneSegMetric
+  main_indicator: lane_IoU
+PostProcess:
+  name: SemPostProcess
+  conf_thres: 0.001
+  iou_thres: 0.7
+  strides: [8, 16, 32]
+Train:
+  dataset:
+    name: SemDataset
+    data_dir: datasets/lane_seg_demo            # ← 数据根目录
+    label_file_list: [datasets/lane_seg_demo/train.txt]
+    kpt_shape: null
+    transform:
+      image_size: 256                          # 须为 32 倍数
+  loader:
+    batch_size_per_card: 8
+    shuffle: true
+    drop_last: false
+    num_workers: 4
+    prefetch_factor: 4
+Eval:
+  dataset:
+    name: SemDataset
+    data_dir: datasets/lane_seg_demo
+    label_file_list: [datasets/lane_seg_demo/val.txt]
+    kpt_shape: null
+    transform:
+      image_size: 256                          # ← 与 Train 一致
+  loader:
+    batch_size_per_card: 8
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 4

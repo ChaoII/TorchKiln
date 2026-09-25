@@ -4,7 +4,7 @@
 > * 仓库/包/CLI 改名：**PytorchOCR → TorchKiln**、**pytorchx → torchkiln**、**ptx → tkiln**（外部 ModelScope URL `ChaoII0987/TorchKiln` 与 `PYTORCHOCR_*` 环境变量**不改**）;
 > * 多任务包 pytorchyolo/ → **torchkiln/**(含 YOLO 七任务、上游 YAML 图模型、车牌、属性);
 > * OCR 包 pytorchocr/ → **torchkiln/ocr/**;顶层兼容包 **pytorchocr/ 已删除**(未发布,不做老 import 别名);
-> * 任务适配器按任务分家:**torchkiln/tasks/<task>.py**(classify/detect/obb/segment/pose/semantic/depth/plate_det/plate_rec/attribute)
+> * 任务适配器按任务分家:**torchkiln/tasks/<task>.py**(classify/detect/obb/segment/pose/semantic/depth/plate_det/plate_rec/attribute/lane_seg/lane_row/lane_bev/pc_seg/det3d/pose_action/video_cls)
 >   + torchkiln/tasks/__init__.py::TASK_REGISTRY / get_task();torchkiln/task.py 变成兼容重导出层;
 > * 命令行:python -m torchkiln <task> <mode> [args](train|val|export|predict|check)，或根目录 `tkiln` / `tkiln.bat`。
 > 下面树中标注的 pytorchyolo/ 等旧路径请按上述映射阅读(树本身待下一轮刷新)。
@@ -14,7 +14,8 @@
 | 产品线 | 包 | 说明 |
 |---|---|---|
 | OCR(文本检测/识别) | `torchkiln/ocr/` | PaddleOCR 复现:PP-OCRv2~v6 共 17 个模型 |
-| YOLO 家族(7 任务) | `torchkiln/` | 自研 YOLO 实现(det/seg/obb/pose/cls/sem/depth)+ 上游 YAML 图模型(53 个配置) |
+| YOLO 家族(7+ 任务) | `torchkiln/` | 自研 YOLO 实现(det/seg/obb/pose/cls/sem/depth/lane)+ 上游 YAML 图模型(55 个配置) |
+| 点云 / AD | `torchkiln/`(pc\_\*) | `pc_seg` / `det3d`(见 `docs/AUTONOMOUS_DRIVING.md`),配置 `configs/pc/`(2) |
 | 车牌 / 属性识别 | `torchkiln/`(plate\_\*, attr) | 上游车牌原版复刻(检测+识别)与 PaddleX 行人/车辆属性识别 |
 
 三者共用平台层 `ptcore/`(配置、优化器、EMA、精度、训练循环、任务抽象、工厂)。
@@ -110,7 +111,7 @@ E:\TorchKiln
 │
 ├─ configs/                     可直接训练/评估的配置
 │  ├─ ocr/det/ (9)  ocr/rec/ (8)  OCR(检测 + 识别)
-│  ├─ yolo/ (53)                YOLO:全小写+横线的 YAML 图配置(唯一一套)
+│  ├─ yolo/ (55)                YOLO:全小写+横线的 YAML 图配置(唯一一套)
 │  ├─ plate/ (2)                plate_det.yml / plate_rec.yml
 │  ├─ attr/ (2)                 pedestrian_attribute.yml / vehicle_attribute.yml
 │  ├─ action/ (1)  video/ (1)   动作 / 视频分类
@@ -119,8 +120,8 @@ E:\TorchKiln
 │
 ├─ tools/
 │  ├─ train.py / eval.py / export.py        三个通用 CLI(按 model_family 自动分派)
-│  ├─ smoke_all.py                           全量自检:每配置 1 步训练 + 1 步评估(跳过 _parity/local;76 OK)
-│  ├─ check_graph_build.py                   只建图+前向:校验 53 个 YAML 图配置
+│  ├─ smoke_all.py                           全量自检:每配置 1 步训练 + 1 步评估(跳过 _parity/local;83 OK)
+│  ├─ check_graph_build.py                   只建图+前向:校验 55 个 YAML 图配置
 │  ├─ check_plate_models.py                  车牌:上游权重/ONNX 张量与数值对齐校验
 │  ├─ download_pretrained.py                 预下载 OCR 预训练权重到本地缓存
 │  ├─ gen_configs.py / make_paddle_cfg.py    由官方配置生成 configs/*
@@ -180,7 +181,7 @@ configs/*.yml ──> ptcore.config ──> ptcore.factory ──> ptcore.traine
 | 约定 | 说明 |
 |---|---|
 | 配置文件 | `configs/<family>/<name>.yml`;`Architecture.model_family ∈ {ocr, yolo}` 决定用哪个 Trainer |
-| 任务名 | `Architecture.task`:`det/rec/cls/...`(OCR);`detect/segment/obb/pose/classify/semantic/depth/plate_det/plate_rec/attribute`(YOLO 系)|
+| 任务名 | `Architecture.task`:`det/rec/cls/...`(OCR);`detect/segment/obb/pose/classify/semantic/depth/plate_det/plate_rec/attribute/lane_seg/lane_row/lane_bev/pose_action/video_cls`(YOLO 系);`pc_seg/det3d`(点云)|
 | 图模型 | `Architecture.yaml_file` 指向 `torchkiln/cfg/models/**`;没有则走手写模型构建器 |
 | 权重格式 | 统一为 `torch.save({'state_dict': ...})` 或纯张量 dict;加载按**名字+形状**匹配 |
 | 输出目录 | `Global.save_model_dir`,内含 `best_accuracy.pth`、`latest.pth`、`train.log`、`config.yml` |

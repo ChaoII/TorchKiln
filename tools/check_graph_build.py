@@ -23,11 +23,15 @@ from torchkiln.models import build_arch_model  # noqa: E402
 DEFAULT_SIZES = {
     "classify": 128,
     "semantic": 256,
+    "lane_seg": 256,
+    "lane_row": 256,
     "depth": 256,
     "segment": 256,
     "obb": 320,
     "pose": 320,
     "detect": 320,
+    "pc_seg": 64,
+    "det3d": 64,
 }
 
 

@@ -51,7 +51,7 @@ Train / Eval    dataset + loader
 | 字段 | 说明 |
 |---|---|
 | `model_family` | `ocr` → `torchkiln.ocr.Trainer`;`yolo` → `torchkiln.Trainer`(车牌/属性也用 `yolo`)|
-| `task` | OCR:`det/rec/cls/e2e/sr/table...`;YOLO:`detect/segment/obb/pose/classify/semantic/depth/plate_det/plate_rec/attribute` |
+| `task` | OCR:`det/rec/cls/e2e/sr/table...`;YOLO:`detect/segment/obb/pose/classify/semantic/depth/plate_det/plate_rec/attribute/lane_seg/lane_row/pose_action/video_cls`;点云:`pc_seg/det3d`;车道线 BEV:`lane_bev` |
 | `algorithm` | 模型名(手写模型构建器按名分派;仅日志/兼容用)|
 | `yaml_file` / `yaml_text` | 给定时走 **YAML 图模型**(`torchkiln/cfg/models/**`) |
 | `scale` | `n/s/m/l/x`,按 YAML `scales` 自动缩放 |

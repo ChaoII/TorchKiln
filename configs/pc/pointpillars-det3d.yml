@@ -1,0 +1,86 @@
+# LiDAR pillar 3D 检测(det3d):CenterPoint 式 heatmap + L1,BEV rotated IoU AP。
+# 用时改:Head.num_classes、Train/Eval data_dir + label_file_list、pc_range/pillar_size、batch。
+Global:
+  model_name: pointpillars-det3d
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 50
+  print_batch_step: 10
+  save_model_dir: ./output/pointpillars-det3d
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: true
+Architecture:
+  model_family: pc
+  task: det3d
+  algorithm: pointpillars
+  in_channels: 4
+  Head:
+    num_classes: 3
+    base_channels: 32
+Optimizer:
+  name: AdamW
+  lr:
+    name: Cosine
+    learning_rate: 0.001
+    lrf: 0.05
+    warmup_epoch: 2
+    warmup_bias_lr: 0.1
+    warmup_momentum: 0.8
+  regularizer:
+    name: L2
+    factor: 0.0001
+Loss:
+  name: Det3DLoss
+  focal_alpha: 2.0
+  focal_beta: 4.0
+  box_weight: 0.25
+  hm_weight: 1.0
+  gaussian_radius: 2
+Metric:
+  name: Det3DMetric
+  main_indicator: mAP
+  iou_thresholds: [0.5, 0.7]
+PostProcess:
+  name: Det3DPostProcess
+  score_thres: 0.1
+  nms_thres: 0.2
+  max_det: 100
+Train:
+  dataset:
+    name: Det3DDataset
+    data_dir: datasets/det3d_demo
+    label_file_list: [datasets/det3d_demo/train.txt]
+    num_classes: 3
+    names: [car, ped, cyc]
+    max_boxes: 64
+    pc_range: [-16, -16, -3, 16, 16, 3]
+    pillar_size: [0.5, 0.5, 4.0]
+  loader:
+    batch_size_per_card: 4
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2
+Eval:
+  dataset:
+    name: Det3DDataset
+    data_dir: datasets/det3d_demo
+    label_file_list: [datasets/det3d_demo/val.txt]
+    num_classes: 3
+    names: [car, ped, cyc]
+    max_boxes: 64
+    pc_range: [-16, -16, -3, 16, 16, 3]
+    pillar_size: [0.5, 0.5, 4.0]
+  loader:
+    batch_size_per_card: 4
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2

@@ -91,7 +91,7 @@ def main():
 
     with torch.no_grad():
         raw = model(x)
-        result = post(raw) if task_name not in ("semantic", "depth") else post(
+        result = post(raw) if task_name not in ("semantic", "depth", "lane_seg") else post(
             raw, size=(img.shape[0], img.shape[1])
         )
 
@@ -160,7 +160,7 @@ def main():
                         (int(poly[0][0]), max(12, int(poly[0][1]) - 4)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
 
-    elif task_name == "semantic":
+    elif task_name in ("semantic", "lane_seg"):
         mask = result[0].cpu().numpy().astype(np.uint8)
         mask = cv2.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
         mask = mask[int(pad[1]):int(pad[1] + h0 * ratio), int(pad[0]):int(pad[0] + w0 * ratio)]
@@ -171,6 +171,22 @@ def main():
                 continue
             colored[mask == c] = _color(int(c))
         vis = cv2.addWeighted(vis, 0.5, colored, 0.5, 0)
+
+    elif task_name == "lane_row":
+        xs = result[0].cpu().numpy()  # (L, R) in [0,1]
+        h0v, w0v = vis.shape[:2]
+        for li in range(xs.shape[0]):
+            pts = []
+            for ri in range(xs.shape[1]):
+                xv = float(xs[li, ri])
+                if xv < 0:
+                    continue
+                pts.append((int(xv * (w0v - 1)), int(ri / max(xs.shape[1] - 1, 1) * (h0v - 1))))
+            if len(pts) >= 2:
+                c = _color(li)
+                for a, b in zip(pts, pts[1:]):
+                    cv2.line(vis, a, b, c, 2, cv2.LINE_AA)
+        print("lane_row lanes:", xs.shape[0], "rows:", xs.shape[1])
 
     elif task_name == "depth":
         d = result[0].cpu().numpy()

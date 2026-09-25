@@ -3,12 +3,13 @@
 > 原名 **PytorchOCR**（仓库/包/CLI 已于 2026-09 改为 TorchKiln / `torchkiln` / `tkiln`，详见 [AGENTS.md](AGENTS.md) 改名节）。
 > 命令入口：仓库根目录 `tkiln.bat` / `tkiln`，或 `python -m torchkiln`，或 `pip install -e .` 后的 `tkiln`。
 
-一个平台、四条产品线,**不依赖 PaddleOCR / PaddleX / ultralytics 的运行时**(仅用它们的权重做对齐与初始化):
+一个平台、多条产品线,**不依赖 PaddleOCR / PaddleX / ultralytics 的运行时**(仅用它们的权重做对齐与初始化):
 
 | 产品线 | 内容 | 配置 |
 |---|---|---|
 | **OCR** | PaddleOCR 复现:PP-OCRv**2/3/4/5/6** 检测 + 识别(17 个模型,与 Paddle 逐层权重对齐) | `configs/ocr/det/*.yml`(9)、`configs/ocr/rec/*.yml`(8) |
-| **YOLO 家族** | 自研实现,7 个任务(检测/实例分割/旋转框/关键点/分类/语义分割/深度)+ **上游 YAML 图模型**(v3/v5/v6/v8/v9/v10/v11/v12/v26 共 53 个可训练配置) | `configs/yolo/*.yml`(53) |
+| **YOLO 家族** | 自研实现,7+ 个任务(检测/实例分割/旋转框/关键点/分类/语义分割/深度/车道线)+ **上游 YAML 图模型**(v3/v5/v6/v8/v9/v10/v11/v12/v26 共 55 个可训练配置) | `configs/yolo/*.yml`(55) |
+| **点云 / AD** | 车道线 `lane_seg/lane_row`、点云 `pc_seg`、3D 检测 `det3d`(见 `docs/AUTONOMOUS_DRIVING.md`) | `configs/pc/*.yml`(2) |
 | **车牌** | 上游 `we0091234` 项目原版复刻:yolov5-lite + 4 角点检测、CNN+CTC+颜色识别 | `configs/plate/*.yml`(2) |
 | **属性识别** | PaddleX 复刻:PP-LCNet_x1_0 多标签(行人 26 属性 / 车辆 19 属性) | `configs/attr/*.yml`(2) |
 
@@ -23,7 +24,8 @@
 | [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | **⭐ 小白完整手册**:训练/评估/推理/导出全参数、默认值、引号规则、模型对照、报错速查（**新手先看这篇**） |
 | [`docs/STRUCTURE.md`](docs/STRUCTURE.md) | **项目结构**:完整目录树 + 每个模块的职责 + 依赖方向 |
 | [`docs/TASK_ARCHITECTURE.md`](docs/TASK_ARCHITECTURE.md) | **任务体系**:两级分派、TaskAdapter 契约、各任务组件落点、统一结构与新增任务流程 |
-| [`docs/MODEL_ZOO.md`](docs/MODEL_ZOO.md) | **模型总表**:四产品线全部模型/配置/数据格式/指标/对齐证据 |
+| [`docs/MODEL_ZOO.md`](docs/MODEL_ZOO.md) | **模型总表**:全部产品线模型/配置/数据格式/指标/对齐证据 |
+| [`docs/AUTONOMOUS_DRIVING.md`](docs/AUTONOMOUS_DRIVING.md) | **自动驾驶感知**:车道线 / 点云分割 / 3D 检测设计与验收 |
 | [`docs/TRAINING.md`](docs/TRAINING.md) | **训练闭环**:训练/评估/导出/推理命令、训练特性、权重转换、自检 |
 | [`docs/CONFIG_REFERENCE.md`](docs/CONFIG_REFERENCE.md) | **配置项全解** + 各任务标签格式速查 |
 | [`docs/FAQ.md`](docs/FAQ.md) | **FAQ**:环境、Windows 坑位、复现性、权重加载、车牌/属性细节 |
@@ -64,8 +66,8 @@ python tools/train.py -c configs/attr/vehicle_attribute.yml `          # 车辆�
   -o Global.pretrained_model=~/.torchkiln/pretrained/PP-LCNet_x1_0_vehicle_attribute.pth
 
 # 改完代码先自检(全量:每配置 1 步训练 + 1 步评估)
-python tools/smoke_all.py          # 期望 76 OK, 0 FAIL
-python tools/check_graph_build.py  # 期望 53 configs: 53 OK, 0 FAIL
+python tools/smoke_all.py          # 期望 83 OK, 0 FAIL
+python tools/check_graph_build.py  # 期望 55 configs: 55 OK, 0 FAIL
 ```
 
 ---
@@ -240,7 +242,7 @@ TorchKiln/
 │  ├─ eval.py                # 独立评估
 │  ├─ export.py              # 模型导出（pth/TorchScript/ONNX/onnxslim）
 │  ├─ download_pretrained.py # 预下载预训练权重到本地缓存
-│  ├─ smoke_all.py           # 一键自检全部产品线配置（76 OK；跳过 _parity/local）
+│  ├─ smoke_all.py           # 一键自检全部产品线配置（83 OK；跳过 _parity/local）
 │  ├─ check_graph_build.py   # 只建图 + 前向：校验 53 个 YAML 图配置
 │  ├─ gen_configs.py         # 从官方配置生成 configs/
 │  ├─ infer/
@@ -1085,14 +1087,14 @@ $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1
 ```powershell
 $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"
 python tools/smoke_all.py
-# 期望输出结尾：76 OK, 0 FAIL（17 OCR + 53 YOLO + 2 plate + 2 attr + 1 action + 1 video）
+# 期望输出结尾：83 OK, 0 FAIL（17 OCR + 55 YOLO + 2 plate + 2 attr + 1 action + 1 video + 2 lane + 4 pc + 1 lane_bev）
 ```
 
 只想快速确认“上游 YAML 是否都能建图 + 前向”（不需要数据集、秒级）：
 
 ```powershell
 python tools/check_graph_build.py
-# 期望输出结尾：53 configs: 53 OK, 0 FAIL
+# 期望输出结尾：55 configs: 55 OK, 0 FAIL
 ```
 
 ---
@@ -1179,7 +1181,7 @@ det/obb 导出为**多个输出**（每个尺度一个），seg 额外输出 mas
 | v26 | `26/` | `yolo26` `-p2` `-p6` `-seg` `-obb` `-pose` `-cls` `-sem` `-depth` | det/seg/obb/pose/cls/sem/depth |
 
 合计 **50 个上游 YAML + 3 个手写配置**（`yolov8n_det`、`yolov9`、`yolov10`），
-自检脚本 `tools/check_graph_build.py` 逐个建图 + 前向：**53 configs, 0 FAIL**。
+自检脚本 `tools/check_graph_build.py` 逐个建图 + 前向：**55 configs, 0 FAIL**。
 
 > 端到端头（v10/v26）与 p2/p6 多尺度分支都能直接跑：`Head.end2end` 与
 > **anchor stride 由模型头部自动推导**（`[4,8,16,32]` / `[8,16,32,64]`），
@@ -1283,12 +1285,12 @@ python tools/train.py -c configs/yolo/yolo11-det.yml ^
 <!-- -->
 
 ```powershell
-# ① 逐个建图 + 前向（不需要数据，秒级）：53 configs, 0 FAIL
+# ① 逐个建图 + 前向（不需要数据，秒级）：55 configs, 0 FAIL
 python tools/check_graph_build.py            # 只看结论
 python tools/check_graph_build.py --verbose  # 打印每个配置的 task / 输出通道
 python tools/check_graph_build.py --family yolo26
 
-# ② 端到端（数据 + 1 步训练 + 1 步评估）：76 OK, 0 FAIL
+# ② 端到端（数据 + 1 步训练 + 1 步评估）：83 OK, 0 FAIL
 python tools/smoke_all.py
 ```
 
@@ -1410,8 +1412,8 @@ E:\TorchKiln
 
 | 命令 | 期望 |
 |---|---|
-| `python tools/smoke_all.py` | `76 OK, 0 FAIL`(每配置 1 步训练 + 1 步评估;跳过 `_parity`/`local`)|
-| `python tools/check_graph_build.py` | `53 configs: 53 OK, 0 FAIL` |
+| `python tools/smoke_all.py` | `83 OK, 0 FAIL`(每配置 1 步训练 + 1 步评估;跳过 `_parity`/`local`)|
+| `python tools/check_graph_build.py` | `55 configs: 55 OK, 0 FAIL` |
 | `python tools/check_plate_models.py` | 检测 500/500、识别 86/86,识别 ONNX `max|diff| ≈ 1e-5` |
 
 **依赖方向**:`configs → ptcore.config → ptcore.factory → ptcore.trainer.BaseTrainer ← {torchkiln.ocr.TaskAdapter, torchkiln.TaskAdapter}`;

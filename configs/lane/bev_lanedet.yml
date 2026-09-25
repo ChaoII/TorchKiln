@@ -1,0 +1,73 @@
+# SOTA BEV-LaneDet(相机 -> BEV 车道线;与 Paddle3D 数值对齐)。
+# 输入必须 576x1024(FCTransform 特征尺寸硬编码)。用时改 data_dir + label_file_list、batch。
+Global:
+  model_name: bev-lanedet
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 50
+  print_batch_step: 10
+  save_model_dir: ./output/bev-lanedet
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: true
+Architecture:
+  model_family: lane_bev
+  task: lane_bev
+  train: true
+  Head:
+    bev_shape: [200, 48]
+    output_2d_shape: [144, 256]
+Optimizer:
+  name: AdamW
+  lr:
+    name: Cosine
+    learning_rate: 0.001
+    lrf: 0.05
+    warmup_epoch: 2
+    warmup_bias_lr: 0.1
+    warmup_momentum: 0.8
+  regularizer:
+    name: L2
+    factor: 0.01
+Loss:
+  name: BEVLaneDetLoss
+  ignore_index: 255
+  push_pull: true
+Metric:
+  name: BEVLaneDetMetric
+  main_indicator: FScore
+PostProcess:
+  name: BEVLaneDetPostProcess
+  score_thres: 0.5
+Train:
+  dataset:
+    name: LaneBEVDataset
+    data_dir: datasets/lane_bev_demo
+    label_file_list: [datasets/lane_bev_demo/train.txt]
+    input_shape: [576, 1024]
+    gt_dir: bev_gt
+  loader:
+    batch_size_per_card: 1
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2
+Eval:
+  dataset:
+    name: LaneBEVDataset
+    data_dir: datasets/lane_bev_demo
+    label_file_list: [datasets/lane_bev_demo/val.txt]
+    input_shape: [576, 1024]
+    gt_dir: bev_gt
+  loader:
+    batch_size_per_card: 1
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2

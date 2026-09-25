@@ -35,7 +35,14 @@ def build_det_loss(loss_cfg, num_classes, reg_max=1, use_one2one=False, class_we
     return loss
 
 
-def build_obb_loss(loss_cfg, num_classes, reg_max=1, reg_layout="ltrb_angle", ne=1):
+def build_obb_loss(
+    loss_cfg,
+    num_classes,
+    reg_max=1,
+    reg_layout="ltrb_angle",
+    ne=1,
+    use_one2one=False,
+):
     cfg = dict(loss_cfg or {})
     name = cfg.pop("name", "ObbLoss")
     if name not in ("ObbLoss", "OBBLoss"):
@@ -43,6 +50,7 @@ def build_obb_loss(loss_cfg, num_classes, reg_max=1, reg_layout="ltrb_angle", ne
     cfg.setdefault("reg_max", reg_max)
     cfg.setdefault("reg_layout", reg_layout)
     cfg.setdefault("ne", ne)
+    cfg.setdefault("use_one2one", use_one2one)
     return ObbLoss(num_classes=num_classes, **cfg)
 
 

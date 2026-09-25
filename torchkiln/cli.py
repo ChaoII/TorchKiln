@@ -35,6 +35,20 @@ TASK_ALIASES = {
     "semantic": "semantic",
     "sem": "semantic",
     "depth": "depth",
+    "lane_seg": "lane_seg",
+    "lane-seg": "lane_seg",
+    "lane_row": "lane_row",
+    "lane-row": "lane_row",
+    "lane": "lane_seg",
+    "pc_seg": "pc_seg",
+    "pc-seg": "pc_seg",
+    "pcseg": "pc_seg",
+    "det3d": "det3d",
+    "det-3d": "det3d",
+    "3d": "det3d",
+    "lane_bev": "lane_bev",
+    "lane-bev": "lane_bev",
+    "lanebev": "lane_bev",
     "plate_det": "plate_det",
     "plate-det": "plate_det",
     "plate_rec": "plate_rec",
@@ -66,6 +80,11 @@ FAMILY_OF = {
     "classify": "yolo",
     "semantic": "yolo",
     "depth": "yolo",
+    "lane_seg": "yolo",
+    "lane_row": "yolo",
+    "pc_seg": "pc",
+    "det3d": "pc",
+    "lane_bev": "lane_bev",
     "plate_det": "yolo",
     "plate_rec": "yolo",
     "attribute": "yolo",
@@ -84,6 +103,7 @@ SCRIPT = {
 
 PREDICT_SCRIPT = {
     "yolo": "tools/infer/predict_yolo.py",
+    "pc": "tools/infer/predict_pc.py",
     "ocr_det": "tools/infer/predict_det.py",
     "ocr_rec": "tools/infer/predict_rec.py",
 }
@@ -137,13 +157,13 @@ def _config_task(argv):
         arch = load_config(path).get("Architecture") or {}
         raw = str(arch.get("task") or arch.get("name") or "").lower()
         for key in ("plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
-                    "detect", "segment", "obb", "pose", "classify", "semantic", "depth",
-                    "det", "rec", "cls"):
+                    "lane_bev", "lane_seg", "lane_row", "pc_seg", "det3d", "detect", "segment", "obb", "pose",
+                    "classify", "semantic", "depth", "det", "rec", "cls"):
             if key in raw:
                 return key, cfg
-        return (dirname if dirname in ("det", "rec", "cls") else None), cfg
+        return (dirname if dirname in ("det", "rec", "cls", "pc") else None), cfg
     except Exception:
-        return (dirname if dirname in ("det", "rec", "cls") else None), cfg
+        return (dirname if dirname in ("det", "rec", "cls", "pc") else None), cfg
 
 
 def _canonical(cfg_task):

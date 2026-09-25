@@ -1150,6 +1150,64 @@ class SemanticSegment(nn.Module):
 
 
 @register
+class LaneRow(nn.Module):
+    """Row-based lane head (UFLD): P3/P4/P5 -> (B, num_lanes, num_rows, num_bins)."""
+
+    def __init__(
+        self,
+        nc=1,
+        ch=(),
+        num_lanes=6,
+        num_rows=100,
+        num_bins=101,
+        hidden=128,
+        reg_max=1,
+        **kwargs
+    ):
+        super().__init__()
+        chs = list(ch) if ch else [hidden, hidden, hidden]
+        if len(chs) == 1:
+            chs = chs * 3
+        self.num_lanes = int(num_lanes)
+        self.num_rows = int(num_rows)
+        self.num_bins = int(num_bins)
+        self.hidden = int(hidden)
+        self.nc = int(num_lanes)
+        # synthetic "no" for graph channel bookkeeping (not used by loss)
+        self.no = int(self.num_lanes * self.num_rows * self.num_bins)
+        c3, c4, c5 = chs[0], chs[1] if len(chs) > 1 else chs[0], chs[2] if len(chs) > 2 else chs[0]
+        self.lat3 = Conv(c3, self.hidden, 1, 1)
+        self.lat4 = Conv(c4, self.hidden, 1, 1)
+        self.lat5 = Conv(c5, self.hidden, 1, 1)
+        self.fuse = nn.Sequential(Conv(self.hidden, self.hidden, 3, 1), Conv(self.hidden, self.hidden, 3, 1))
+        # pool rows then classify bins per lane
+        self.row_pool = nn.AdaptiveAvgPool2d((self.num_rows, 1))
+        self.to_lane = nn.Linear(self.hidden, self.num_lanes * self.num_bins)
+        self.no = int(self.num_lanes * self.num_rows * self.num_bins)
+
+    def forward(self, x):
+        if not isinstance(x, (list, tuple)):
+            x = [x]
+        if len(x) == 1:
+            p3 = p4 = p5 = x[0]
+        elif len(x) == 2:
+            p3, p4 = x
+            p5 = x[-1]
+        else:
+            p3, p4, p5 = x[0], x[1], x[-1]
+        y = self.lat3(p3)
+        y = y + F.interpolate(self.lat4(p4), size=y.shape[-2:], mode="nearest")
+        y = y + F.interpolate(self.lat5(p5), size=y.shape[-2:], mode="nearest")
+        y = self.fuse(y)  # (B, H, Hw, Hw)
+        y = self.row_pool(y).squeeze(-1)  # (B, H, R)
+        y = y.transpose(1, 2)  # (B, R, H)
+        y = self.to_lane(y)  # (B, R, L*W)
+        b, r, _ = y.shape
+        y = y.view(b, r, self.num_lanes, self.num_bins)
+        return y.permute(0, 2, 1, 3).contiguous()  # (B, L, R, W)
+
+
+@register
 class Depth(nn.Module):
     """Monocular depth head (v26-depth): P3/P4/P5 -> single-channel log-depth."""
 

@@ -97,11 +97,13 @@ class DetMetric(object):
             import torch as _t
 
             with _t.no_grad():
+                # 3D cross-product form: (1,M,5) vs (1,N,5) -> (1,M,N).
+                # 2D pairwise would broadcast when N==1 and collapse to (M,).
                 iou = probiou(
-                    _t.from_numpy(pb.astype(np.float32)),
-                    _t.from_numpy(gt.astype(np.float32)),
+                    _t.from_numpy(pb.astype(np.float32)).unsqueeze(0),
+                    _t.from_numpy(gt.astype(np.float32)).unsqueeze(0),
                 )
-            return iou.numpy().astype(np.float32)
+            return iou[0].numpy().astype(np.float32)
         a = pb[:, None, :]
         b = gt[None, :, :]
         xx1 = np.maximum(a[..., 0], b[..., 0]); yy1 = np.maximum(a[..., 1], b[..., 1])

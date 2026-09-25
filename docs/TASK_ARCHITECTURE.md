@@ -1,6 +1,6 @@
 # 任务(task)体系:现在怎么组织的 / 怎么调整
 
-平台有 4 条产品线、12 个任务(OCR det/rec、YOLO 7 任务、车牌 2、属性 1)。它们**不是各写一套训练循环**,
+平台有多条产品线、16+ 个任务(OCR det/rec、YOLO 系、车牌 2、属性 1、行为 2、车道线 2、点云 2)。它们**不是各写一套训练循环**,
 而是统一收敛到「一个抽象 + 两级分派 + 每任务 6 个组件」。
 
 ---
@@ -58,6 +58,12 @@ configs/xxx.yml
 | `plate_det` | `plate_det.py::PlateDetTask` | `data/pose.py`(`kpt_shape:[4,2]`)| `plate_det.py` 内的 `PlateDetLoss/PostProcess/Metric` | `cfg/models/plate/*.yaml` 图 |
 | `plate_rec` | `plate_rec.py::PlateRecTask` | `data/plate.py::PlateRecDataset` | `plate_rec.py` 内的 `PlateRecLoss/PostProcess/Metric` | `models/plate.py::build_rec_model` |
 | `attribute` | `attr.py::AttributeTask` | `attr.py::AttributeDataset` | `attr.py` 内的 `MultiLabelLoss/AttrMetric/PostProcess` | `nn/attribute.py::AttributeNet` |
+| `lane_seg` | `tasks/lane_seg.py::LaneSegTask` | 复用/薄包 `data/sem.py` | `lane.py` `LaneSegLoss/Metric` + `SemPostProcess` | 同 semantic 图 |
+| `lane_row` | `tasks/lane_row.py::LaneRowTask` | `data/lane_row.py::LaneRowDataset` | `lane.py` `LaneRowLoss/Metric/PostProcess` | `LaneRow` 头 |
+| `pc_seg` | `tasks/pc_seg.py::PcSegTask` | `data/pc.py::PointCloudDataset` | 复用 `SemLoss/Metric/PostProcess` | `models/pc.py::PillarSegNet` |
+| `det3d` | `tasks/det3d.py::Det3DTask` | `data/det3d.py::Det3DDataset` | `det3d.py` `Det3DLoss/Metric/PostProcess` | `models/det3d.py::PillarDetNet` |
+| `pose_action` | `tasks/pose_action.py` | 关键点序列 `.npy` | 内置 | 图/手写 |
+| `video_cls` | `tasks/video_cls.py` | 视频/帧目录 | 内置 | 图/手写 |
 
 OCR 侧是**单适配器多任务**:`torchkiln/ocr/task.py::OcrTask` 内部再按 `task`(det/rec/cls/e2e/sr/table...)
 分派到 `modeling/*`、`losses/*`、`metrics/*`、`postprocess/*`,因为 OCR 各任务共用同一套数据管线与训练细节。
@@ -196,5 +202,5 @@ torchkiln/
 | `torchkiln/task.py` | 兼容层:`from torchkiln.tasks import *`,旧 import 不破 |
 
 步骤:① 建 `tasks/` 与 `_base.py` → ② 逐个搬适配器并改 `build_task` 查表 → ③ `task.py` 变兼容层 →
-④ 跑三条基线复绿(`smoke_all` 76 OK / `check_graph_build` 53 OK / `check_plate_models`)→
+④ 跑三条基线复绿(`smoke_all` 83 OK / `check_graph_build` 55 OK / `check_plate_models`)→
 ⑤ 更新本文档与 `docs/STRUCTURE.md` 的路径。对外(`configs/*.yml`、`Architecture.task`、CLI)完全不变。

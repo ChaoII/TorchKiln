@@ -27,12 +27,14 @@ class YoloObbTask(YoloDetTask):
     def build_loss(self, config, model):
         from torchkiln.det import build_obb_loss
 
+        head = task_head(model)
         return build_obb_loss(
             config.get("Loss"),
             num_classes_of(model),
-            reg_max=getattr(task_head(model), "reg_max", 1),
-            reg_layout=getattr(task_head(model), "reg_layout", "ltrb_angle"),
-            ne=getattr(task_head(model), "ne", 1),
+            reg_max=getattr(head, "reg_max", 1),
+            reg_layout=getattr(head, "reg_layout", "ltrb_angle"),
+            ne=getattr(head, "ne", 1),
+            use_one2one=getattr(head, "end2end", False),
         )
 
     def summary_lines(self, config, global_config, post_process):

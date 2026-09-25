@@ -30,6 +30,7 @@ from torchkiln.nn.modules import (
     Detect26,
     Depth,
     SemanticSegment,
+    LaneRow,
     Classify,
     Detect,
     OBB,
@@ -115,6 +116,7 @@ HEAD_CLASSES = {
     "Pose26": get_module("Pose26"),
     "SemanticSegment": SemanticSegment,
     "Depth": Depth,
+    "LaneRow": LaneRow,
     "PlateDetect": get_module("PlateDetect"),
 }
 
@@ -229,6 +231,22 @@ def parse_model(d, ch=3, verbose=False):
             cls_name = getattr(head_cls, "__name__", "")
             if "Depth" in cls_name or "Semantic" in cls_name:
                 pass  # single output, no extra args
+            elif "LaneRow" in cls_name:
+                kwargs.pop("reg_max", None)
+                hd = d.get("Head") or {}
+                if extra:
+                    kwargs["num_lanes"] = int(extra[0])
+                elif hd.get("num_lanes"):
+                    kwargs["num_lanes"] = int(hd["num_lanes"])
+                if len(extra) > 1:
+                    kwargs["num_rows"] = int(extra[1])
+                elif hd.get("num_rows"):
+                    kwargs["num_rows"] = int(hd["num_rows"])
+                if len(extra) > 2:
+                    kwargs["num_bins"] = int(extra[2])
+                elif hd.get("num_bins"):
+                    kwargs["num_bins"] = int(hd["num_bins"])
+                layer = head_cls(nc, ch=ch_list, **kwargs)
             elif "Segment" in cls_name:
                 if extra:
                     kwargs["nm"] = extra[0]
@@ -262,6 +280,8 @@ def parse_model(d, ch=3, verbose=False):
                     kwargs["anchors"] = extra[0]
                 kwargs["kpt_label"] = int(d.get("kpt_label", 4))
                 layer = head_cls(nc, ch=ch_list, **kwargs)
+            elif "LaneRow" in cls_name:
+                pass  # layer already built above
             else:
                 kwargs["reg_max"] = int(reg_max)
                 layer = head_cls(nc, ch=ch_list, **kwargs)
@@ -523,6 +543,9 @@ def build_from_arch(arch):
         spec["legacy"] = bool(head["legacy"])
     if head.get("end2end") is not None:
         spec["end2end"] = bool(head["end2end"])
+    # lane_row / det3d 等自定义头超参透传到 yaml spec["Head"]
+    if head:
+        spec["Head"] = dict(head)
     spec["scale"] = arch.get("scale", spec.get("scale", "n"))
     ch = int(arch.get("in_channels", arch.get("ch", 3)))
     model, save, last = parse_model(spec, ch=ch)

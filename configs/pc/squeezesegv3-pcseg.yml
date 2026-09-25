@@ -1,0 +1,82 @@
+# SOTA SqueezeSegV3(pc_seg,range-view;与 Paddle3D 数值对齐)。
+# 用时改:Head.num_classes、range_image_h/w、Train/Eval data_dir + label_file_list、batch。
+Global:
+  model_name: squeezesegv3-pcseg
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 50
+  print_batch_step: 10
+  save_model_dir: ./output/squeezesegv3-pcseg
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: true
+Architecture:
+  model_family: pc
+  task: pc_seg
+  algorithm: squeezesegv3
+  Head:
+    num_classes: 5
+    in_channels: 5
+    num_layers: 53
+    encoder_dropout_prob: 0.01
+    decoder_dropout_prob: 0.01
+Optimizer:
+  name: AdamW
+  lr:
+    name: Cosine
+    learning_rate: 0.001
+    lrf: 0.05
+    warmup_epoch: 2
+    warmup_bias_lr: 0.1
+    warmup_momentum: 0.8
+  regularizer:
+    name: L2
+    factor: 0.0001
+Loss:
+  name: SqueezeSegV3Loss
+  ignore_index: 255
+Metric:
+  name: SemMetric
+  main_indicator: mIoU
+  num_classes: 5
+  ignore_index: 255
+PostProcess:
+  name: SqueezeSegV3PostProcess
+Train:
+  dataset:
+    name: PointCloudDataset
+    data_dir: datasets/pc_demo
+    label_file_list: [datasets/pc_demo/train.txt]
+    range_image: true
+    range_image_h: 64
+    range_image_w: 256
+    num_classes: 5
+    ignore_index: 255
+  loader:
+    batch_size_per_card: 1
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2
+Eval:
+  dataset:
+    name: PointCloudDataset
+    data_dir: datasets/pc_demo
+    label_file_list: [datasets/pc_demo/val.txt]
+    range_image: true
+    range_image_h: 64
+    range_image_w: 256
+    num_classes: 5
+    ignore_index: 255
+  loader:
+    batch_size_per_card: 1
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2

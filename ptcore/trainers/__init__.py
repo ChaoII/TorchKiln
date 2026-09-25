@@ -11,8 +11,13 @@ from ptcore.trainers.base import BaseTrainer, get_logger
 from ptcore.trainers.classify import ClassifyTrainer
 from ptcore.trainers.depth import DepthTrainer
 from ptcore.trainers.detect import DetectTrainer
+from ptcore.trainers.lane_row import LaneRowTrainer
+from ptcore.trainers.lane_seg import LaneSegTrainer
 from ptcore.trainers.obb import ObbTrainer
 from ptcore.trainers.ocr import OcrTrainer
+from ptcore.trainers.pc_seg import PcSegTrainer
+from ptcore.trainers.det3d import Det3DTrainer
+from ptcore.trainers.lane_bev import LaneBEVTrainer
 from ptcore.trainers.plate_det import PlateDetTrainer
 from ptcore.trainers.plate_rec import PlateRecTrainer
 from ptcore.trainers.pose import PoseTrainer
@@ -30,6 +35,11 @@ TRAINER_REGISTRY = {
     "pose": PoseTrainer,
     "semantic": SemanticTrainer,
     "depth": DepthTrainer,
+    "lane_seg": LaneSegTrainer,
+    "lane_row": LaneRowTrainer,
+    "pc_seg": PcSegTrainer,
+    "det3d": Det3DTrainer,
+    "lane_bev": LaneBEVTrainer,
     "plate_det": PlateDetTrainer,
     "plate_rec": PlateRecTrainer,
     "attribute": AttributeTrainer,

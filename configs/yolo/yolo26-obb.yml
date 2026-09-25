@@ -46,17 +46,21 @@ Loss:
   beta: 6.0
   cls_gain: 0.5
   box_gain: 7.5
+  raw_angle: true
+  use_one2one: true
+  one2one_topk: 1
 Metric:
   name: DetMetric
   box_format: xywhr
   main_indicator: mAP50-95
 PostProcess:
   name: DetPostProcess
-  box_type: xywhr
+  box_format: xywhr
   reg_layout: upstream
   conf_thres: 0.001
   iou_thres: 0.7
   end2end: true
+  angle_raw: true
   strides: [8, 16, 32]
 Train:
   dataset:

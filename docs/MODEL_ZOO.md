@@ -1,6 +1,6 @@
 # 模型总表
 
-平台共 **4 条产品线 / 76 个可训练配置**,全部通过 `tools/smoke_all.py` 验证(76 OK,0 FAIL)。
+平台共 **4 条产品线 / 83 个可训练配置**,全部通过 `tools/smoke_all.py` 验证(83 OK,0 FAIL)。
 
 ---
 
@@ -37,9 +37,9 @@
 
 字符集放在 `torchkiln/ocr/utils/dict/`(v5: `ppocrv5_dict.txt`、v6: `ppocrv6_dict.txt`、v6-tiny: `ppocrv6_tiny_dict.txt`)。
 
-## 3. YOLO 家族(7 任务,53 个配置)
+## 3. YOLO 家族(7+ 任务,55 个配置)
 
-* 图模型(YAML 驱动,NMS-free/多尺度/各家族的模块都支持):`configs/yolo/*.yml` **53 个**（小写+横线,唯一一套）
+* 图模型(YAML 驱动,NMS-free/多尺度/各家族的模块都支持):`configs/yolo/*.yml` **55 个**（小写+横线,唯一一套）,含 lane_seg/lane_row demo
 * 多标签分类:**无独立模板**,任意 `*-cls.yml` + `-o Loss.multi_label=true`（见 `docs/FAQ.md` / `USER_GUIDE.md` §3.7）
 * 业务实验 yml 放 `configs/local/`、对照/消融放 `configs/_parity/`（均 `.gitignore`，不入库）
 
@@ -52,9 +52,32 @@
 | 分类 | `classify` | `Classify` + CE;top1/top5(多标签:`-o Loss.multi_label=true` → BCE + mAP)| `路径 类别号`;多标签 `路径 v1..vC` |
 | 语义分割 | `semantic` | `SemanticSegment`;mIoU / acc | 掩码 PNG(类别索引)|
 | 深度 | `depth` | `Depth`;δ1/δ2/δ3、AbsRel、RMSE | 深度图(16bit PNG/npy)|
+| 车道线-分割 | `lane_seg` | `LaneSegLoss/Metric`;lane_IoU / mIoU | 同 semantic 掩码 |
+| 车道线-行式 | `lane_row` | `LaneRowLoss/Metric`;F1@50 | 行式 `valid x0..x_{R-1}` |
 
 上游 YAML 家族覆盖:`v3`(3)、`v5`(2)、`v6`(1)、`v8`(12)、`v9`(8)、`v10`(7)、`11`(5)、`12`(5)、`26`(9)、`plate`(1)。
-`tools/check_graph_build.py` 逐个建图+前向:**53 configs, 53 OK, 0 FAIL**。
+`tools/check_graph_build.py` 逐个建图+前向:**55 configs, 55 OK, 0 FAIL**。
+
+### 点云 / 自动驾驶(4 个配置)
+
+`configs/pc/*.yml` · family `pc` · 详见 [`AUTONOMOUS_DRIVING.md`](AUTONOMOUS_DRIVING.md)
+
+| 配置 | 任务 | 模型 | 损失 / 指标 / 后处理 |
+|---|---|---|---|
+| `pointpillars-seg.yml` | `pc_seg` | `PillarSegNet` | `SemLoss` / `SemMetric`(mIoU) / `SemPostProcess` |
+| `pointpillars-det3d.yml` | `det3d` | `PillarDetNet` | `Det3DLoss` / `Det3DMetric`(BEV AP) / `Det3DPostProcess` |
+| `centerpoint-det3d.yml` | `det3d` | `CenterPointPillars`(SOTA) | `CenterPointLoss` / `CenterPointMetric` / `CenterPointPostProcess` |
+| `squeezesegv3-pcseg.yml` | `pc_seg` | `SqueezeSegV3`(SOTA) | `SqueezeSegV3Loss` / `SemMetric`(mIoU) / `SqueezeSegV3PostProcess` |
+
+### 车道线 BEV(1 个配置)
+
+`configs/lane/bev_lanedet.yml` · family `lane_bev` · 相机图像 → BEV 车道线(与 Paddle3D 数值对齐)
+
+| 配置 | 任务 | 模型 | 损失 / 指标 / 后处理 |
+|---|---|---|---|
+| `bev_lanedet.yml` | `lane_bev` | `BEVLaneDet`(SOTA) | `BEVLaneDetLoss` / `BEVLaneDetMetric`(FScore) / `BEVLaneDetPostProcess` |
+
+数据 demo:`datasets/pc_demo`、`datasets/det3d_demo`(`tools/make_demo_data.py --dataset ...`)。
 
 ### 训练特性(与 ultralytics 对齐的部分)
 AMP(fp16/bf16)、`freeze`、梯度累积、Adam/AdamW/SGD/RAdam/NAdam、Cosine/Linear/OneCycle/Const + warmup、

@@ -295,11 +295,81 @@ videos/walk_02.mp4 1
 * 采样:`transform.num_segments × frames_per_seg` 帧(均匀分段),`image_size`/`crop_size` 控制分辨率;
 * `Backbone.scale` 调容量,`Head.num_classes` 为行为类别数。
 
+## 15. 车道线-分割式(`task: lane_seg`)
+
+**组织形式**:同 semantic —— `images/<split>/x.jpg` + `masks/<split>/x.png`(同名)+ `train.txt`/`val.txt`
+**标注示例**:`masks/train/0001.png` uint8,像素值 = 类别索引(0=背景,1..C=车道类);忽略像素 = `ignore_index`(默认 255)。
+```yaml
+Architecture.task: lane_seg
+Architecture.Head.num_classes: 2        # 0=bg + 1=lane
+Loss.name: LaneSegLoss                  # CE + dice + focal
+Metric.name: LaneSegMetric
+Metric.main_indicator: lane_IoU
+```
+* 可与 `semantic` 共用数据/头,仅 metric 换 `lane_IoU`(前景∪所有车道类 IoU)。
+
+## 16. 车道线-行式/UFLD(`task: lane_row`)
+
+**组织形式**:`images/<split>/*.jpg` + `labels/<split>/*.txt`(同名)+ `train.txt`/`val.txt`
+**标注示例**(`labels/train/0001.txt`,每行一条车道,固定 `num_lanes` 行):
+```
+1 0.1500 0.1525 0.1550 ... 0.3500
+1 0.5500 0.5525 0.5550 ... 0.7500
+0 0 0 ... 0
+```
+* 每行:`valid x0 x1 ... x_{R-1}`;`valid∈{0,1}`;`x∈[0,1]` 归一化横坐标;`R=num_rows`(默认 100);
+* 配置:`Architecture.task: lane_row`、`Head.num_lanes/num_rows/num_bins`;
+* Loss `LaneRowLoss`(行分类 CE/BCE,ignore 无效行);Metric `LaneRowMetric`(main_indicator `F1`,threshold_px=50)。
+
+## 17. 点云分割(`task: pc_seg`)
+
+**组织形式**
+```
+datasets/pc_demo/
+├─ clouds/train/*.npy|.bin     # float32 N×3(x,y,z) 或 N×4(+intensity)
+├─ labels/train/*.npy|.txt     # 每点 int 类别(与点一一对应);缺省视为全 0
+├─ train.txt  val.txt          # 每行一个点云相对路径,如 clouds/train/0001.npy
+```
+**标注示例**(`labels/train/0001.txt` 或 `.npy`,一行/一元素一个点标签):
+```
+0
+0
+1
+1
+...
+```
+* `.bin` 为 KITTI 风格 float32 reshape;`.npy` 推荐 demo;
+* 配置:`Architecture.task: pc_seg`、`Head.num_classes=C`;
+* `Train.dataset`:`pc_range=[xmin,xmax,ymin,ymax,zmin,zmax]`、`pillar_size=[dx,dy,dz]`、`max_points_per_pillar`;
+* Loss `SemLoss`(pillar CE);Metric `SemMetric`(main_indicator `mIoU`);
+* **图像预训练权重不适用**,`Global.pretrained_model: null`。
+
+## 18. 3D 检测(`task: det3d`,CenterPoint 简化)
+
+**组织形式**
+```
+datasets/det3d_demo/
+├─ clouds/train/*.npy|.bin     # 同 pc_seg
+├─ labels/train/*.txt          # 每行一个 3D 框
+├─ train.txt  val.txt
+```
+**标注示例**(`labels/train/0001.txt`):
+```
+car 12.1 -3.4 0.8 3.7 1.6 1.5 1.57
+ped  5.0  2.2 0.9 0.6 0.6 1.7 0.10
+```
+* 每行:`cls x y z l w h yaw`(LiDAR 系;`cls` = 类名或 int;可选第 9 列 difficulty 忽略);
+* 配置:`Architecture.task: det3d`、`Head.num_classes=C`、`Train.dataset.names: [...]`;
+* `pc_range=[xmin,ymin,zmin,xmax,ymax,zmax]`、`pillar_size=[dx,dy,dz]`(与 pc_seg 相同语义);
+* Loss `Det3DLoss`(heatmap focal + L1);Metric `Det3DMetric`(BEV rotated IoU AP,thr [0.5,0.7]);
+* PostProcess `Det3DPostProcess`(score_thres + nms_thres + BEV NMS);
+* **图像预训练权重不适用**,`Global.pretrained_model: null`。
+
 ---
 
-## 15. 标签模板与格式转换
+## 19. 标签模板与格式转换
 
-### 15.1 `_format_examples`(可整目录拷走)
+### 19.1 `_format_examples`(可整目录拷走)
 
 ```powershell
 python tools/make_format_examples.py              # 全部任务
@@ -308,9 +378,9 @@ python tools/make_format_examples.py --task det --task pose   # 指定任务
 
 生成 `datasets/_format_examples/<task>/{images, labels?, train.txt, val.txt, README.txt}`;
 `README.txt` 含字段说明 + 对应配置片段。已含任务:
-`det/segment/pose/classify/semantic/depth/plate_rec/attribute/pose_action/video_cls/ocr_det/ocr_rec`。
+`det/segment/pose/classify/semantic/depth/plate_rec/attribute/pose_action/video_cls/ocr_det/ocr_rec/lane_seg/lane_row/lane_bev/pc_seg/det3d`。
 
-### 15.2 格式转换(`tools/convert/dataset_format.py`,纯 CPU)
+### 19.2 格式转换(`tools/convert/dataset_format.py`,纯 CPU)
 
 ```powershell
 # 原生 YOLO  ->  PaddleOCR 检测(内联 JSON)

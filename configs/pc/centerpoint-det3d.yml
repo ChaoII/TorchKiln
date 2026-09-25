@@ -1,0 +1,95 @@
+# SOTA CenterPoint-Pillars(与 Paddle3D 数值对齐的 det3d 算法)。
+# 用时改:Head.tasks/point_cloud_range/voxel_size、Train/Eval data_dir + label_file_list、batch。
+Global:
+  model_name: centerpoint-det3d
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 50
+  print_batch_step: 10
+  save_model_dir: ./output/centerpoint-det3d
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: true
+Architecture:
+  model_family: pc
+  task: det3d
+  algorithm: centerpoint
+  in_channels: 4
+  Head:
+    num_classes: 3
+    point_cloud_range: [-16, -16, -3, 16, 16, 3]
+    voxel_size: [0.16, 0.16, 4.0]
+    max_num_points_in_voxel: 100
+    feat_channels: [64, 64]
+    tasks:
+      - num_class: 1
+        class_names: [car]
+      - num_class: 2
+        class_names: [cyc, ped]
+Optimizer:
+  name: AdamW
+  lr:
+    name: Cosine
+    learning_rate: 0.001
+    lrf: 0.05
+    warmup_epoch: 2
+    warmup_bias_lr: 0.1
+    warmup_momentum: 0.8
+  regularizer:
+    name: L2
+    factor: 0.0001
+Loss:
+  name: CenterPointLoss
+  down_ratio: 2
+  gaussian_overlap: 0.1
+  max_objs: 500
+  min_radius: 2
+  weight: 2.5
+Metric:
+  name: CenterPointMetric
+  main_indicator: mAP
+  iou_thresholds: [0.5, 0.7]
+PostProcess:
+  name: CenterPointPostProcess
+  down_ratio: 2
+  score_thres: 0.1
+  nms_thres: 0.1
+  max_det: 100
+Train:
+  dataset:
+    name: Det3DDataset
+    data_dir: datasets/det3d_demo
+    label_file_list: [datasets/det3d_demo/train.txt]
+    raw_points: true
+    num_classes: 3
+    names: [car, ped, cyc]
+    max_boxes: 64
+    point_cloud_range: [-16, -16, -3, 16, 16, 3]
+  loader:
+    batch_size_per_card: 2
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2
+Eval:
+  dataset:
+    name: Det3DDataset
+    data_dir: datasets/det3d_demo
+    label_file_list: [datasets/det3d_demo/val.txt]
+    raw_points: true
+    num_classes: 3
+    names: [car, ped, cyc]
+    max_boxes: 64
+    point_cloud_range: [-16, -16, -3, 16, 16, 3]
+  loader:
+    batch_size_per_card: 2
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2

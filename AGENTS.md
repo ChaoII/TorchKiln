@@ -504,3 +504,70 @@
 - **结论**：detect 全部检测家族（v11/v8/v26/v12/v10/v9(t/s/m/c)/v5/v3u）端到端训练 mAP 终值均与 ultra 对齐（差 ≤0.026，
   多数 ≤0.015，属训练数据顺序/随机性 + E2E 波动）。剩余无差距来源同 v11/v8（shuffle 使每 batch 梯度次序不同）。
 - **配置**：configs/_parity/dx_{yolov10n,yolov9c,yolov5nu,yolov3u,yolo12n}_det.yml；ultra 侧 ultra_train_dx3.py <v10|v9c|v5nu|v3u|v12>。
+
+## det3d（3D 检测）与 Paddle3D CenterPoint-Pillars 的对齐（已完成并验证，2026-09-24）
+- **背景**：AD 的 `det3d` 最初用自研轻量 dense-CNN（`PillarDetNet`，**非 SOTA**）。已替换/新增 **SOTA CenterPoint-Pillars**（Paddle3D 官方模型）并完成数值对齐。
+- **权重与数据来源（关键：绕开被墙的 GitHub/ModelScope）**：
+  - Paddle3D 权重托管在 **百度 BOS**，本网络直达：`https://bj.bcebos.com/paddle3d/models/centerpoint/centerpoint_pillars_016voxel_kitti/model.pdparams`（19MB）；
+    pointpillars：`.../pointpillars/pointpillars_xyres16_kitti_car/model.pdparams`。
+  - KITTI 数据：`https://s3.eu-central-1.amazonaws.com/avg-kitti/data_object_{velodyne(28.7GB),calib,label_2,image_2}.zip`（用户手动下，S3 直连超时）；
+    KITTI ImageSets 在 `https://bj.bcebos.com/paddle3d/datasets/KITTI/ImageSets.tar.gz`。
+  - 环境：`paddlex` conda env 装 `paddle3d==1.0.0`（pip，清华源）+ `numba pyquaternion paddleseg h5py scikit-image nuscenes-devkit`（--no-deps）。
+- **模型实现**：`torchkiln/nn/centerpoint.py`（PyTorch，**模块/命名逐一对齐 Paddle3D**）：
+  `PillarFeatureNet`(9→32→64, legacy=False) + `PointPillarsScatter` + `SecondBackbone`(3/5/5, strides 1/2/2)
+  + `SecondFPN`(0.5/1/2, use_conv_for_no_stride) + `CenterHead`(双任务, shared_conv + SeparateHead, hm final conv bias=-2.19)
+  + `hard_voxelize`。`load_paddle_centerpoint()` 把 `.pdparams`(numpy pkl) 加载进模型。
+  - **权重加载 missing=0 / unexpected=0**（191 张量）。注意：Paddle `Linear.weight` 是 `[in,out]`（需 `.t()`）；BN 用 `_mean/_variance`（→ running_mean/var）。
+- **前向数值对齐（决定性证据）**：同一 voxel 输入分别跑 Paddle3D(1.0.0) 与我们的模块：
+  `voxel_features/bev maxdiff 5e-6`、`fpn 3e-4`、`head(hm/reg/height/dim/rot) ~1e-4`（float32 级）。
+  → **模型本身没问题**。（脚本：`_downloads/paddle3d/paddle_forward.py` + `torch_forward.py`。）
+- **GT 约定（关键差异，压低 mAP 的根因）**：Paddle3D 的 lidar GT = **`[x,y,z, w,l,h, ry]`**，其中
+  **`ry` 直接用相机原始 ry（不做 heading 变换）**，dims 为 **wlh**。我们原转换器用了「几何 heading(=-ry) + lwh」→ 非轴向车辆 IoU 被压低。
+  - **正确几何**：KITTI 框**长边沿相机 x 轴**（devkit `compute_box_3d` 的 `x_corners=±l/2`）；等价于 `yaw = ry + π/2`（框架格式 `l 沿 yaw`）。
+  - **`tools/convert/kitti_to_det3d.py` 已修正**为 `yaw = ry + π/2`；验证与 Paddle3D 框 **probiou IoU=0.994**。
+- **官方 KITTI 评估器**：复用 Paddle3D 自带 `kitti_object_eval_python/eval.py`（难度/DontCare/R40），运行时打补丁去 numba、
+  把 `rotate_iou_gpu_eval` 换成本地 shapely 精确 BEV IoU；调用 `get_official_eval_result(..., z_axis=2, metric_types=('bev',))`。
+  GT 用 Paddle3D 约定；**GT 当预测自检=100**。
+  - **全量 val（3769 帧）BEV mAP（Easy/Mod/Hard）**：
+    Car **90.2/84.4/79.4**、Ped 60.3/57.1/53.1、Cyc 81.7/61.9/58.0；**均值(Mod) 67.8 vs Paddle3D 参考 71.87（差 4）**。
+    （参考：Car 93.0/87.3/86.2、Ped 66.5/62.7/58.5、Cyc 86.6/65.6/61.6。）残差来自 NMS/shapely-IoU/点过滤的算子级差异。
+- **框架接入（已完成）**：
+  - `torchkiln/models/det3d.py::build_det3d_model` 按 `Architecture.algorithm: centerpoint` 路由到 `CenterPointPillars`。
+  - `torchkiln/data/det3d.py` 新增 `raw_points` 模式 + `raw_collate`（哨兵填充成 `(B,N,4)` 张量，**不改 BaseTrainer**）。
+  - `torchkiln/tasks/det3d.py` 按算法分派 loss/metric/postprocess/collate。
+  - `torchkiln/nn/centerpoint_task.py`（新）：`CenterPointLoss`(FastFocalLoss+RegLoss+Gt2CenterPointTarget)、
+    `CenterPointPostProcess`(逐任务解码+旋转NMS)、`CenterPointMetric`（内部复用 DetMetric/probiou）。
+  - 配置 `configs/pc/centerpoint-det3d.yml`（tasks `[Car]` + `[Cyc,Ped]`，dims/角度按 Paddle 约定换算：`ry = yaw - π/2`）。
+  - **基线**：`smoke_all` **83 OK / 0 FAIL**（新增 centerpoint + squeezesegv3 + bev_lanedet 配置）；`check_graph_build` 55 OK；GPU/CPU 各跑通 1 epoch 训练+评估。
+- **踩坑**：`_gather_feat` 要处理 4D(B,C,H,W)；`FastFocalLoss` 的 gather 只按**类别列**索引；`RegLoss` 需**按 code 维(8)聚合**返回 (8,)；
+  `batch[0].to(device)` 硬约束 → 用填充张量 `(B,N,4)` + 范围外哨兵绕过。
+- **torch `.pth`（供框架 `pretrained_model:` / ModelScope 上传）**：`weights/centerpoint_pillars_kitti.pth`（19.6MB，
+  框架加载 missing=0/unexpected=0）。上传 ModelScope `pretrained/` 后按裸名 `centerpoint_pillars_kitti` 引用。
+
+## pc_seg（SqueezeSegV3）与 lane（BEV-LaneDet）与 Paddle3D 的对齐（已完成并验证，2026-09-24）
+- 同 CenterPoint 模式：**BOS 直下官方权重 → PyTorch 逐命名移植 → missing=0 → vs Paddle3D 实跑前向对齐 → 转 `.pth`**。
+- **SqueezeSegV3（pc_seg，range-view）**：`torchkiln/nn/sac_rangenet.py`（SACRangeNet53 backbone + 5 尺度 head）。
+  - 权重 `https://bj.bcebos.com/paddle3d/models/squeezesegv3/squeezesegv3_rangenet53_semantickitti/model.pdparams`。
+  - **missing=0/unexpected=0**（524 张量）；**前向对齐 vs Paddle3D：5 尺度 maxdiff ~1e-5**。
+  - `.pth`：`weights/squeezesegv3_rangenet53_semantickitti.pth`（99.7MB）。
+  - **框架接入**：`build_pc_seg_model` 按 `algorithm: squeezesegv3` 路由；`data/pc.py` 新增 `range_image` 模式
+    （`project_range_image` 球面投影 → `(5,H,W)` 距离图 + `(H,W)` 标签）；`nn/sac_rangenet.py` 加 `SqueezeSegV3Loss`(多尺度 NLL) +
+    `SqueezeSegV3PostProcess`；`tasks/pc_seg.py` 按算法分派；配置 `configs/pc/squeezesegv3-pcseg.yml`（demo，64×256，batch1）。
+    ⚠️ `smoke_all` 强制 batch=4 且同进程 → range image 需够小（我们 64×256）否则 OOM 硬崩。
+  - 关键坑：Paddle `ConvBNLayer(bias=None)` = **默认有 bias**（Only `bias=False` 才无）；`Linear.weight` 需转置；BN `_mean/_variance`→running。
+  - 数据（mIoU 验证需）：SemanticKITTI —— `data_odometry_velodyne.zip`(80.9GB) + `data_odometry_calib.zip`(0.6MB)
+    + labels `http://www.semantic-kitti.org/assets/data_odometry_labels.zip`(171MB)（S3/BOS 直达）。
+- **BEV-LaneDet（lane，ResNet-34 BEV）**：`torchkiln/nn/bev_lanedet.py`（ResNet34 + FCTransform BEV 投影 + 双 head）。
+  - 权重 `https://paddle3d.bj.bcebos.com/models/bev_lanedet/bev_lanedet_apollo_576x1024/model.pdparams`。
+  - **missing=0/unexpected=0**（372 张量）；**前向对齐 vs Paddle3D：各层 maxdiff ~1e-5~8e-5**。config：bev_shape [200,48]、input 576×1024。
+  - `.pth`：`weights/bev_lanedet_apollo_576x1024.pth`（168MB）。
+  - **框架接入**：新任务 `lane_bev`（注册 4 处：`tasks/__init__.py`/`ptcore/trainers/__init__.py`/`cli.py`/`configs/lane/`）；
+    `torchkiln/lane_bev.py`（`BEVLaneDetLoss`=BCE+IoU+push-pull+MSE、`BEVLaneDetPostProcess`、`BEVLaneDetMetric`=FScore）；
+    `data/lane_bev.py`（`LaneBEVDataset`：图像 + BEV GT npz）；`models/lane_bev.py`；配置 `configs/lane/bev_lanedet.yml`（demo，576×1024，batch1）。
+    ⚠️ **输入必须 576×1024**（FCTransform 特征尺寸硬编码 18×32 / 9×16）；`smoke_all` 强制 batch=4 也能跑（~5GB）。
+    demo 生成器：`tools/make_demo_data.py --dataset lane_bev_demo`。
+  - 坑：`bb` 是 `nn.Sequential(*resnet34.children())`（bb.0..bb.7）；`Upsample` 无参；`fc_transform` Linear 需转置。
+  - 数据（训练/验证需）：Apollo 3D Lane（`Apollo_Sim_3D_Lane_Release` + Paddle3D 标注 json）。
+- **Paddle3D 实跑环境**：`paddlex` conda env 装 `paddle3d==1.0.0` + `numba pyquaternion paddleseg h5py scikit-image nuscenes-devkit`；
+  1.0.0 缺 develop 独有文件（`mm_resnet`/`bev_lanedet`/`push_pull_loss`/`init_weight`），已用脚本从 api.github.com 拉取补进 site-packages。
+  对比脚本在 `_downloads/paddle3d/`（`paddle_forward.py`/`torch_forward.py`/`squeezeseg_paddle.py`/`bev_paddle.py`）。

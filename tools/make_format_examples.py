@@ -143,6 +143,49 @@ def yolo_sem():
         "masks: uint8 单通道,像素值=类别索引;忽略像素由 ignore_index 指定(默认 255)"))
 
 
+def yolo_lane_seg():
+    for s in ("train", "val"):
+        _img("lane_seg/images/%s/0001.jpg" % s)
+        try:
+            import cv2
+            p = os.path.join(OUT, "lane_seg/masks/%s/0001.png" % s)
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            m = np.zeros((48, 64), np.uint8)
+            m[:, 20:26] = 1   # 竖直车道带
+            cv2.imwrite(p, m)
+        except Exception:
+            pass
+        _w("lane_seg/%s.txt" % s, ["images/%s/0001.jpg" % s])
+    _w("lane_seg/README.txt", _note(
+        "lane_seg(车道线-分割式)",
+        "images/<split>/*.jpg + masks/<split>/*.png(同名)+ train.txt/val.txt",
+        "masks: uint8,0=背景,1..C=车道类(可多类);ignore_index 默认 255\n"
+        "配置: Architecture.task: lane_seg, Head.num_classes=C+1\n"
+        "Loss: LaneSegLoss(CE+dice+focal); Metric main_indicator: lane_IoU"))
+
+
+def yolo_lane_row():
+    num_lanes, num_rows = 6, 100
+    for s in ("train", "val"):
+        _img("lane_row/images/%s/0001.jpg" % s)
+        lines = []
+        for li in range(num_lanes):
+            if li < 2:
+                xs = [0.15 + 0.2 * li + 0.05 * (ri / max(num_rows - 1, 1)) for ri in range(num_rows)]
+                lines.append("1 " + " ".join("%.4f" % v for v in xs))
+            else:
+                lines.append("0 " + " ".join("0" for _ in range(num_rows)))
+        _w("lane_row/labels/%s/0001.txt" % s, lines)
+        _w("lane_row/%s.txt" % s, ["images/%s/0001.jpg" % s])
+    _w("lane_row/README.txt", _note(
+        "lane_row(车道线-行式/UFLD)",
+        "images/<split>/*.jpg + labels/<split>/*.txt(同名)+ train.txt/val.txt",
+        "每行一条车道(固定 num_lanes 行): valid x0 x1 ... x_{R-1}\n"
+        "valid∈{0,1}; x∈[0,1] 归一化横坐标; R=num_rows(默认 100)\n"
+        "配置: Architecture.task: lane_row, Head.num_lanes/num_rows/num_bins\n"
+        "Loss: LaneRowLoss; Metric main_indicator: F1(threshold_px=50)"))
+
+
 def yolo_depth():
     for s in ("train", "val"):
         _img("depth/images/%s/0001.jpg" % s)
@@ -209,9 +252,80 @@ def video_cls():
         "采样: transform.num_segments × frames_per_seg 帧均匀分段;image_size/crop_size 控制分辨率"))
 
 
+def yolo_pc_seg():
+    """pc_seg: clouds/<split>/*.npy (N,4) + labels/<split>/*.npy (N,) + train/val.txt"""
+    for s in ("train", "val"):
+        pc = np.column_stack(
+            [
+                np.linspace(-8, 8, 256),
+                np.zeros(256),
+                np.zeros(256),
+                np.ones(256),
+            ]
+        ).astype(np.float32)
+        lab = np.zeros(256, dtype=np.int64)
+        lab[128:] = 1
+        try:
+            import os as _os
+
+            for sub, arr in (("clouds", pc), ("labels", lab)):
+                p = os.path.join(OUT, "pc_seg", sub, s, "0001.npy")
+                os.makedirs(_os.path.dirname(p), exist_ok=True)
+                np.save(p, arr)
+        except Exception:
+            pass
+        _w("pc_seg/%s.txt" % s, ["clouds/%s/0001.npy" % s])
+    _w("pc_seg/README.txt", _note(
+        "pc_seg(点云 pillar 分割)",
+        "clouds/<split>/*.npy|.bin + labels/<split>/*.npy|.txt + train.txt/val.txt",
+        "clouds: float32 N×3(x,y,z) 或 N×4(x,y,z,intensity);.bin 为 KITTI 风格\n"
+        "labels: 每点 int 类别(与点一一对应);缺省视为全 0\n"
+        "配置: Architecture.task: pc_seg, Head.num_classes=C\n"
+        "Train.dataset: pc_range=[xmin,xmax,ymin,ymax,zmin,zmax], pillar_size=[dx,dy,dz]\n"
+        "Loss: SemLoss(pillar CE); Metric main_indicator: mIoU\n"
+        "注意: 图像预训练权重不适用,Global.pretrained_model 置 null"))
+
+
+def yolo_det3d():
+    """det3d: clouds + labels/*.txt (cls x y z l w h yaw) + train/val.txt"""
+    for s in ("train", "val"):
+        pc = np.column_stack(
+            [
+                np.linspace(-8, 8, 256),
+                np.zeros(256),
+                np.zeros(256),
+                np.ones(256),
+            ]
+        ).astype(np.float32)
+        p = os.path.join(OUT, "det3d", "clouds", s, "0001.npy")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        np.save(p, pc)
+        _w(
+            "det3d/labels/%s/0001.txt" % s,
+            [
+                "car 5.0 -3.0 0.5 4.0 1.8 1.6 1.57",
+                "ped 2.0 4.0 0.8 0.6 0.6 1.7 0.10",
+            ],
+        )
+        _w("det3d/%s.txt" % s, ["clouds/%s/0001.npy" % s])
+    _w("det3d/README.txt", _note(
+        "det3d(LiDAR 3D 检测, CenterPoint 简化)",
+        "clouds/<split>/*.npy|.bin + labels/<split>/*.txt + train.txt/val.txt",
+        "labels 每行一个框: cls x y z l w h yaw  (cls=类名或 int; LiDAR 系)\n"
+        "可选第 9 列 difficulty(忽略)\n"
+        "配置: Architecture.task: det3d, Head.num_classes=C, names: [...]\n"
+        "Train.dataset: pc_range=[xmin,ymin,zmin,xmax,ymax,zmax], pillar_size=[dx,dy,dz]\n"
+        "Loss: Det3DLoss(heatmap focal + L1); Metric: Det3DMetric(mAP BEV IoU)\n"
+        "PostProcess: Det3DPostProcess(score_thres, nms_thres)\n"
+        "注意: 图像预训练权重不适用,Global.pretrained_model 置 null"))
+
+
 BUILDERS = {
     "ocr_det": ocr_det, "ocr_rec": ocr_rec, "det": yolo_det, "pose": yolo_pose,
     "segment": yolo_seg, "classify": yolo_cls, "semantic": yolo_sem, "depth": yolo_depth,
+    "lane_seg": yolo_lane_seg, "lane_row": yolo_lane_row,
+    "pc_seg": yolo_pc_seg,
+    "det3d": yolo_det3d,
     "plate_rec": plate_rec, "attribute": attribute, "pose_action": pose_action,
     "video_cls": video_cls,
 }

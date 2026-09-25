@@ -1,0 +1,81 @@
+# 点云 pillar 分割(pc_seg):dense BEV + 小型 CNN,无 spconv。
+# 用时改:Head.num_classes、Train/Eval data_dir + label_file_list、pc_range/pillar_size、batch。
+Global:
+  model_name: pointpillars-seg
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 50
+  print_batch_step: 10
+  save_model_dir: ./output/pointpillars-seg
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: true
+Architecture:
+  model_family: pc
+  task: pc_seg
+  algorithm: pointpillars
+  in_channels: 4            # BEV 特征: x,y,z, intensity 均值
+  Head:
+    num_classes: 5
+    base_channels: 32
+Optimizer:
+  name: AdamW
+  lr:
+    name: Cosine
+    learning_rate: 0.001
+    lrf: 0.05
+    warmup_epoch: 2
+    warmup_bias_lr: 0.1
+    warmup_momentum: 0.8
+  regularizer:
+    name: L2
+    factor: 0.0001
+Loss:
+  name: SemLoss
+  dice_weight: 0.0
+  ignore_index: 255
+Metric:
+  name: SemMetric
+  main_indicator: mIoU
+PostProcess:
+  name: SemPostProcess
+Train:
+  dataset:
+    name: PointCloudDataset
+    data_dir: datasets/pc_demo
+    label_file_list: [datasets/pc_demo/train.txt]
+    num_classes: 5
+    ignore_index: 255
+    pc_range: [-16, -16, -3, 16, 16, 3]
+    pillar_size: [0.5, 0.5, 4.0]
+    max_points_per_pillar: 32
+    kpt_shape: null
+  loader:
+    batch_size_per_card: 4
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2
+Eval:
+  dataset:
+    name: PointCloudDataset
+    data_dir: datasets/pc_demo
+    label_file_list: [datasets/pc_demo/val.txt]
+    num_classes: 5
+    ignore_index: 255
+    pc_range: [-16, -16, -3, 16, 16, 3]
+    pillar_size: [0.5, 0.5, 4.0]
+    max_points_per_pillar: 32
+    kpt_shape: null
+  loader:
+    batch_size_per_card: 4
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2

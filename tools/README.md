@@ -24,8 +24,8 @@
 
 | 脚本 | 作用 | 期望输出 |
 |---|---|---|
-| `smoke_all.py` | 全量自检:每配置建模型 + 取 1 batch + 1 步训练 + 1 步评估 | `76 OK, 0 FAIL` |
-| `check_graph_build.py` | 只建图 + 前向,校验全部 YAML 图配置(秒级,不需要数据) | `53 configs: 53 OK, 0 FAIL` |
+| `smoke_all.py` | 全量自检:每配置建模型 + 取 1 batch + 1 步训练 + 1 步评估 | `83 OK, 0 FAIL` |
+| `check_graph_build.py` | 只建图 + 前向,校验全部 YAML 图配置(秒级,不需要数据) | `55 configs: 55 OK, 0 FAIL` |
 | `check_plate_models.py` | 车牌:上游权重张量对齐 + 与出厂 ONNX 的数值对齐 | 检测 `500/500`、识别 `86/86`,识别 `max|diff| ~1e-5` |
 | `test_build_all.py` / `debug_*.py` | 历史调试脚本(建图/序列/对齐排查),保留备查 |
 

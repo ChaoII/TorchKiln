@@ -92,6 +92,9 @@ tkiln data get --all            # 全部；--force 强制重下
 detect|det   segment|seg   obb   pose   classify|cls   semantic|sem   depth
 plate_det|plate-det        plate_rec|plate-rec        attribute|attr
 pose_action|pose-action|action        video_cls|video-cls|video
+lane_seg|lane-seg|lane     lane_row|lane-row
+lane_bev|lane-bev|lanebev
+pc_seg|pc-seg|pc           det3d|det-3d|3d
 ocr   ocr_det|ocr-det   ocr_rec|ocr-rec
 ```
 
@@ -657,8 +660,8 @@ tkiln data get --all
 ```powershell
 $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"
 
-python tools/smoke_all.py           # 期望 76 OK, 0 FAIL
-python tools/check_graph_build.py   # 期望 53 configs: 53 OK, 0 FAIL
+python tools/smoke_all.py           # 期望 83 OK, 0 FAIL
+python tools/check_graph_build.py   # 期望 55 configs: 55 OK, 0 FAIL
 python tools/check_plate_models.py  # 车牌：检测 500/500、识别 86/86
 ```
 
@@ -686,6 +689,8 @@ python tools/download_pretrained.py --list          # 只看解析到哪
 | **classify 多标签** | 任意 cls 配置 + **`-o Loss.multi_label=true`**（见 §3.7） | 同上 |
 | semantic | `yolo26-sem.yml` | |
 | depth | `yolo26-depth.yml` | |
+| lane_seg | `yolo11-lane-seg.yml` | |
+| lane_row | `yolo11-lane-row.yml` | |
 
 命名：`configs/yolo/` **仅** `*.yml`（小写+横线）；业务实验放 `configs/local/`（gitignore，不入库）。
 档位不进文件名，用 `-o Architecture.scale=n|s|m|l|x`。
@@ -701,7 +706,7 @@ YOLO 系典型默认（`yolo11-det`）：SGD lr=0.01 Linear、batch=8、image_si
 
 配置名**没有** `ch_` 前缀（如 `PP-OCRv4_mobile_det.yml`，不是 `ch_PP-OCRv4_det_mobile.yml`）。
 
-### 8.3 车牌 / 属性
+### 8.3 车牌 / 属性 / 点云
 
 | 任务 | 配置 | 额外字段 |
 |---|---|---|
@@ -709,6 +714,8 @@ YOLO 系典型默认（`yolo11-det`）：SGD lr=0.01 Linear、batch=8、image_si
 | plate_rec | `configs/plate/plate_rec.yml` | `image_size=[48,168]`、`color_num=5` |
 | 行人属性 | `configs/attr/pedestrian_attribute.yml` | `label_ratio`、26 维 |
 | 车辆属性 | `configs/attr/vehicle_attribute.yml` | 19 维 |
+| pc_seg | `configs/pc/pointpillars-seg.yml` | `pc_range`、`pillar_size`、`num_classes` |
+| det3d | `configs/pc/pointpillars-det3d.yml` | 同上 + `names`、`Det3DLoss/Metric/PostProcess` |
 
 ### 8.4 各任务数据字段速查
 
@@ -721,9 +728,11 @@ YOLO 系典型默认（`yolo11-det`）：SGD lr=0.01 Linear、batch=8、image_si
 | OCR det | `路径\tJSON四点` | `dataset.name=SimpleDataSet` + `transforms:` |
 | OCR rec | `路径\t文本` | `Global.character_dict_path` |
 | YOLO classify | `路径 类别号`（单标签）；**多标签** `路径 v1..vC` | `-o Loss.multi_label=true` + `Head.num_classes` |
-| YOLO classify | `路径 类别号`（单标签）；**多标签** `路径 v1..vC` | `-o Loss.multi_label=true` + `Head.num_classes` |
-| YOLO classify | `路径 类别号`（单标签）；**多标签** `路径 v1..vC` | `-o Loss.multi_label=true` + `Head.num_classes` |
 | 属性 | `路径 v1..vC` | `label_ratio` + `label_list` |
+| lane_seg | 同 semantic 掩码 | `Head.num_classes`、`Loss.name=LaneSegLoss` |
+| lane_row | `valid x0..x_{R-1}` | `Head.num_lanes/num_rows/num_bins` |
+| pc_seg | `clouds/*.npy` + 每点标签 | `pc_range`、`pillar_size`、`num_classes` |
+| det3d | `clouds/*.npy` + `cls x y z l w h yaw` | `pc_range`、`pillar_size`、`names` |
 
 模板：`python tools/make_format_examples.py` → `datasets/_format_examples/`。  
 格式权威：`docs/DATASET_FORMATS.md`。

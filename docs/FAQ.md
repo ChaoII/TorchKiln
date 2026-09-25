@@ -97,8 +97,8 @@ OCR 数据管线的 `seed` 必须为 `None`(Paddle 语义),否则增广序列被
 ## 模型 / 权重
 
 **Q:上游 YAML 全部支持吗?**
-`torchkiln/cfg/models/**` 共 60 个 YAML(可训练 53 个)全部支持:
-`python tools/check_graph_build.py` → `53 configs: 53 OK, 0 FAIL`。
+`torchkiln/cfg/models/**` 共 60 个 YAML(可训练 55 个)全部支持:
+`python tools/check_graph_build.py` → `55 configs: 55 OK, 0 FAIL`。
 不支持/跳过:`rt-detr`(RT-DETR)、`yoloe-*`、`yolov8-world*`、`sam*`、`*-cls-resnet*`(不支持训练或不在范围内)。
 
 **Q:YOLO cls 怎么做多标签分类?**

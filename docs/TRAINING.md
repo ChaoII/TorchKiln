@@ -71,6 +71,9 @@ $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"; $env:MKL_NUM_THREADS="1
 detect|det  segment|seg  obb  pose  classify|cls  semantic|sem  depth
 plate_det|plate-det  plate_rec|plate-rec  attribute|attr
 pose_action|pose-action|action  video_cls|video-cls|video
+lane_seg|lane-seg|lane  lane_row|lane-row
+lane_bev|lane-bev|lanebev
+pc_seg|pc-seg|pc  det3d|det-3d|3d
 ocr  ocr_det|ocr-det  ocr_rec|ocr-rec
 ```
 
@@ -228,7 +231,7 @@ python tools/convert/dataset_format.py --from yolo_det --to yolo_det --src <src>
 # OCR 识别（v5/v6 可自动选 dict；否则显式给 character_dict_path）
 .\tkiln.bat train -c configs/ocr/rec/PP-OCRv5_mobile_rec.yml -o Global.epoch_num=100
 
-# YOLO 图模型（configs/yolo/*.yml，53 个可训练）
+# YOLO 图模型（configs/yolo/*.yml，55 个可训练）
 .\tkiln.bat train -c configs/yolo/yolov8-det.yml -o Global.epoch_num=100
 
 # 端到端变体
@@ -474,10 +477,10 @@ ModelScope：`https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/mast
 $env:OMP_NUM_THREADS="1"; $env:OPENBLAS_NUM_THREADS="1"
 
 python tools/smoke_all.py           # 每配置: 建模型 + 1 batch 训练 + 1 评估
-# 期望: 76 OK, 0 FAIL
+# 期望: 83 OK, 0 FAIL
 
-python tools/check_graph_build.py   # 53 个 YAML 图配置建图+前向
-# 期望: 53 configs: 53 OK, 0 FAIL
+python tools/check_graph_build.py   # 55 个 YAML 图配置建图+前向
+# 期望: 55 configs: 55 OK, 0 FAIL
 
 python tools/check_plate_models.py  # 车牌张量/ONNX 对齐
 # 期望: 检测 500/500、识别 86/86
