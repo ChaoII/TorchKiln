@@ -109,4 +109,24 @@ def build_ts_model(arch):
             num_samples=head.get("num_samples", 10),
             regression_mode=head.get("regression_mode", "mean"),
             output_mode=head.get("output_mode", "quantiles"))
+    if model == "tft":
+        from torchkiln.nn.s_tft import TemporalFusionTransformer
+        return TemporalFusionTransformer(
+            in_len, out_len, {
+                "target_dim": dim,
+                "known_num_dim": head.get("known_num_dim", 0),
+                "known_cat_dim": head.get("known_cat_dim", 0),
+                "observed_num_dim": head.get("observed_num_dim", 0),
+                "observed_cat_dim": head.get("observed_cat_dim", 0),
+                "known_cat_size": head.get("known_cat_size", []),
+                "observed_cat_size": head.get("observed_cat_size", []),
+                "static_num_dim": head.get("static_num_dim", 0),
+                "static_cat_dim": head.get("static_cat_dim", 0),
+                "static_cat_size": head.get("static_cat_size", []),
+            },
+            hidden_dim=head.get("hidden_dim", 64),
+            lstm_layers_num=head.get("lstm_layers_num", 1),
+            attention_heads_num=head.get("attention_heads_num", 2),
+            output_quantiles=head.get("output_quantiles", [0.1, 0.5, 0.9]),
+            dropout=head.get("dropout", 0.0))
     raise ValueError("unknown ts model: {}".format(model))
