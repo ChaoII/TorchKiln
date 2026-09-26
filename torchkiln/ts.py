@@ -5,11 +5,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-__all__ = ["TSLoss", "TSMetric", "build_ts_loss", "build_ts_metric"]
+__all__ = ["TSLoss", "TSQuantileLoss", "TSNLLLoss", "TSMetric",
+           "build_ts_loss", "build_ts_metric"]
 
 
 class TSLoss(nn.Module):
-    """MSE loss (PaddleTS default ``F.mse_loss``)."""
+    """Point-forecast loss (MSE / MAE, PaddleTS default ``F.mse_loss``)."""
 
     def __init__(self, loss="mse", **kwargs):
         super().__init__()
@@ -22,9 +23,49 @@ class TSLoss(nn.Module):
         return {"loss": F.mse_loss(preds, target)}
 
 
+class TSQuantileLoss(nn.Module):
+    """Pinball (quantile) loss for TFT: ``preds`` is ``(B,H,D,Q)``."""
+
+    def __init__(self, quantiles=None, **kwargs):
+        super().__init__()
+        self.quantiles = list(quantiles) if quantiles else [0.1, 0.5, 0.9]
+
+    def forward(self, preds, batch):
+        target = batch[1]  # (B, H, D)
+        q = torch.tensor(self.quantiles, device=preds.device, dtype=preds.dtype)
+        e = target.unsqueeze(-1) - preds  # (B,H,D,Q)
+        loss = torch.maximum(q * e, (q - 1.0) * e)
+        return {"loss": loss.mean()}
+
+
+class TSNLLLoss(nn.Module):
+    """Gaussian NLL loss for DeepAR: ``preds`` is ``(B,H,D,2)`` = (mu, sigma)."""
+
+    def __init__(self, **kwargs):
+        super().__init__()
+
+    def forward(self, preds, batch):
+        target = batch[1]
+        mu = preds[..., 0]
+        sigma = preds[..., 1] if preds.shape[-1] > 1 else preds[..., 0]
+        dist = torch.distributions.Normal(mu, sigma)
+        return {"loss": -dist.log_prob(target).mean()}
+
+
 class TSMetric(object):
-    def __init__(self, main_indicator="MSE", **kwargs):
+    """MSE/MAE metric.
+
+    ``pred_mode``:
+      * ``point``    : ``preds`` is ``(B,H,D)`` (default)
+      * ``quantile`` : ``preds`` is ``(B,H,D,Q)``, use the median quantile
+      * ``params``   : ``preds`` is ``(B,H,D,2)``, use the mean (mu)
+    """
+
+    def __init__(self, main_indicator="MSE", pred_mode="point",
+                 quantile_index=None, **kwargs):
         self.main_indicator = main_indicator
+        self.pred_mode = pred_mode
+        self.quantile_index = quantile_index
         self.reset()
 
     def reset(self):
@@ -32,10 +73,21 @@ class TSMetric(object):
         self.ae = 0.0
         self.n = 0
 
+    def _reduce(self, preds):
+        if self.pred_mode == "quantile":
+            idx = self.quantile_index
+            if idx is None:
+                idx = preds.shape[-1] // 2
+            return preds[..., idx]
+        if self.pred_mode == "params":
+            return preds[..., 0]
+        return preds
+
     def __call__(self, preds, batch):
         target = batch[1]
         if not torch.is_tensor(preds):
             preds = torch.as_tensor(preds)
+        preds = self._reduce(preds)
         d = (preds.detach().cpu().double() - target.detach().cpu().double())
         self.se += float((d ** 2).sum())
         self.ae += float(d.abs().sum())
@@ -48,11 +100,16 @@ class TSMetric(object):
 
 def build_ts_loss(loss_cfg):
     cfg = dict(loss_cfg or {})
-    cfg.pop("name", None)
-    return TSLoss(**cfg)
+    name = str(cfg.pop("name", "") or cfg.pop("type", "") or "mse").lower()
+    if name in ("quantile", "pinball"):
+        return TSQuantileLoss(**cfg)
+    if name in ("nll", "gaussian_nll", "deepar"):
+        return TSNLLLoss(**cfg)
+    return TSLoss(loss=name, **cfg)
 
 
 def build_ts_metric(metric_cfg):
     cfg = dict(metric_cfg or {})
     cfg.pop("name", None)
+    cfg.pop("type", None)
     return TSMetric(**cfg)

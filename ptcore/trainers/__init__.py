@@ -25,6 +25,7 @@ from ptcore.trainers.pose_action import PoseActionTrainer
 from ptcore.trainers.segment import SegmentTrainer
 from ptcore.trainers.semantic import SemanticTrainer
 from ptcore.trainers.video_cls import VideoClsTrainer
+from ptcore.trainers.ts_forecast import TsForecastTrainer
 
 #: ``Architecture.task`` -> trainer class
 TRAINER_REGISTRY = {
@@ -45,6 +46,7 @@ TRAINER_REGISTRY = {
     "attribute": AttributeTrainer,
     "pose_action": PoseActionTrainer,
     "video_cls": VideoClsTrainer,
+    "ts_forecast": TsForecastTrainer,
     # OCR family: text det / rec share one adapter (OcrTask dispatches on algorithm)
     "det": OcrTrainer,
     "rec": OcrTrainer,

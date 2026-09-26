@@ -617,10 +617,18 @@
      forward 直接 `decoder(x)`（x 形状 `(B,in_chunk_len,D)`），不要 transpose 成 `(B,D,T)`。
   4. Transformer 的 paddle `nn.Transformer` 用 `self_attn.q_proj/k_proj/v_proj/out_proj`，torch 用 `in_proj_weight/in_proj_bias/out_proj`——
      **q/k/v 的 weight 拼接为 in_proj_weight、bias 拼接为 in_proj_bias**，对比脚本 `sota_transformer_compare.py` 里有映射。
-- **待办（端到端训练集成，网络层已全部对齐）**：
-  - **TFT/DeepAR 训练**需框架 `ts_forecast` 任务/数据管线扩展：`torchkiln/data/ts.py` 目前只产 `past_target`+target，
-    需加 **known/observed/static covariate** 列；`torchkiln/tasks/ts_forecast.py::forward_train` 仅喂 `{"past_target"}`，
-    需改为按 `Head.model` 分派（TFT 需 covariate 且输出 quantiles、DeepAR 需 `future_target` 且出 distribution params）。
-  - **loss**：`torchkiln/ts.py::build_ts_loss` 只有 MSE/MAE；TFT 需 **pinball/quantile loss**（对每个 quantile 与 target 算，
-    `loss = max(q*(y-yhat), (q-1)*(y-yhat))`），DeepAR 需 **NLL**（`GaussianLikelihood::loss`）。
-  - 其余已实现模型（NBEATS/NHiTS/MLP/TCN/DLinear）保持不变，见 `torchkiln/nn/ts_models.py`。
+- **端到端训练集成（已完成，2026-09-26）**：
+  - **数据管线**（`torchkiln/data/ts.py::TSDataset`）：新增协变量列支持——`target_cols`（目标，缺省全列）、
+    `known_cols`（已知协变量，past+future 全窗）、`observed_cols`（观测协变量，仅 past）、`static_cols`（静态，每序列常数）。
+    配了任一协变量列时 `__getitem__` 返回 5 元 `[past, future, known, observed, static]`；否则仍 2 元（向后兼容）。
+  - **损失**（`torchkiln/ts.py`）：`TSLoss`(MSE/MAE，点预测)、**`TSQuantileLoss`**(pinball，TFT)、**`TSNLLLoss`**(Gaussian NLL，DeepAR)。
+    `TSMetric` 增 `pred_mode`（point/quantile[取中位]/params[取 mu]）。
+  - **任务分派**（`torchkiln/tasks/ts_forecast.py`）：`forward_train`/`eval_step` 统一构造输入 dict（`past_target` +
+    `future_target` + `known/observed/static_cov_numeric`），点模型忽略多余键；`build_loss`/`build_metric` 按 `Head.model`
+    自动选 quantile/nll 与 pred_mode（可被 `Loss.type`/`Metric.pred_mode` 覆盖）。
+  - **注册**：`torchkiln/tasks/__init__.py` 与 `ptcore/trainers/__init__.py` 补 `ts_forecast`。
+  - **demo 配置 + 端到端冒烟**（合成数据 `datasets/ts_demo/data.csv`：signal 目标 + known 协变量）：
+    `configs/ts/tft_demo.yml`（quantile）、`configs/ts/rnn_demo.yml`（MSE）、`configs/ts/deepar_demo.yml`（NLL）。
+    三者 CLI 训练均跑通（loss 下降：TFT 13.98→10.45、DeepAR NLL 54.9→37.4、RNN 下降）；`smoke_all` **86 OK / 0 FAIL**；
+    `check_graph_build` 55 OK。
+- 其余已实现模型（NBEATS/NHiTS/MLP/TCN/DLinear）保持不变，见 `torchkiln/nn/ts_models.py`。

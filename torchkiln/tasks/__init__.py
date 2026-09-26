@@ -18,6 +18,7 @@ from torchkiln.tasks.plate_rec import PlateRecTask
 from torchkiln.tasks.attribute import AttributeTask
 from torchkiln.tasks.pose_action import PoseActionTask
 from torchkiln.tasks.video_cls import VideoClsTask
+from torchkiln.tasks.ts_forecast import TsForecastTask
 
 TASK_REGISTRY = {
     "classify": YoloClsTask,
@@ -37,6 +38,7 @@ TASK_REGISTRY = {
     "attribute": AttributeTask,
     "pose_action": PoseActionTask,
     "video_cls": VideoClsTask,
+    "ts_forecast": TsForecastTask,
 }
 
 AVAILABLE = tuple(sorted(TASK_REGISTRY))
