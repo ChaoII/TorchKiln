@@ -10,7 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-__all__ = ["BEVLaneDet", "load_paddle_bev_lanedet"]
+__all__ = ["BEVLaneDet", "load_paddle_bev_lanedet",
+           "load_paddle_resnet34_pretrained"]
 
 _BN = dict(eps=1e-5, momentum=0.1)
 
@@ -255,4 +256,51 @@ def load_paddle_bev_lanedet(model, pkl_path, verbose=True):
     if verbose:
         print("loaded:", len(mapped), "missing:", len(missing), missing[:8],
               "unexpected:", len(unexpected), unexpected[:8])
+    return missing, unexpected
+
+
+def _resnet34_key(k):
+    """裸 ResNet34 权重键 -> 框架 `bb.*` 键。
+
+    Paddle3D ``resnet34-remapped.pdparams`` 键为 conv1/bn1/layer1..layer4,
+    而框架骨干是 ``Sequential(conv1,bn1,relu,maxpool,layer1..layer4)``(下标 0,1,4..7)。
+    """
+    if k.startswith("conv1."):
+        k = "bb.0." + k[len("conv1."):]
+    elif k.startswith("bn1."):
+        k = "bb.1." + k[len("bn1."):]
+    else:
+        for i, layer in enumerate(("layer1.", "layer2.", "layer3.", "layer4.")):
+            if k.startswith(layer):
+                k = "bb.%d." % (4 + i) + k[len(layer):]
+                break
+    if k.endswith("._mean"):
+        return k[: -len("._mean")] + ".running_mean"
+    if k.endswith("._variance"):
+        return k[: -len("._variance")] + ".running_var"
+    return k
+
+
+def load_paddle_resnet34_pretrained(model, pdparams_path, verbose=True):
+    """把 Paddle3D ``resnet34-remapped.pdparams``(裸 ResNet34) 加载进 ``model.bb``。
+
+    与官方 ``BEVLaneDet(pretrained_model_path=...)`` 同起点,保证与 Paddle3D 对比公平。
+    """
+    import pickle
+
+    try:  # 值若是 ndarray 则可直接 pickle 读,免依赖 paddle(ptocr 环境)
+        sd = pickle.load(open(pdparams_path, "rb"))
+    except Exception:
+        import paddle
+        sd = paddle.load(pdparams_path)
+    mapped = {}
+    for k, v in sd.items():
+        mapped[_resnet34_key(k)] = torch.as_tensor(np.asarray(v))
+    backbone = model.bb if hasattr(model, "bb") else model
+    missing, unexpected = backbone.load_state_dict(mapped, strict=False)
+    missing = [m for m in missing if "num_batches_tracked" not in m]
+    if verbose:
+        print("resnet34 pretrained loaded: %d tensors, missing=%d %s, unexpected=%d %s"
+              % (len(mapped), len(missing), missing[:6],
+                 len(unexpected), unexpected[:6]))
     return missing, unexpected
