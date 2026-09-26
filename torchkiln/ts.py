@@ -24,7 +24,14 @@ class TSLoss(nn.Module):
 
 
 class TSQuantileLoss(nn.Module):
-    """Pinball (quantile) loss for TFT: ``preds`` is ``(B,H,D,Q)``."""
+    """Pinball (quantile) loss for TFT: ``preds`` is ``(B,H,D,Q)``.
+
+    对齐 PaddleTS ``distributions/likelihood.py::QuantileRegression.loss``:
+      errors = target.unsqueeze(-1) - preds
+      loss   = 2 * max((q-1)*errors, q*errors)   # 乘 2
+      q_loss = (sum over Q) . mean over D . mean over B,H   # 对分位数求和(非平均)
+    即框架旧实现的 2*Q=6 倍;若用 mean-over-Q 会导致梯度/等效学习率差 Q 倍。
+    """
 
     def __init__(self, quantiles=None, **kwargs):
         super().__init__()
@@ -33,9 +40,10 @@ class TSQuantileLoss(nn.Module):
     def forward(self, preds, batch):
         target = batch[1]  # (B, H, D)
         q = torch.tensor(self.quantiles, device=preds.device, dtype=preds.dtype)
-        e = target.unsqueeze(-1) - preds  # (B,H,D,Q)
-        loss = torch.maximum(q * e, (q - 1.0) * e)
-        return {"loss": loss.mean()}
+        errors = target.unsqueeze(-1) - preds        # (B, H, D, Q)
+        pinball = torch.maximum((q - 1.0) * errors, q * errors)  # (B,H,D,Q)
+        losses = 2.0 * pinball.sum(dim=-1)           # 对分位数求和 -> (B,H,D)
+        return {"loss": losses.mean()}
 
 
 class TSNLLLoss(nn.Module):
