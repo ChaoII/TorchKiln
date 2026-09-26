@@ -569,6 +569,49 @@
     `data/lane_bev.py`（`LaneBEVDataset`：图像 + BEV GT npz）；`models/lane_bev.py`；配置 `configs/lane/bev_lanedet.yml`（demo，576×1024，batch1）。
     ⚠️ **输入必须 576×1024**（FCTransform 特征尺寸硬编码 18×32 / 9×16）；`smoke_all` 强制 batch=4 也能跑（~5GB）。
     demo 生成器：`tools/make_demo_data.py --dataset lane_bev_demo`。
+
+### BEV-LaneDet 真实 Apollo 3D Lane 数据端到端（2026-09-26，已跑通）
+- **数据已到位**：`_downloads/paddle3d/Apollo_Sim_3D_Lane_Release.zip`(16.3GB) +
+  **`data_splits.zip`(608MB，官方划分 JSONL)**。`data_splits` 内容：
+  `standard/rare_subset/illus_chg` 三种划分的 `train.json`+`test.json`（**JSON Lines，每行一个样本**，
+  字段 `raw_file/cam_height/cam_pitch/centerLines/laneLines/*_visibility`），
+  以及 `3D_LaneNet`、`Gen_LaneNet` 两个 baseline 的 `test_pred_file.json`（多 `*_prob` 置信度，作对照）。
+- **解压**：`_downloads/paddle3d/extract_apollo.py`（22499 文件 / 268s，**跳过 `depth/` 省 4.8GB**，BEV-LaneDet 不用深度）。
+  data_splits 解压后在 `_downloads/paddle3d/data_splits/standard/`。
+- **Paddle3D 官方 Apollo 代码**（`fetch_apollo_ds.py` 从 api.github.com 拉取，装进 `paddle3d/datasets/apollo/`）：
+  `apollo_lane_det.py`(数据集+GT 生成)、`apollo_lane_metric.py`(FScore)、`coord_util.py`、
+  `standard_camera_cpu.py`(虚拟相机)、`post_process.py`、`cluster.py`、`min_cost_flow.py`、
+  + `configs/bev_lanedet/bev_lanedet_apollo_576x1024.yml`。
+  - **两个必须的补丁**：① `np.int/np.float` 已在新 numpy 移除 → 正则替换成内建 `int/float`
+    （注意 `np.float64` 等不能误伤）；② `paddle3d/datasets/__init__.py` 原本不 import apollo →
+    补 `from .apollo import ...`，否则 `@manager.DATASETS.add_component` 不执行、config 构建找不到类。
+  - **ortools**：config 指定 `9.1.9490` 在 **Python 3.12 无 wheel**（最早仅 9.3.10497）。
+    实装 **`ortools==9.3.10497`**，Paddle3D 用的 `pywrapgraph.SimpleMinCostFlow` 实测可用
+    （不是 `MinCostFlow`，那个才是新版本没有的）。
+- **官方超参**（`bev_lanedet_apollo_576x1024.yml`）：`x_range[3,103] y_range[-12,12] meter_per_pixel=0.5`
+  → **bev_shape [200,48]**；`input[576,1024]` `output_2d[144,256]`；`use_virtual_camera=True(vc_image_shape[1920,1080])`；
+  `batch_size=4`、`epochs=50`、AdamW(wd=0.01)+Cosine(lr=0.001, eta_min=2e-7)、warmup 200 step。
+  ⚠️ **`T_max: 37450 = 749.0*50` 而 5992/4=1498 → 官方实为有效 batch=8**（batch 4 × 2 卡），
+  对齐 LR 相位时注意。
+- **数据集生成**：`_downloads/paddle3d/build_lane_bev_dataset.py` —— **直接调 Paddle3D 的
+  `ApolloOffsetDataset.get_seg_offset` 离线产出**（保证 GT 逐位一致）：
+  - 输入图 = 虚拟相机 `warpPerspective` 后的 1920×1080；键映射一一对应
+    `bev_gt_segment→bev_seg`、`bev_gt_instance→bev_inst`、`bev_gt_offset→bev_off`、
+    `bev_gt_z→bev_z`、`image_gt_segment→img_seg`、`image_gt_instance→img_inst`。
+  - 产出 `datasets/lane_bev_apollo/`：**7488 图 + 7488 npz（6.97GB）、train=5992 / val=1496**（共 7488，json 里有 10 张对不上）。
+  - ⚠️ 用 `get_seg_offset`（而不是 `__getitem__`），因为后者会把**随机增广**（MotionBlur/亮度对比/ColorJitter）
+    烘进图里；增广应留在 dataloader 侧。
+- **框架侧适配**：`torchkiln/data/lane_bev.py::LaneBEVDataset` 补 `normalize` 选项
+  （`imagenet`/`paddle`/`none`，IMAGENET_255 = mean[123.675,116.28,103.53] std[58.395,57.12,57.375]，
+  等价 Paddle3D `NormalizeVision` / albumentations `A.Normalize()`），**缺省 none，demo 向后兼容**。
+  （原实现只有 BGR→RGB + resize，**没有归一化**，真数据下必须补。）
+  注意 Paddle3D 保持 **BGR** 喂 ImageNet(RGB) 统计量，框架转了 RGB——信道口径有差异，后续对齐需留意。
+- **配置** `configs/local/apollo_bev_lanedet.yml`（batch=4、epochs=50、AdamW+Cosine、`normalize: imagenet`）。
+- **框架端到端冒烟（2 epoch）**：**跑通**，loss ~9.5→10.5(seg≈1.44/emb≈4.27)、16.4 samples/s，
+  **评估 FScore=0.6503（precision 0.5329 / recall 0.8339）**，EXIT=0。
+  → 数据管线、GT、归一化、`BEVLaneDetMetric` 链路全通。
+- **待办**：① Paddle3D 侧同数据跑 50 epoch 训练 + `ApolloLaneMetric` 评估做 FScore 对比；
+  ② 框架增广与信道顺序对齐；③ SemanticKITTI 仍缺 → SqueezeSegV3 的 mIoU 暂无法做。
 - **单步 loss 对齐（数据无关，2026-09-24）**：用同一批合成输入分别跑 Paddle3D 损失与我们的损失：
   - SqueezeSegV3 `SSGLossComputation` ↔ `SqueezeSegV3Loss`：**17.265526 ↔ 17.265524（差 1.9e-6）**（5 尺度逐尺度一致）。
   - BEV-LaneDet（BCE+IoU+push-pull+MSE 四分量之和）↔ `BEVLaneDetLoss`：**59.529789 ↔ 59.529793（差 3.8e-6）**。
