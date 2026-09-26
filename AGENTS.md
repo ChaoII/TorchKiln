@@ -846,3 +846,37 @@
 - **高框密度(几百/图)** → **PGNet 有理**：300 框时 54ms vs 490ms。
   - 现成 r50 权重即可用（已下），**不换骨干也已快 9×**；LCNet 化仅再得 1.24×（41ms），但要改 PGFPN+重训。
 - SPTS v2 已弃（自回归 25 步串行 + 408.9MB，VLM 时代无意义）。
+
+## 轻量端到端 PGNet（<10MB）—— 移植+训练中（2026-09-26）
+**目标：单模型端到端 <10MB，用于高框密度（几百框/图）场景。** 已达标，正在重训。
+### 1. 架构（3 处改写，其余全部复用 PaddleOCR）
+| 组件 | 说明 | 参数 |
+|---|---|---|
+| `PPLCNetV4E2E`（骨干） | `PPLCNetV4(det,tiny)` + 返回 `[RGB, f1@32s4, f2@48s8, f3@64s16, f4@160s32]`；返回 RGB 是**关键**——原 PGNet 骨干就返回 `[image, f1..f6]`，这样 `BaseModel` 的 `backbone→neck→head` 流水线可直接复用 | **0.394M** |
+| `PGFPNLCNet`（颈） | PGFPN 轻量改写：原版硬编码 7 输入 `[3,64,256,512,1024,2048,2048]`（含 s2/s64 两级），改为适配 LCNet 的 4 特征 + RGB；**down-fusion(RGB池化到s4+浅层)** + **up-fusion(s32→s16→s8→s4)** 保持双路 | 0.424M(w=64) |
+| `PGHeadLite`（头） | 宽度可配。原 `PGHead` 的 **f_char 分支占 84% 参数**（`conv_f_char4` 单层 589K = 54%，内部宽 256 而其它分支只 64）；压到 `w_char=[64,64,128,128,128]` → **1.092M → 0.416M** | 0.416M |
+| **合计** | | **1.234M = 4.71 MB** ✅ |
+- 输出结构与官方**完全一致**：`f_score(1,1,192,160)/f_border(1,4,…)/f_char(1,37,…)/f_direction(1,2,…)` → **后处理可直接复用**
+- **前向 11.0ms**（官方 r50 = 31.2ms，**快 2.84×**）；端到端预估 15.5(预处理)+11.0+6.4(后处理) ≈ **32.9ms**
+  - vs 两阶段 30.8ms（低框）仍略慢；**vs 两阶段 490ms（300框）快 14.9×** ⭐
+- 校验方法：`PGHeadLite` 用**原宽度**重建 → 参数 **1.092M 与官方逐位相等**，证明重写忠实后再改宽度才可信。
+
+### 2. 接入 PaddleOCR（3 处 registry 补丁，文件已存 `tools/paddleocr_e2e/`）
+新文件 `ppocr/modeling/e2e_pgnet_lite.py`（本仓库副本 `tools/paddleocr_e2e/e2e_pgnet_lite.py`）。
+1. `ppocr/modeling/backbones/__init__.py`：**`model_type=="e2e"` 分支**（不是 det 分支！它会 `support_dict = ["ResNet"]` **覆盖**）加
+   `from ..e2e_pgnet_lite import PPLCNetV4E2E` + `support_dict = ["ResNet","PPLCNetV4E2E"]`
+2. `ppocr/modeling/necks/__init__.py::build_neck`：import 是**函数内懒加载**的 → 加 `from ..e2e_pgnet_lite import PGFPNLCNet` + `"PGFPNLCNet"` 进 `support_dict`（懒加载避免循环 import）
+3. `ppocr/modeling/heads/__init__.py::build_head`：仿 `DRRGHead` 写法加 `if config["name"]=="PGHeadLite"` 分支
+- `BaseModel` 会读 **`backbone.out_channels` → neck、`neck.out_channels` → head** 并作为 `in_channels` 注入 → 两个新组件**必须有 `out_channels` 属性**（我的 neck 用 `**kwargs` 吞掉即可）
+- `BaseModel.forward` 调 `head(x, targets=…)` → **`forward` 必须接受 `targets=None`**
+- **Paddle dygraph 参数名不可重复**：`PGHeadLite`/`PGFPNLCNet` 内部 `ConvBNLayer` 的 `bn_name = "bn" + name[3:]`（**剥前3字符**）→ uid 必须 **≥5 字符且区分位在索引3之后**（用 `'p%03d_'`），否则多实例 bn 名冲突；同进程也不能建两个官方 `PGHead`（名字硬编码）
+
+### 3. 训练（复用 PaddleOCR `tools/train.py`，未重写训练器）
+- 配置 `configs/e2e/e2e_tiny_pgnet.yml`（副本 `tools/paddleocr_e2e/`），基于官方 `e2e_r50_vd_pg.yml` 改 Architecture/数据路径
+- **官方 train loader `batch_size_per_card: 14`（Eval 才是 1）**，1255 张 → **89 iters/epoch**
+- 复用 `PGDataSet` + `PGLoss(tcl_bs=64,…)` + `E2EMetric(main_indicator=f_score_e2e, mode=A)`
+- **`warmup_epoch: 50`** ← 训短了等于白训（epoch1 lr 仅 1.6e-5，峰值 1e-3）
+- **`pretrained_model` 指向官方 r50 时 499 个参数全 skip**（与 LCNet 无同名）→ 实为纯随机初始化
+- 冒烟 1 epoch = **79s**（~21 samples/s，显存 5.8GB）→ 150 epoch ≈ **2.3h**
+- 冒烟 loss：`304→221`、`ctc_loss 60.6→43.8`、`border 0.927→0.68`（全面下降）
+- 评估命令：`python tools/eval.py -c configs/e2e/e2e_tiny_pgnet.yml`（E2EMetric 口径，官方基准 r50 = **Hmean 84.69**）
