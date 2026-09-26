@@ -797,3 +797,52 @@
   - 踩坑：TCN 走 `weight_norm`，paddle `weight_g` 形状 `[C]`、torch 为 `[C,1,1]`（元素数相同）→ 加载需 reshape；
     paddle `nn.Linear.weight` 是 **[in,out]**（torch 为 [out,in]）→ 对 Linear 无条件 `.T`。
 - **回归**：`smoke_all` **90 OK / 0 FAIL**（86 + 新增 4 个 demo 配置）、`check_graph_build` 55 OK。
+
+## OCR 端到端(E2E) vs 两阶段 速度实测（2026-09-26，RTX 4060 Ti，Total-Text test 300 张）
+**结论：端到端 PGNet 只在「高框密度」场景占优，交叉点 ≈20 框/图。**
+### 1. 官方权重（`paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/<name>.tar`，BOS 实测 68~105 MB/s）
+| 档 | det | rec | 合计 |
+|---|---|---|---|
+| **PP-OCRv6_tiny** | 1.87 MB | 4.38 MB | **6.25 MB** ⭐ |
+| PP-OCRv6_small | 9.59 MB | 20.45 MB | 30.04 MB |
+| PP-OCRv6_medium | 59.39 MB | 73.29 MB | 132.68 MB |
+| PP-OCRv5_mobile / server | 4.71 / 84.25 MB | 16.05 / 80.94 MB | 20.76 / 165.19 MB |
+| **PGNet server(r50_vd)** | — | — | **185 MB**（48.53M 参数） |
+- v6_tiny 架构：`Backbone: PPLCNetV4(model_size=tiny)` + `Neck: RepLKFPN(out=64)` + `Head: DBHead`
+- PGNet 权重下载：`https://paddleocr.bj.bcebos.com/dygraph_v2.0/pgnet/{en_server_pgnetA(995MB,TotalText Hmean 84.69),train_step1(278MB),e2e_server_pgnetA_infer(187MB)}.tar`
+- Total-Text：`https://paddleocr.bj.bcebos.com/dataset/total_text.tar`(0.41GB, 1563 条目, train 1255/test 300)
+### 2. 硬件同环境同引擎（**都用 paddle.inference**）测速
+| 方案 | 耗时/图 | 中位 | 输入 | 检出 |
+|---|---|---|---|---|
+| 两阶段 PP-OCRv6_tiny | **30.8~32.5 ms** | 27 ms | 长边 960 | 4.1 行/图 |
+| PGNet(r50_vd) | **54.2 ms** | 49.5 ms | 长边 768 | 7.6 行/图 |
+- **PGNet 耗时拆分**：预处理 **15.5ms** + 网络前向 **32.4ms** + 后处理 **6.4ms**
+  - 前向再拆：**backbone 13.0ms(42%) / PGFPN 11.0ms(35%) / PGHead 8.0ms(26%)**
+  - → **换 LCNet 的收益上限极小**：骨干 10× 加速后前向仍 19.3ms，端到端≈**41.2ms**
+    （即便骨干=0，前向仍有 18ms 的 PGFPN+PGHead 结构开销）
+### 3. ⭐ 框数 scaling：`两阶段 ms/图 = 23.9 + 1.669 × 框数`
+| N 框/图 | 两阶段 | PGNet(54.2 固定) | 胜者 |
+|---|---|---|---|
+| 5 | 31.5 ms | 54.2 ms | 两阶段 1.7× |
+| **20（交叉点）** | 54.8 | 54.2 | 持平 |
+| 50 | 101.5 | 54.2 | PGNet 1.9× |
+| 100 | 179.2 | 54.2 | PGNet 3.3× |
+| **300** | **490 ms** | **54.2 ms** | **PGNet 9.0×** |
+- **加大 rec batch 无效**：`batch_size` 6→64→128，单框成本仅 1.669→1.555→1.562（-7% 后持平）。
+  **根因：1.555 ms/框 是 CPU 逐框 crop+resize+归一化+Python 循环开销，不是 GPU 前向**
+  （v6_tiny rec GPU 前向 <1ms）。→ **两阶段的 O(N) CPU 开销结构性存在，batch 治不了。**
+- 拟合 R²≈0.30 偏低（各图分辨率差异使 det 成本波动），但**斜率的 batch 不变性是强信号**，交叉点稳定 ~20。
+### 4. 踩坑（移植 PGNet 时必看）
+- `tools/infer_e2e.py` 是**动态图**，与 PaddleX **推理引擎**口径不同 → 同为 PGNet：动态图 90ms vs 推理引擎 54ms（**勿混比**）。
+- PGNet inference 模型输出 4 个张量，**通道识别**：`4=f_border(conv2)`、`37=f_char(conv3,=字典36+1)`、`2=f_direction(conv4)`、`1=f_score(conv1)`。
+  **顺序是 [f_border,f_char,f_direction,f_score]，与 `PGHead.forward` 的 dict 插入顺序 [f_score,f_border,f_char,f_direction] 不同**，映射错会触发 `sort_with_direction` 的 `IndexError`。
+- `data["shape"] = [src_h, src_w, ratio_h, ratio_w]`（**4 元**），shape_list 必须是 (1,4)。
+- PaddleX OCR pipeline 需 `ocr-core` 依赖：补 `pypdfium2` `python-bidi`（`cv2/imagesize/pyclipper/shapely` 本机已有）。
+- PaddleX 3.0 官方推理包解压时**同名顶层目录会双重嵌套**（`dir/dir/inference.yml`），需上移一层。
+- PGNet 无官方轻量版：`PGFPN` 硬编码 `num_inputs=[2048,2048,1024,512,256]` + 7 输入（**c0=RGB 原图**），
+  换 PPLCNetV4 需改写 PGFPN（通道 **和** stride 都要适配）+ 全量重训。
+### 5. 决策
+- **低框密度(<20/图)** → 直接用 **PP-OCRv6_tiny**（6.25MB / 31ms，零成本）。
+- **高框密度(几百/图)** → **PGNet 有理**：300 框时 54ms vs 490ms。
+  - 现成 r50 权重即可用（已下），**不换骨干也已快 9×**；LCNet 化仅再得 1.24×（41ms），但要改 PGFPN+重训。
+- SPTS v2 已弃（自回归 25 步串行 + 408.9MB，VLM 时代无意义）。
