@@ -12,7 +12,7 @@ __all__ = ["LaneBEVDataset", "train_collate", "eval_collate"]
 _KEYS = ["bev_seg", "bev_inst", "bev_off", "bev_z", "img_seg", "img_inst"]
 
 
-def _load_image(path, size):
+def _load_image(path, size, norm=None):
     if path.endswith(".npy"):
         img = np.load(path).astype(np.float32)  # (3, H, W)
     else:
@@ -24,7 +24,16 @@ def _load_image(path, size):
         import cv2
 
         img = np.stack([cv2.resize(img[c], (size[1], size[0])) for c in range(img.shape[0])])
+    if norm is not None:
+        mean, std = norm
+        img = (img - np.asarray(mean, np.float32).reshape(-1, 1, 1)) / \
+              np.asarray(std, np.float32).reshape(-1, 1, 1)
     return img.astype(np.float32)
+
+
+# Paddle3D Apollo 默认归一化(ImageNet, 0~255 尺度):NormalizeVision(mean=[123.675,
+# 116.28, 103.53], std=[58.395, 57.12, 57.375]);albumentations A.Normalize() 等价。
+IMAGENET_255 = ([123.675, 116.28, 103.53], [58.395, 57.12, 57.375])
 
 
 class LaneBEVDataset(Dataset):
@@ -33,14 +42,25 @@ class LaneBEVDataset(Dataset):
         self.data_dir = ds["data_dir"]
         self.size = ds.get("input_shape")
         self.gt_dir = ds.get("gt_dir", "bev_gt")
+        # 归一化:normalize: imagenet|paddle|none 或显式 norm_mean/norm_std
+        norm = ds.get("normalize", "none")
+        if norm in ("imagenet", "paddle"):
+            self.norm = IMAGENET_255
+        elif norm in (None, "none", ""):
+            self.norm = None
+        else:
+            self.norm = (ds.get("norm_mean"), ds.get("norm_std"))
+        if ds.get("norm_mean") is not None:
+            self.norm = (ds["norm_mean"], ds.get("norm_std", [1.0] * 3))
         self.files = []
         for lf in ds["label_file_list"]:
             p = lf if os.path.isabs(lf) or os.path.isfile(lf) else os.path.join(self.data_dir, lf)
             with open(p, encoding="utf-8") as f:
                 self.files += [ln.strip() for ln in f if ln.strip()]
         if logger is not None:
-            logger.info("%s lane_bev dataset: %d samples (data_dir=%s)",
-                        mode, len(self.files), self.data_dir)
+            logger.info("%s lane_bev dataset: %d samples (data_dir=%s norm=%s)",
+                        mode, len(self.files), self.data_dir,
+                        "imagenet" if self.norm else "none")
 
     def __len__(self):
         return len(self.files)
@@ -50,7 +70,7 @@ class LaneBEVDataset(Dataset):
 
     def __getitem__(self, index):
         rel = self.files[index]
-        img = _load_image(os.path.join(self.data_dir, rel), self.size)
+        img = _load_image(os.path.join(self.data_dir, rel), self.size, self.norm)
         stem = os.path.splitext(os.path.basename(rel))[0]
         gt_path = os.path.join(self.data_dir, self.gt_dir, stem + ".npz")
         if not os.path.isfile(gt_path):
