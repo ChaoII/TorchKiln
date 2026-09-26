@@ -661,3 +661,35 @@
     （train→val pinball **0.459→1.571，×3.4**；框架 0.414→0.574，×1.4）。
     → **结论：复现验收 ①-④ 全达标，"端到端 MSE 差"属实验设置（分布位移 + 过拟合差异），非代码缺陷**；
     若要可比的端到端指标，需改用更大 lr/更多 epoch，或消掉分布位移（如随机切分、或按段内统计量归一化）。
+
+### PaddleTS forecasting.dl 模型全清单对齐状态（2026-09-26，11/11 收敛）
+- `paddlets.models.forecasting.dl` 实测**只有 11 个模型**（`paddle_base.py`/`paddle_base_impl.py` 是基类，非模型）。
+  逐一核对结果（对拍脚本 `_downloads/paddlets/sota_rest_compare.py`、`sota_compare.py`、`sota_transformer_compare.py`、
+  `sota_deepar_compare.py`、`sota_tft_dump.py`）：
+
+  | # | PaddleTS 模型 | 框架实现 | 状态 | maxdiff |
+  |---|---|---|---|---|
+  | 1 | `rnn.py` (LSTM/GRU) | `s_rnn.py::RNNBlock` | ✅ 逐位 | 0 |
+  | 2 | `lstnet.py` | `s_lstnet.py::LSTNet` | ✅ 逐位 | 0 |
+  | 3 | `transformer.py` | `s_transformer.py::Transformer` | ✅ 逐位 | 0 |
+  | 4 | `scinet.py` | `s_scinet.py::SCINet` | ✅ 浮点 | 5e-6 |
+  | 5 | `informer.py` | `s_informer.py::Informer` | ⚠️ 前向正确但**不可逐位** | n/a |
+  | 6 | `deepar.py` | `s_deepar.py::DeepAR` | ✅ 逐位 | 0 |
+  | 7 | `tft.py` | `s_tft.py::TemporalFusionTransformer` | ✅ 浮点 | 1e-6 |
+  | 8 | `mlp.py` | `ts_models.py::MLP` | ✅ 逐位 | 0 |
+  | 9 | `tcn.py` | `ts_models.py::TCN` | ✅ 浮点 | 6.9e-6 |
+  | 10 | `nbeats.py` | `ts_models.py::NBEATS` | ✅ 逐位 | 0 |
+  | 11 | `nhits.py` | `ts_models.py::NHiTS` | ✅ 逐位 | 0 |
+
+  → **10/11 完全对齐**；第 5 项 Informer 因 `ProbSparseAttention` 的 key 随机采样（`torch.randint` vs `paddle.randint`
+    跨框架不可复现）属**算法固有随机性**，前向形状/结构正确，非实现 bug。
+  - 注：`ts_models.py::DLinear` **不在 PaddleTS 中**（PaddleTS 1.1.0 无 DLinear），无需对齐。
+- **本轮为对齐补的两处修正**：
+  1. `ts_models.py::NBEATS._Block` 属性 `_linear_layer_stack_list` → **`_fc_stack`**（对齐 PaddleTS 命名；
+     此前参数数完全相同但键名不同，导致 48/96 键加载不上）。改后 **96/96，maxdiff=0**。
+  2. NHiTS 对拍须用 **`dropout=0.0`**：`_NHiTSBlock` 的 `if dropout > 0` 才把 `Dropout` 塞进 `layers`，
+     故 dropout>0 会让 Linear 索引 0/3、dropout=0 时为 0/2。原 dump 用的是 dropout=0。
+     传 `dropout=0.0` 后 **24/24，maxdiff=0**。
+  - 踩坑：TCN 走 `weight_norm`，paddle `weight_g` 形状 `[C]`、torch 为 `[C,1,1]`（元素数相同）→ 加载需 reshape；
+    paddle `nn.Linear.weight` 是 **[in,out]**（torch 为 [out,in]）→ 对 Linear 无条件 `.T`。
+- **回归**：`smoke_all` **90 OK / 0 FAIL**（86 + 新增 4 个 demo 配置）、`check_graph_build` 55 OK。

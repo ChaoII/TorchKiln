@@ -48,7 +48,7 @@ class _Block(nn.Module):
         self._relu = nn.ReLU()
         stack = [nn.Linear(in_chunk_len, layer_width)]
         stack += [nn.Linear(layer_width, layer_width) for _ in range(num_layers - 1)]
-        self._linear_layer_stack_list = nn.ModuleList(stack)
+        self._fc_stack = nn.ModuleList(stack)
         if g_type == "seasonality":
             self._backcast_linear_layer = nn.Linear(
                 layer_width, (2 * int(backcast_length / 2 - 1) + 1) * target_dim)
@@ -79,7 +79,7 @@ class _Block(nn.Module):
         if observed_cov is not None:
             feat.append(observed_cov.reshape(b, -1))
         x = torch.cat(feat, dim=1)
-        for layer in self._linear_layer_stack_list:
+        for layer in self._fc_stack:
             x = self._relu(layer(x))
         theta_b = self._backcast_linear_layer(x)
         theta_f = self._forecast_linear_layer(x)
