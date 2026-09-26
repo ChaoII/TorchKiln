@@ -635,3 +635,29 @@
     三者 CLI 训练均跑通（loss 下降：TFT 13.98→10.45、DeepAR NLL 54.9→37.4、RNN 下降）；`smoke_all` **86 OK / 0 FAIL**；
     `check_graph_build` 55 OK。
 - 其余已实现模型（NBEATS/NHiTS/MLP/TCN/DLinear）保持不变，见 `torchkiln/nn/ts_models.py`。
+
+### ts 补充 demo 配置 + ETTh1×TFT 与 PaddleTS 端到端对比（2026-09-26）
+- **7 个模型各有 demo 配置**（合成数据 `datasets/ts_demo/data.csv`，L=48 H=12，均 CLI 训练跑通）：
+  `configs/ts/{tft,rnn,deepar,lstnet,transformer,scinet,informer}_demo.yml`。
+  - SCINet 的 `forward` 返回 **`(pred, mid_pred)` 元组**（`mid_pred` 在 num_stack=1 时为 None，对齐 PaddleTS），
+    `tasks/ts_forecast.py::_first` 取元组首元素再送 loss/metric；Informer 的 decoder padding 需 `device=src.device`
+    （原在 CPU 建 tensor，GPU 训练会 device mismatch）。
+  - `ptcore/trainers/__init__.py` 与 `torchkiln/tasks/__init__.py` 已注册 `ts_forecast`。
+- **端到端回归**：`tools/smoke_all.py` **86 OK / 0 FAIL**（含 3 个 ts 配置）；`check_graph_build.py` 55 OK。
+- **ETTh1×TFT 对比**（配置 `configs/local/etth1_tft.yml`，脚本 `_downloads/paddlets/etth1_*.py`）：
+  数据 `datasets/etth1/ETTh1.csv` → 按 train 段(0:12194) mean/std 标准化 + 生成 `hour_sin/cos`，
+  target=OT、known=[hour_sin,hour_cos]、observed=6 特征，L=96 H=24、hidden=64、heads=1、
+  Adam lr=1e-4、batch=128、10 epoch。两侧读**同一份 CSV**。
+  - **⚠️ `TSQuantileLoss` 差 6 倍 bug（已修）**：PaddleTS `QuantileRegression.loss` 是
+    `2 * max((q-1)e, qe)` 且**对分位数求和**（非平均）。原实现漏乘 2 且求平均 → 数值与梯度差 **2×Q=6 倍**，
+    同 lr 下等效学习率差 6 倍，训练轨迹不可比。修后**单步 loss 对齐 3.58289027↔3.58288987（1.13e-7）**。
+  - **复现验收（同权重 + 同评估器）**：权重加载 **255/255 missing=0/unexpected=0**；
+    PaddleTS 权重在框架评估器上 **MSE 0.6105** vs PaddleTS 自评 **0.6108**（差 3e-4）→ **评估口径一致**。
+  - **泄漏检查**：框架权重 MSE=0.1415（非趋 0，无泄漏）；修复后训练轨迹框架 1.564→0.414
+    vs PaddleTS 1.296→0.459（同量级）。
+  - **⚠️ 该实验设置下两模型都不如朴素基线**：naive last-value **0.0418**、seasonal(lag24) 0.0602，
+    而 PaddleTS 0.6105、框架 0.1415。根因是**时序切分造成分布位移**（val 段均值比 train 低 1.5σ）：
+    naive 复制过去值天然跟随位移，TFT 学绝对值映射则吃亏。且 PaddleTS 过拟合更重
+    （train→val pinball **0.459→1.571，×3.4**；框架 0.414→0.574，×1.4）。
+    → **结论：复现验收 ①-④ 全达标，"端到端 MSE 差"属实验设置（分布位移 + 过拟合差异），非代码缺陷**；
+    若要可比的端到端指标，需改用更大 lr/更多 epoch，或消掉分布位移（如随机切分、或按段内统计量归一化）。

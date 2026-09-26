@@ -293,7 +293,8 @@ class Informer(nn.Module):
         src = x["past_target"]
         batch_size, _, d_model = src.shape
         tgt = src[:, self._in_chunk_len - self._start_token_len:, :]
-        padding = torch.zeros([batch_size, self._out_chunk_len, d_model], dtype=src.dtype)
+        padding = torch.zeros([batch_size, self._out_chunk_len, d_model],
+                              dtype=src.dtype, device=src.device)
         tgt = torch.cat([tgt, padding], dim=1)
         return src, tgt
 

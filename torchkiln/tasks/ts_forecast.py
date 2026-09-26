@@ -76,14 +76,19 @@ class TsForecastTask(TaskAdapter):
             inp["static_cov_numeric"] = batch[4]
         return inp
 
+    @staticmethod
+    def _first(out):
+        # SCINet returns (pred, mid_pred); mid_pred is None for num_stack=1.
+        return out[0] if isinstance(out, tuple) else out
+
     def forward_train(self, model, images, batch):
-        return model(self._build_input(images, batch, with_future=True))
+        return self._first(model(self._build_input(images, batch, with_future=True)))
 
     def eval_step(self, model, batch, post_process, metric, device):
         past = batch[0].to(device, non_blocking=True)
         batch = [b.to(device, non_blocking=True) if hasattr(b, "to") else b for b in batch]
         inp = self._build_input(past, batch, with_future=False)
-        preds = model(inp)
+        preds = self._first(model(inp))
         metric(preds, batch)
 
     def summary_lines(self, config, global_config, post_process):
