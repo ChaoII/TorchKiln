@@ -633,21 +633,34 @@
     键 `conv1/bn1/layer1..4` + BN `_mean/_variance`）。**`data_splits.zip` 里没有权重**（纯 JSON 划分）。
     框架侧新增 `torchkiln/nn/bev_lanedet.py::load_paddle_resnet34_pretrained`（前缀映射 `conv1→bb.0`、
     `bn1→bb.1`、`layerN→bb.(4+N-1)`、`_mean/_variance→running_mean/var`；用 pickle 读，免依赖 paddle）。
-  - **对比结果（2 epoch，两边均随机初始化同起点）**：
-    | | 框架 | Paddle3D |
-    |---|---|---|
-    | FScore(f1) | **0.6503** | **0.3946** |
-    | precision | 0.5329 | 0.7547 |
-    | recall | 0.8339 | 0.2671 |
-    - ⚠️ **不可直接读作"框架更强"**：precision/recall 极端反差是**后处理差异**（框架
-      `BEVLaneDetPostProcess(score_thres=0.5)` vs Paddle3D 概率阈值 + **min-cost-flow 聚类**）。
-    - 训练口径也不同：**Paddle 实际 batch=1**（config 的 `batch_size:4` 未被
-      `default_dataloader_build_fn` 采用，5992 iters/epoch；评估 loader 则 ≈batch 32）；
-      其 cosine LR 被 `Trainer.set_lr_scheduler_iters_per_epoch` 覆盖、全程 ~0.00098 未衰减；
-      信道顺序 Paddle=BGR / 框架=RGB。
-- **待办**：① 对齐**后处理/阈值/聚类**后重测 FScore（当前差距主要来源）；② 对齐 batch 与 LR 相位；
-  ③ 框架加载 resnet34 预训练 + Paddle 侧同样加载（`pretrained_model_path`）做预训练起点对比；
-  ④ 跑满 50 epoch；⑤ SemanticKITTI 仍缺 → SqueezeSegV3 的 mIoU 暂无法做。
+  - **指标口径澄清（重要）**：框架 `BEVLaneDetMetric` 的 FScore 是**像素级二值分割 F1**，
+    与 Paddle3D `ApolloLaneMetric` 的 `f1_score`（**实例级 3D 车道 F1**）**不是同一指标**，
+    两者数值**不可直接比较**。官方评估管线是 `post_conf=0.9` + embedding 聚类
+    (`emb_margin=6.0`/`min_cluster_size=15`) + min-cost-flow → BEV 实例 → 投影 3D → 按 x/z 误差匹配车道；
+    而框架 `BEVLaneDetPostProcess` 只做 `sigmoid > 0.5` 阈值化。
+  - **有效对比（同一官方评估器 `ApolloLaneMetric`）**：
+    做法：框架模型跑 val 集导出 Paddle3D 兼容 np → 喂同一个 `ApolloLaneMetric`。
+    脚本 `_downloads/paddle3d/export_fw_lane_np.py`(ptocr, 导出) + `eval_np_lane.py`(paddlex, 评估)。
+    - **导出格式**（与 Paddle3D `test_forward` 一致）：`np.concatenate([seg(raw), emb(2ch),
+      sigmoid(offset), z], axis=1)` → `(1,5,200,48)`；文件名 `{split}__{stem}.np`（由 `images/{split}_{stem}.jpg`
+      反解，评估器 `split('.')[0].split('__')` → `gt_key='images/{split}/{stem}.jpg'`）。
+      ⚠️ `np.save` 会自动补 `.npy` 后缀（实际文件 `04__0000070.np.npy`），评估端用 `split('.')[0]` 不受影响。
+    - **结果（2 epoch，两边均随机初始化、同一批 1496 val 图）**：
+      | 指标 | 框架(官方评估器) | Paddle3D(官方评估器) |
+      |---|---|---|
+      | **f1_score** | **0.8378** | **0.3946** |
+      | precision | 0.8911 | 0.7547 |
+      | recall | 0.7905 | 0.2671 |
+      | x_error_close | **0.0680** | 0.2954 |
+      | z_error_close | **0.0582** | 0.1097 |
+    - 差距主因是**训练效率而非模型**：Paddle3D 实际 **batch=1**（config 的 `batch_size:4` 未被
+      `default_dataloader_build_fn` 采纳）且其 cosine LR 被 `Trainer.set_lr_scheduler_iters_per_epoch`
+      覆盖、全程 ~0.00098 **未衰减**；框架侧 batch=4 + LR 正常余弦衰减。
+    - 框架 `best_accuracy.pth` 加载 **miss=0/unexp=0**，导出 1496 个 np 全部参与评估（无 KeyError → GT 映射全命中）。
+- **待办**：① 对齐**训练口径**后重测（Paddle 侧 `batch_size` 未生效=1、LR 未衰减，是当前差距主因）；
+  ② 框架加载 resnet34 预训练（`load_paddle_resnet34_pretrained` 已就绪）+ Paddle 侧设 `pretrained_model_path`
+  做预训练起点对比；③ 跑满 50 epoch；④ 若需复用框架指标快速迭代，可用 `BEVLaneDetMetric`（像素级，注意口径）；
+  ⑤ SemanticKITTI 仍缺 → SqueezeSegV3 的 mIoU 暂无法做。
 - **单步 loss 对齐（数据无关，2026-09-24）**：用同一批合成输入分别跑 Paddle3D 损失与我们的损失：
   - SqueezeSegV3 `SSGLossComputation` ↔ `SqueezeSegV3Loss`：**17.265526 ↔ 17.265524（差 1.9e-6）**（5 尺度逐尺度一致）。
   - BEV-LaneDet（BCE+IoU+push-pull+MSE 四分量之和）↔ `BEVLaneDetLoss`：**59.529789 ↔ 59.529793（差 3.8e-6）**。
