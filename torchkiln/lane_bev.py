@@ -92,6 +92,13 @@ class BEVLaneDetLoss(nn.Module):
 
 
 class BEVLaneDetPostProcess(object):
+    """BEV 分割二值化（sigmoid + 阈值）。
+
+    ⚠️ 与 Paddle3D 官方评估管线**不同**：Paddle3D `PostProcessDataset` 用
+    ``post_conf=0.9`` + embedding 聚类(``post_emb_margin=6.0``, ``post_min_cluster_size=15``)
+    + min-cost-flow 得到**车道实例**再投影 3D。此处只是像素级阈值化。
+    """
+
     def __init__(self, score_thres=0.5, **kwargs):
         self.score_thres = float(score_thres)
 
@@ -101,7 +108,14 @@ class BEVLaneDetPostProcess(object):
 
 
 class BEVLaneDetMetric(object):
-    """Binary lane-segmentation F-score (main) + precision/recall."""
+    """**像素级**二值分割 F-score（main）+ precision/recall。
+
+    ⚠️ 这**不是** Paddle3D ``ApolloLaneMetric`` 的 ``f1_score``：
+    那个是**实例级 3D 车道** F1（按 x/z 误差阈值匹配车道），
+    两者数值不可直接比较。要与 Paddle3D 同指标对比，应把模型输出按
+    ``[seg(raw), emb(2ch), offset(sigmoid), z]`` 存成 ``{split}__{stem}.np``
+    再喂给 ``ApolloLaneMetric``（参考 ``_downloads/paddle3d/eval_np_lane.py``）。
+    """
 
     def __init__(self, main_indicator="FScore", score_thres=0.5, **kwargs):
         self.main_indicator = main_indicator
