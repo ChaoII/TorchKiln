@@ -646,21 +646,33 @@
       反解，评估器 `split('.')[0].split('__')` → `gt_key='images/{split}/{stem}.jpg'`）。
       ⚠️ `np.save` 会自动补 `.npy` 后缀（实际文件 `04__0000070.np.npy`），评估端用 `split('.')[0]` 不受影响。
     - **结果（2 epoch，两边均随机初始化、同一批 1496 val 图）**：
-      | 指标 | 框架(官方评估器) | Paddle3D(官方评估器) |
-      |---|---|---|
-      | **f1_score** | **0.8378** | **0.3946** |
-      | precision | 0.8911 | 0.7547 |
-      | recall | 0.7905 | 0.2671 |
-      | x_error_close | **0.0680** | 0.2954 |
-      | z_error_close | **0.0582** | 0.1097 |
-    - 差距主因是**训练效率而非模型**：Paddle3D 实际 **batch=1**（config 的 `batch_size:4` 未被
-      `default_dataloader_build_fn` 采纳）且其 cosine LR 被 `Trainer.set_lr_scheduler_iters_per_epoch`
-      覆盖、全程 ~0.00098 **未衰减**；框架侧 batch=4 + LR 正常余弦衰减。
+      | 指标 | 框架(官方评估器) | Paddle3D batch=1(**bug**) | **Paddle3D batch=4(已修)** |
+      |---|---|---|---|
+      | **f1_score** | **0.8378** | 0.3946 | **0.7776** |
+      | precision | 0.8911 | 0.7547 | 0.8150 |
+      | recall | 0.7905 | 0.2671 | 0.7435 |
+      | x_error_close | **0.0680** | 0.2954 | 0.1361 |
+      | z_error_close | **0.0582** | 0.1097 | 0.0937 |
+    - **⚠️ Paddle3D batch=1 是我方驱动脚本漏接参数导致（非 Paddle3D bug）**：
+      `apis/trainer.py::default_dataloader_build_fn` 里 `batch_size = args.pop('batch_size', 1)`，
+      而 `Trainer.__init__` 的 `dataloader_fn` 默认 `dict()` → config 的 `batch_size: 4` 从不生效。
+      **官方 CLI(`main.py`) 负责这处接线，而 1.0.0 恰好没有 `main.py`**（与"缺 bev_lanedet 注册"同类问题）。
+      修法：`Trainer(..., dataloader_fn={'batch_size': cfg.batch_size})`。
+      **一个 bug 引发两个症状**：① batch=1（5992 iters/epoch）；
+      ② **LR 不衰减**——`CosineAnnealingDecay(T_max=2996)` 但实际 2 epoch=11984 iter，
+      `11984/2996 = 4.0` 恰为**余弦第 4 个周期**（cosine 是周期函数）→ 回到峰值恒 ~0.00098。
+      修 batch 后 iters_per_epoch=1498、总 iters=2996 = T_max，**恰好一个周期**，LR 正常衰减到 1.2e-5。
+    - **修正后 Paddle3D f1 从 0.3946 → 0.7776（+97%）**，证实差距主要来自训练口径而非模型；
+      与框架 0.8378 差 0.06，属 2 epoch 随机初始化的合理噪声量级。
+      剩余 0.06 的可能来源：LR/warmup 配置细节不同、归一化信道顺序(RGB vs BGR)、
+      Paddle 侧有增广(MotionBlur/RandomBrightnessContrast/ColorJitter)而框架无、
+      框架评的是 `best_accuracy.pth`（按像素 F1 挑的 best）而 Paddle 评的是 `epoch_2`（最后）。
     - 框架 `best_accuracy.pth` 加载 **miss=0/unexp=0**，导出 1496 个 np 全部参与评估（无 KeyError → GT 映射全命中）。
-- **待办**：① 对齐**训练口径**后重测（Paddle 侧 `batch_size` 未生效=1、LR 未衰减，是当前差距主因）；
+- **待办**：① ~~对齐训练口径~~（**已修**：batch=4 生效、LR 正常衰减，f1 0.3946→0.7776）；
   ② 框架加载 resnet34 预训练（`load_paddle_resnet34_pretrained` 已就绪）+ Paddle 侧设 `pretrained_model_path`
-  做预训练起点对比；③ 跑满 50 epoch；④ 若需复用框架指标快速迭代，可用 `BEVLaneDetMetric`（像素级，注意口径）；
-  ⑤ SemanticKITTI 仍缺 → SqueezeSegV3 的 mIoU 暂无法做。
+  做预训练起点对比；③ 跑满 50 epoch（当前仅 2 epoch）；④ 对齐剩余 0.06 的次要因素（增广/信道顺序/评 best vs last）；
+  ⑤ 若需快速迭代可临时用 `BEVLaneDetMetric`（像素级，**注意与 ApolloLaneMetric 口径不同**）；
+  ⑥ SemanticKITTI 仍缺 → SqueezeSegV3 的 mIoU 暂无法做。
 - **单步 loss 对齐（数据无关，2026-09-24）**：用同一批合成输入分别跑 Paddle3D 损失与我们的损失：
   - SqueezeSegV3 `SSGLossComputation` ↔ `SqueezeSegV3Loss`：**17.265526 ↔ 17.265524（差 1.9e-6）**（5 尺度逐尺度一致）。
   - BEV-LaneDet（BCE+IoU+push-pull+MSE 四分量之和）↔ `BEVLaneDetLoss`：**59.529789 ↔ 59.529793（差 3.8e-6）**。
