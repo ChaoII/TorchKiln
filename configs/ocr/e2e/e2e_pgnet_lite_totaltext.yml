@@ -11,6 +11,8 @@ Global:
   eval_batch_step:
   - 0
   - 2000
+  # 每 2 个 epoch 评估一次（用户要求）
+  eval_epoch_step: 2
   cal_metric_during_train: false
   # stride-4 头/颈在 512x512 下很重, 训练开 AMP 提速(损失在 fp32 下算, 见 trainer)
   amp: true
