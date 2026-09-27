@@ -1160,3 +1160,41 @@
   随后 `tr_pass↑` → `recall` 才有意义。若 `aratio` 长期不动 → 说明 `border_loss` 没起作用，
   需查 loss 权重/`f_border` 分支，而不是继续盲跑。
 - 注意：`_downloads/` 不入库；脚本靠 `sys.path` 注入仓库根 + ptocr 环境运行。
+
+### 14. ⚠️ 撤回 `f_score` 的 sigmoid（训练从 epoch 2 起持续劣化的根因，2026-09-27）
+**触发**：用户要求"指标没变化甚至更差就停下来查"。诊断脚本（§13）显示：
+| 权重 | n_det(40图) | aratio | tr_med | tr_pass | f_score |
+|---|---|---|---|---|---|
+| epoch 2（=best，**60+ epoch 从未刷新**） | 193 | **0.518** | 0.423 | 0.074 | 0.0550 |
+| epoch 60（latest） | 842 | **0.028** | 0.013 | 0.004 | 0.0000 |
+→ 模型越训越差，**best_accuracy 从 epoch 2 之后就再没被刷新过**。
+
+**根因（`_downloads/ocr/e2e_sigmoid_test.py`，原型权重单批实测）**：
+```
+f_score(带 sigmoid): min=0.5000 mean=0.5028  >0.5 占比=0.0058
+反解 raw logit:       min=0.00   max=20.72   ← 背景精确=0、从不为负
+GT tcl_maps 正样本占比=0.0152
+Dice(带 sigmoid)=0.9603   Dice(用 raw)=-0.7075
+```
+1. 原型权重的 `f_score` raw 形态是 **[0,+∞)、背景精确=0**（它自己的 Dice 推成这样）。
+2. 加 sigmoid 后 **背景 = sigmoid(0) = 0.5**：
+   - **Dice 分母被 ~13 万背景像素 ×0.5 淹没 → loss 下限 ≥0.94、梯度趋零**
+     → 训练日志里 `score_loss` **60+ epoch 恒为 0.927~0.939**（分割头完全学不动）；
+   - 后处理 `f_score > 0.5` **恰好卡在背景值 0.5 上** → 阈值失效（只有 0.58% 像素略高）。
+3. 种子区域退化 → 框越来越小 → **aratio 0.518 → 0.028**。
+4. 连锁：`border_loss` 虽从 0.539 降到 0.482，但种子区域已坏，`aratio` 照样崩。
+
+**已撤回**：`torchkiln/ocr/modeling/e2e_pgnet_lite.py::PGHeadLite.forward` 去掉 `torch.sigmoid`
+（代码内保留了完整原因注释）。并**删除了劣化的 checkpoint**、从原型权重重启。
+
+**⚠️ 更正 §10.3**：那里写的「加了 sigmoid 后预测几乎不变 → 两侧口径等价，均可」**只在推理端成立**，
+**训练端不成立**（损失面完全不同），该结论作废。**训练时必须与权重的原始口径一致。**
+
+**另一条易误判的经验**：`DiceLoss` 出现**负值不是 bug**（`pred > gt` 即可为负，
+本项目实测 `Dice(raw) = -0.7075`）。当初正是因为把 -0.84 当成 bug 才加了 sigmoid —— **误判起点**。
+PaddleOCR 官方 `PGHead` 有 sigmoid 是因为它**从零一起训练**；在**已训练权重上**补 sigmoid = 口径失配。
+
+**附带教训（运维）**：训练期间**不要并发跑其它 GPU 脚本** —— 我为算 loss 分量跑的
+`e2e_loss_break.py` 先 CUDA OOM，随后**训练与 watchdog 两个进程同时被杀**（日志无报错、
+GPU 归零，13:43:40 中断）。疑为 OOM 触发驱动重置（与本机早前
+`CUDNN_STATUS_EXECUTION_FAILED_CUDART` 同类）。

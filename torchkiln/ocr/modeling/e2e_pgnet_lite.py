@@ -162,12 +162,20 @@ class PGHeadLite(nn.Module):
         self.conv4 = cb(s2, 2, 3, "conv4")
 
     def forward(self, x, targets=None):
-        # f_score 必须过 sigmoid（对齐 PaddleOCR/框架的 PGHead）：
-        #   * DiceLoss 把 f_score 当概率用（否则 intersection 可能为负）；
-        #   * PGNet_PostProcess 直接用 score_thresh 阈值化 f_score。
+        # ⚠️ f_score **不要加 sigmoid**（2026-09-27 实测结论，勿重蹈）：
+        #   - 本项目的 PGHeadLite 是按「raw >= 0、背景=0、文本区大」训练的
+        #     （实测原型权重 raw 范围 0~20.72、背景精确为 0）。
+        #   - 加 sigmoid 会让**背景 = sigmoid(0) = 0.5**：
+        #       ① DiceLoss 分母被背景 0.5 淹没 -> loss 恒 >=0.94、梯度趋零
+        #          （训练 60 epoch score_loss 始终卡 0.93，分割头完全学不动）；
+        #       ② 后处理 `f_score > 0.5` 恰好卡在背景值 0.5 上 -> 阈值失效。
+        #   - 连带后果：种子区域退化 -> 预测框从 GT 的 52% 缩到 2.8%
+        #     （aratio 0.518 -> 0.028，best_accuracy 六十多个 epoch 无法刷新）。
+        #   - Dice 为负(如 -0.7)是**正常**的(pred>gt 即可)，不是 bug。
+        #   - PaddleOCR 官方 PGHead 有 sigmoid，是因为它**从零一起训练**；
+        #     在已训练权重上补 sigmoid 属于口径失配。
         return {
-            "f_score": torch.sigmoid(
-                self.conv1(self.cs3(self.cs2(self.cs1(x))))),
+            "f_score": self.conv1(self.cs3(self.cs2(self.cs1(x)))),
             "f_border": self.conv2(self.cb3(self.cb2(self.cb1(x)))),
             "f_char": self.conv3(
                 self.cc5(self.cc4(self.cc3(self.cc2(self.cc1(x)))))),
