@@ -1626,3 +1626,23 @@ orm 和 c）
   - ⚠️ **换版本前先看 `config.json` 的权重是哪个 kokoro 版本产出的**（`kokoro-v1_0.pth` 对应 v1.0）。
 - **教训**：这次我又一次"听起来合理就动手"了（改名方案没先验证模型期望的键集合）。
   **正确顺序永远是：先打印「权重键集合」与「模型期望键集合」两个集合的差集，再设计映射。**
+
+###### ✅ kokoro ① 根因**彻底确定**（脚本 _downloads/kokoro_keydiff.py）
+- **方法（这次做对了）**：并列打印「权重键集合（去 module.）」vs「模型期望键集合」的**差集**，不猜。
+- **结果**（以 F0.0.* 为例）：
+  - **交集 10**、**unexpected = 0**、**missing = 4**：
+    `F0.0.norm1.norm.{weight,bias}` + `F0.0.norm2.norm.{weight,bias}`
+- **当前 kokoro 0.9.4 的结构**（
+amed_modules 实测）：
+  `
+  F0.0.norm1 = AdaIN1d
+      - norm : InstanceNorm1d    ← 模型期望 .norm.{weight,bias}，权重里没有
+      - fc   : Linear            ← 权重里有 .fc.{weight,bias} ✓ 交集在这
+  `
+- **算术完全吻合**：F0.0/F0.1/F0.2/N.0/N.1/N.2 6 blocks × 
+orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 同理）⇒ **两处 missing 同源**。
+- **根因**：AdaIN1d 内的 InstanceNorm1d —— **当前代码 ffine=True（有 weight/bias）**，而**产 kokoro-v1_0.pth 的旧版 ffine=False（无参数）**。
+- **修法（改模型，不改权重 —— 与 Paddle 侧相反）**：移植到 	orchkiln 时把该 InstanceNorm1d 构造成 **ffine=False** → missing=0。
+  （⚠️ 若 	rack_running_stats 也有差异，missing 里会多出 unning_mean/var；实测 missing 只有 weight/bias ⇒ 只差 ffine。）
+- **验证口径**：修后 predictor/decoder 应达 missing=0 / unexpected=0，① 即 PASS（ert/bert_encoder/text_encoder 已 PASS）。
+- **对齐基准**（与前三个模型不同）：kokoro 是纯 torch ⇒ **②③④ 与官方 kokoro 包逐层对拍**（+fp64 判定法）。
