@@ -1404,3 +1404,22 @@ um_batches_tracked），形状不符 0；
   m[:min_duration] = True 是**原地修改**（与 Paddle 一致）。
 - **脚本**：sp23a/sp23b_mdtc_loss.py。
 - **待做**：④ 同音频 → 	orchaudio.compliance.kaldi.fbank(dither=0) → logits 对拍。
+
+#### MDTC ④ 的入口与参数（已定位，尚未跑通）
+- **Paddle 侧 fbank 入口**：`paddlespeech/audio/compliance/kaldi.py::fbank`（644 行，**kaldi 官方算法的 Python 移植**，
+  含 `spectrogram/_mel_scale/_get_mel_banks/_get_dct_matrix`；`kaldi_fbank` 字样出现在 `audio/datasets/dataset.py` 与 `cli/kws/infer.py`）。
+- **签名**（对拍参数必须按此对齐）：
+  `fbank(waveform, blackman_coeff=0.42, channel=-1, dither=0.0, energy_floor=1.0, frame_length=25.0,
+  frame_shift=10.0, high_freq=0.0, htk_compat=False, low_freq=20.0, n_mels=23, preemphasis_coefficient=0.97,
+  raw_energy=True, remove_dc_offset=True, round_to_power_of_two=True, sr=16000, snip_edges=True,
+  subtract_mean=False, use_energy=False, use_log_fbank=True, use_power=True, vtln_* , window_type="povey")`
+- **依赖**：`from ..functional import create_dct` + `from ..functional.window import get_window`；
+  同样撞到 **缺 resampy 的包链** → 用 **§7/ECAPA 已验证的「桩 `paddlespeech.audio`(设 `__path__=[]`)
+  + 注入依赖 + exec 源码 + 设 `__package__`」法**（对 `librosa.py` 成功过）。
+- **torch 侧**：`torchaudio.compliance.kaldi.fbank`（同为 kaldi 移植），
+  参数 `num_mel_bins=80, frame_length=25.0, frame_shift=10.0, sample_frequency=16000.0, dither=0.0,
+  snip_edges=True, low_freq=20, high_freq=0, window_type='povey'`。
+  - ⚠️ **`energy_floor` 默认两边都是 1.0** —— 我在 `sp24b` 里写成了 `0.0`，**对拍前必须改回 1.0**。
+  - `remove_dc_offset=True`（Paddle）⇔ `zero_mean_windows=True`（torch）✓；`use_power/use_log_fbank=True` ✓。
+- **脚本已写好待跑**：`sp24a_mdtc_e2e.py`(paddle) / `sp24b_mdtc_e2e.py`(torch)；
+  ④ 判据：`logits diff <= 0.02` + **HIT/filler 判定一致**（同 `max_pooling_loss` 的 acc 口径 >0.5）+ `feat rel < 1e-3`。
