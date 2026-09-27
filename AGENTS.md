@@ -1575,3 +1575,35 @@ um_batches_tracked），形状不符 0；
   （`transformers` 在镜像里有 5.x 全系列；装时注意别拖入超大依赖）。
 - **脚本**：`_downloads/kokoro_precheck.py`(可行性) `kokoro_ms_search.py`(搜权重)
   `kokoro_ms_files.py`(文件列表) `kokoro_fetch.py`(下载, 支持 `--big`) `kokoro_scan.py`(结构)。
+
+### kokoro ① 进展 + 关键根因：**权重与 pip 版本的键路径不匹配**
+- **依赖已装齐且未破坏环境**（`transformers 4.57.1` + `loguru 0.7.3` + `huggingface_hub` + `attrs`，
+  pip 报过 dependency conflicts，但**实测 `torch 2.12.1+cu132` / `torchaudio 2.11.0` / CUDA True / `nn.Conv2d` 全部完好**）。
+  - 新缺 `attr`（`custom_stft.py` 用 `from attr import attr`）→ 装 `attrs` 即可。
+- **绕过 `kokoro/__init__.py`**：它会 `from .pipeline import KPipeline` → `from misaki import en`，
+  而 misaki 是 `--no-deps` 装的（缺依赖）→ 用**桩包法**（`kokoro.__path__` 指真实目录，跳过 `__init__`）
+  就能正常 `from kokoro.model import KModel`（同 paddlespeech 的做法，脚本 `_downloads/kokoro_load.py`）。
+- **官方权重加载方式**（`model.py` L68-75，必须照抄）：
+  `python
+  for key, sub in torch.load(model, map_location='cpu', weights_only=True).items():
+      assert hasattr(self, key)
+      try: getattr(self, key).load_state_dict(sub)
+      except: sub = {k[7:]: v for k, v in sub.items()}   # 去 'module.'
+              getattr(self, key).load_state_dict(sub, strict=False)
+  `
+  即 **先试直接 load，失败则去掉 `module.` 前缀再 `strict=False`**。
+- **① 实测结果**（`kokoro_load.py`）：
+  | 子模块 | 结果 | 参数 |
+  |---|---|---|
+  | `bert` | **stripped(missing=0, unexpected=0)** ✅ | 6.292 M |
+  | `bert_encoder` | **stripped(missing=0, unexpected=0)** ✅ | 0.394 M |
+  | `text_encoder` | **stripped(missing=0, unexpected=0)** ✅ | 5.606 M |
+  | `predictor` | stripped(**missing=24**) | 16.204 M |
+  | `decoder` | stripped(**missing=116**) | 53.314 M |
+  | 合计 | 81.810 M（盘点的 sd 是 81.763 M，差值来自 buffer 计入口径） | |
+- ⚠️ **根因（下一步要修）**：缺失键全是 `*.norm1.norm.weight/bias` / `*.norm2.norm.*` / `encode.norm1.norm.*`，
+  而权重里对应路径是 **`module.F0.0.norm1.**fc**.weight` / `module.decode.0.norm1.**fc**.weight`**（实测 `norm1.norm.weight` 0 个、`fc.weight` 存在）。
+  ⇒ **权重由旧版 kokoro 训练，pip 装的 0.9.4 把 `AdaLayerNorm` 内部子模块从 `fc` 改名为 `norm`**。
+  **修法**：加载时键名映射 `.fc.` → `.norm.`（predictor 24 + decoder 116 个缺失键全是此原因）。
+- **下一步**：① 补键名映射到 `missing=0` → ② 同输入与**官方 `kokoro` 包**逐层对拍（+fp64 判定法）
+  → ③ 同输入 loss/梯度 → ④ 推理指标（TTS 口径，波形/频谱一致性，需另定）。
