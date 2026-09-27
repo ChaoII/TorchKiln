@@ -26,6 +26,7 @@ from ptcore.trainers.segment import SegmentTrainer
 from ptcore.trainers.semantic import SemanticTrainer
 from ptcore.trainers.video_cls import VideoClsTrainer
 from ptcore.trainers.ts_forecast import TsForecastTrainer
+from ptcore.trainers.kokoro_tts import KokoroTtsTrainer
 
 #: ``Architecture.task`` -> trainer class
 TRAINER_REGISTRY = {
@@ -47,6 +48,7 @@ TRAINER_REGISTRY = {
     "pose_action": PoseActionTrainer,
     "video_cls": VideoClsTrainer,
     "ts_forecast": TsForecastTrainer,
+    "kokoro_tts": KokoroTtsTrainer,
     # OCR family: text det / rec share one adapter (OcrTask dispatches on algorithm)
     "det": OcrTrainer,
     "rec": OcrTrainer,
@@ -70,14 +72,23 @@ def get_trainer(task):
 
 
 def build_trainer(config, **kwargs):
-    """Build the trainer for a config (``model_family`` defaults to ``ocr``)."""
+    """Build the trainer for a config.
+
+    路由优先级：**显式 ``Architecture.task`` > ``model_family`` > 默认(ocr)**。
+    （原先 ``family`` 默认 "ocr" 会吞掉所有只在 ``task`` 里声明家族的新任务，
+      例如 ``task: kokoro_tts`` 被误发给 OcrTrainer。）
+    """
     arch = config.get("Architecture") or {}
-    family = arch.get("model_family", "ocr")
     task = arch.get("task")
-    if family == "ocr" or task in _OCR_TASKS:
-        cls = OcrTrainer
-    else:
-        cls = get_trainer(task)
+    family = arch.get("model_family")
+    # 1) 显式 task 且已注册 -> 直接用它
+    if task in TRAINER_REGISTRY:
+        return TRAINER_REGISTRY[task](config, **kwargs)
+    # 2) OCR 家族（det/rec/e2e 等）+ 旧式只有 model_family
+    if task in _OCR_TASKS or family == "ocr" or (task is None and family is None):
+        return OcrTrainer(config, **kwargs)
+    # 3) 其它：按 task 取
+    cls = get_trainer(task)
     return cls(config, **kwargs)
 
 

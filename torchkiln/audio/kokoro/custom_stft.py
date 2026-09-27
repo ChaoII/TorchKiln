@@ -56,13 +56,20 @@ class CustomSTFT(nn.Module):
 
         # Combine window and dft => shape (freq_bins, filter_length)
         # We'll make 2 conv weight tensors of shape (freq_bins, 1, filter_length).
-        forward_window = window_tensor.numpy()  # shape (n_fft,)
+        # torchkiln: 去掉 .numpy()（官方为 CPU 路径写的）——
+        #   在 CUDA 上 .numpy() 会把权重留在 CPU 导致
+        #   "stft input and window must be on the same device"。
+        #   直接用 tensor 相乘，既同设备也保持可微。
+        forward_window = window_tensor  # shape (n_fft,)
         forward_real = dft_real * forward_window  # (freq_bins, n_fft)
         forward_imag = dft_imag * forward_window
 
         # Convert to PyTorch
-        forward_real_torch = torch.from_numpy(forward_real).float()
-        forward_imag_torch = torch.from_numpy(forward_imag).float()
+        # torchkiln: 原为 torch.from_numpy(...)（会固定到 CPU）-> 改 as_tensor 且显式 dtype，
+        #   使 buffer 能随模型迁移到 CUDA（否则报 "stft input and window must be
+        #   on the same device but got self on cuda:0 and window on cpu"）。
+        forward_real_torch = torch.as_tensor(forward_real, dtype=torch.float32)
+        forward_imag_torch = torch.as_tensor(forward_imag, dtype=torch.float32)
 
         # Register as Conv1d weight => (out_channels, in_channels, kernel_size)
         # out_channels = freq_bins, in_channels=1, kernel_size=n_fft
@@ -86,17 +93,19 @@ class CustomSTFT(nn.Module):
 
         # Multiply by window again for typical overlap-add
         # We also incorporate the scale factor 1/n_fft
-        inv_window = window_tensor.numpy() * inv_scale
+        inv_window = window_tensor * inv_scale      # torchkiln: 去 .numpy()（同设备）
         backward_real = idft_cos * inv_window  # (freq_bins, n_fft)
         backward_imag = idft_sin * inv_window
 
         # We'll implement iSTFT as real+imag conv_transpose with stride=hop.
+        # torchkiln: 原为 torch.from_numpy(...)（会固定到 CPU）——
+        #   改为 torch.as_tensor(..., dtype=torch.float32)，作为 buffer 随模型迁移设备。
         self.register_buffer(
-            "weight_backward_real", torch.from_numpy(backward_real).float().unsqueeze(1)
-        )
+            "weight_backward_real",
+            torch.as_tensor(backward_real, dtype=torch.float32).unsqueeze(1))
         self.register_buffer(
-            "weight_backward_imag", torch.from_numpy(backward_imag).float().unsqueeze(1)
-        )
+            "weight_backward_imag",
+            torch.as_tensor(backward_imag, dtype=torch.float32).unsqueeze(1))
         
 
 

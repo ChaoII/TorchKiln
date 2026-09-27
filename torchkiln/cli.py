@@ -53,6 +53,9 @@ TASK_ALIASES = {
     "plate-det": "plate_det",
     "plate_rec": "plate_rec",
     "plate-rec": "plate_rec",
+    "kokoro_tts": "kokoro_tts",
+    "kokoro-tts": "kokoro_tts",
+    "tts": "kokoro_tts",
     "attribute": "attribute",
     "attr": "attribute",
     "pose_action": "pose_action",
@@ -90,6 +93,7 @@ FAMILY_OF = {
     "lane_bev": "lane_bev",
     "plate_det": "yolo",
     "plate_rec": "yolo",
+    "kokoro_tts": "kokoro_tts",
     "attribute": "yolo",
     "pose_action": "yolo",
     "video_cls": "yolo",
@@ -159,7 +163,7 @@ def _config_task(argv):
 
         arch = load_config(path).get("Architecture") or {}
         raw = str(arch.get("task") or arch.get("name") or "").lower()
-        for key in ("plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
+        for key in ("kokoro_tts", "plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
                     "lane_bev", "lane_seg", "lane_row", "pc_seg", "det3d", "detect", "segment", "obb", "pose",
                     "classify", "semantic", "depth", "e2e", "det", "rec", "cls"):
             if key in raw:

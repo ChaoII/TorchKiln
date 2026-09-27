@@ -90,7 +90,12 @@ class TorchSTFT(nn.Module):
         self.hop_length = hop_length
         self.win_length = win_length
         assert window == 'hann', window
-        self.window = torch.hann_window(win_length, periodic=True, dtype=torch.float32)
+        # torchkiln: 原为普通属性 self.window = torch.hann_window(...)（不随 .to(device) 迁移）
+        #   -> 注册为 buffer，模型迁到 CUDA 时同步迁移；否则报
+        #   "stft input and window must be on the same device but got self on cuda:0 and window on cpu"。
+        self.register_buffer(
+            "window",
+            torch.hann_window(win_length, periodic=True, dtype=torch.float32))
 
     def transform(self, input_data):
         forward_transform = torch.stft(

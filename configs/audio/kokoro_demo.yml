@@ -1,0 +1,85 @@
+Global:
+  model_name: kokoro_demo
+  debug: false
+  use_gpu: true
+  device: null
+  epoch_num: 1
+  log_smooth_window: 20
+  print_batch_step: 1
+  save_model_dir: ./output/kokoro_demo
+  save_epoch_step: 1
+  eval_batch_step:
+  - 0
+  - 1000
+  cal_metric_during_train: false
+  pretrained_model: null
+  checkpoints: null
+  save_inference_dir: null
+  output: null
+  use_visualdl: false
+  infer_img: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  ema_decay: 0.9998
+  ema_decay_type: threshold
+  show_eval_progress: true
+  amp: false
+Architecture:
+  task: kokoro_tts
+  algorithm: kokoro
+  config_path: torchkiln/audio/kokoro/configs/kokoro-v1_0.json
+  # 训练冒烟用 null（不加载 327MB 预训练）；正式训练填本地 .pth
+  weights_path: null
+Loss:
+  name: KokoroLoss
+  sr: 24000
+  n_fft: 1024
+  hop_length: 256
+  n_mels: 80
+  w_mel: 1.0
+  w_f0: 1.0
+  w_energy: 1.0
+  w_duration: 1.0
+Optimizer:
+  name: Adam
+  beta1: 0.9
+  beta2: 0.999
+  lr:
+    name: Cosine
+    learning_rate: 0.0001
+    warmup_epoch: 0
+  regularizer:
+    name: L2
+    factor: 0.0
+Metric:
+  name: KokoroTtsMetric
+Train:
+  dataset:
+    name: KokoroDataset
+    data_dir: datasets/kokoro_demo
+    label_file_list:
+    - datasets/kokoro_demo/train.txt
+    sr: 24000
+    max_len: 48000
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 2
+    num_workers: 0
+    prefetch_factor: 2
+Eval:
+  dataset:
+    name: KokoroDataset
+    data_dir: datasets/kokoro_demo
+    label_file_list:
+    - datasets/kokoro_demo/val.txt
+    sr: 24000
+    max_len: 48000
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 1
+    num_workers: 0
+    prefetch_factor: 2
+profiler_options: null

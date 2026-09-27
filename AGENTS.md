@@ -1858,3 +1858,31 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 - **⇒ 两版共用同一模型架构，仅词表不同**（中文版扩展音素集）⇒ **权重架构可互换，各带一份 config 即可**。
 - **已存入仓库**：`torchkiln/audio/kokoro/configs/kokoro-v1_0.json` 与 `kokoro-v1_1-zh.json`。
 - **脚本**：`_downloads/kokoro_cfg_cmp.py`（并下载 zh 的 config），差异明细 `_downloads/kokoro_cfg_diff.txt`。
+
+###### D) kokoro 训练管线（自写，端到端跑通）
+- **新增文件**：
+  | 文件 | 内容 |
+  |---|---|
+  | `torchkiln/audio/kokoro_loss.py` | **自定**多任务 TTS 损失（mel 重建 L1 + F0 L1 + 能量 L1 + 时长 L1）；**官方未公开训练代码，此项自洽** |
+  | `torchkiln/audio/kokoro_dataset.py` | `KokoroDataset`（清单 `音频<TAB>音素串` → `input_ids/ref_s/wav`；stdlib 读 wav；**确定性 ref_s**）+ `kokoro_collate`（返回 **list**） |
+  | `torchkiln/tasks/kokoro_tts.py` | 任务适配器（build_model/loss/metric/datasets + forward_train/eval_step） |
+  | `ptcore/trainers/kokoro_tts.py` | trainer（覆盖 `_default_task`，与 plate_rec 同风格） |
+  | `configs/audio/kokoro_demo.yml` | demo 配置（1 epoch、batch 2、Adam lr 1e-4） |
+  | `_downloads/make_kokoro_demo.py` | 合成 demo 数据（6 train / 2 val，24kHz 正弦+噪声） |
+- **注册**：`ptcore/trainers/__init__.py`(TRAINER_REGISTRY) · `torchkiln/tasks/__init__.py` · `torchkiln/cli.py`(TASK_ALIASES/FAMILY_OF/_config_task)。
+- **⭐ CLI 端到端跑通**：`python -m torchkiln train -c configs/audio/kokoro_demo.yml`
+  `
+  Start training: type=kokoro_tts epochs=1 steps/epoch=3 device=cuda:0
+  step1: loss 372.21 (mel 3.00/f0 171.23)   step2: loss 448.55 (mel 2.80/f0 210.89)
+  epoch done 2.5s; eval: wav_l1 0.2165 wav_cos -0.0066 fps 13.9; Training finished
+  `
+- **修掉的 7 个真问题（官方代码在 CUDA/教学场景下的缺陷，均已注释留痕）**：
+  1. `build_trainer` 的 `family` **默认 "ocr"** 会吞掉只在 `task` 里声明的新任务 → 改为 **task 优先**（`task in TRAINER_REGISTRY` 直接路由）。
+  2. `kokoro_collate` 返回 **dict** → 改 **list**（trainer 约定 `batch[0]` 为 images）。
+  3. `KokoroLoss.forward` 返回 **元组** → 改 **dict**（trainer 取 `loss_dict["loss"]`）。
+  4. `batch>1` 时 `pred_dur.squeeze()` 变多维 → `repeat_interleave` 报错 → **保留 (B,T) 并逐样本构建对齐矩阵**（长度取 batch 内 max，避免 `stack` 失败）。
+  5. **`istftnet.TorchSTFT.window` 是普通属性**（非 buffer）→ **不随 `.to(cuda)` 迁移** → 改 `register_buffer`。
+  6. **`custom_stft.py` 用 `torch.from_numpy(...)` 构造 STFT 权重** → **固定 CPU** → 改 `torch.as_tensor(..., dtype=float32)`。
+  7. 损失里 **`MelSpectrogram` 未按设备缓存** → 改 **按 `str(device)` 缓存并把模块 `.to(dev)`**。
+- **⚠️ 训练限制**：`Generator` 含随机噪声（需固定种子）；**整链一次反传在部分输入下触发原生段错误 0xC0000005**（③ 已记录）；CLI 冒烟下常规 batch 反传正常。
+- **待完善（非阻塞）**：① 评估指标很简（wav_l1/余弦，正式评测应加 mel/F0 指标）；② 时长损失口径自定；③ `ref_s` 用确定性随机（真实训练需 voice pack 或参考音频编码器）。
