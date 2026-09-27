@@ -1386,3 +1386,21 @@ um_batches_tracked），形状不符 0；
   - 三模型 fp64 量级对照：PANNs 3.55e-11 < **MDTC 6.02e-10** < ECAPA 1.43e-08（后者含 ASP 的 sqrt/softmax 敏感点）。
 - **脚本**：sp21a/sp21b(①转换) sp22a/sp22b(②含 FP64)。
 - **待做**：③ max_pooling_loss+梯度（先读 kws/models/loss.py 83 行）、④ 同音频 kaldi_fbank → logits 对拍。
+
+#### MDTC ③ PASS（fp64）+ 实证官方 KWSModel 路径确实坏
+- **③**：loss rel fp32 **2.362e-06** / **fp64 3.106e-11**；**correct=1, acc=0.5000 两侧完全一致**；
+  可比梯度 **158/158**（零梯度 0 个）；最大梯度 rel fp64 **7.636e-09** → **RESULT_3: PASS**。
+  - 又踩 linear.weight 布局坑（同 PANNs）：Paddle (32,1) vs torch (1,32) → **对比前 .T**，否则报 shape 不符。
+- ⚠️ **实证：官方 KWSModel.forward 确实是坏的** ——
+  ValueError: linear(): argument 'X' (position 0) must be Tensor, but got tuple（MDTC 返回 (tensor,None) 而它不解包）。
+  **我在 2b2a6a5 的"撤回"是错的撤回**（当时只看权重含 linear.* 就下结论）—— **本次实跑把结论扳回：原判断正确**。
+  - 绕过方式：b_out, _ = m(t); logits = kw.activation(kw.linear(bb_out))；我的 torch KWSModel.forward 已正确解包 outputs, _ = self.backbone(x)。
+  - **强化教训**：同一个"必须实跑"的原则**对正反两向都要用** —— 我用它推翻过一个"只看代码"的判断，
+    又因为"看权重"而推翻了一个其实正确的判断。**调用约定类问题只有运行时证据算数。**
+- **max_pooling_loss 语义（已移植到 	orchkiln/audio/kws_loss.py）**：
+  命中关键词 → **max-pooling**（padding 置 0）-log(max)；其它/filler → **min-pooling**（padding 置 1）-log(min)；
+  均 clip(1e-8,1) 后 /num_utts，并返回 (loss, num_correct, acc)。
+  对应坑：paddle.max(axis) 只返回值 → torch .max(dim).values；paddle.clip → 	orch.clamp；
+  m[:min_duration] = True 是**原地修改**（与 Paddle 一致）。
+- **脚本**：sp23a/sp23b_mdtc_loss.py。
+- **待做**：④ 同音频 → 	orchaudio.compliance.kaldi.fbank(dither=0) → logits 对拍。
