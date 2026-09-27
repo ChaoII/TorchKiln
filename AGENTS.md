@@ -1843,3 +1843,18 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
   **含随机性的模型必须固定种子**（`torch.manual_seed`）。
 - 注：`official` 侧 `missing=140`（保留默认 `weight=1/bias=0`）而 `torchkiln` 为 `0`，
   但**端到端仍逐位一致** ⇒ 再次实证 **`affine=False` 替换与官方前向完全等价**。
+
+###### C) kokoro v1.0 与 v1.1-zh 的 config 核对（结论：架构全同，仅 ocab 不同）
+- | 项 | v1.0 | v1.1-zh |
+  |---|---|---|
+  | 顶层键 | 14 个（**无独有键**） | 同 |
+  | hidden_dim / 
+_layer / 
+_mels / style_dim / max_dur / 
+_token / plbert / istftnet … | **全部相同** | **全部相同** |
+  | **ocab** | **114** | **171** |
+  | vocab 独有 | **9** 个（IPA 符号） | **66** 个（**中文音素 + 数字 1-5 + / + R**） |
+  | 共有 token 的 id | **105 个全部相同（无冲突）** | 同 |
+- **⇒ 两版共用同一模型架构，仅词表不同**（中文版扩展音素集）⇒ **权重架构可互换，各带一份 config 即可**。
+- **已存入仓库**：`torchkiln/audio/kokoro/configs/kokoro-v1_0.json` 与 `kokoro-v1_1-zh.json`。
+- **脚本**：`_downloads/kokoro_cfg_cmp.py`（并下载 zh 的 config），差异明细 `_downloads/kokoro_cfg_diff.txt`。
