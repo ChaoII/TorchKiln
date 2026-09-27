@@ -1423,3 +1423,20 @@ um_batches_tracked），形状不符 0；
   - `remove_dc_offset=True`（Paddle）⇔ `zero_mean_windows=True`（torch）✓；`use_power/use_log_fbank=True` ✓。
 - **脚本已写好待跑**：`sp24a_mdtc_e2e.py`(paddle) / `sp24b_mdtc_e2e.py`(torch)；
   ④ 判据：`logits diff <= 0.02` + **HIT/filler 判定一致**（同 `max_pooling_loss` 的 acc 口径 >0.5）+ `feat rel < 1e-3`。
+
+##### ⚠️ MDTC ④ 当前阻塞（paddlex 环境，2026-09-27）
+- **桩 `paddlespeech.audio` 指向真实目录**（跳过其 `__init__` 的 resampy 链，保留真实子模块）这一步是**对的**，
+  但随即在 `paddlespeech.audio.functional.__init__` 卡在：
+  **`ImportError: The scipy install you are using seems to be broken, (extension modules cannot be imported)`**
+  ⇒ **paddlex 环境的 scipy 损坏/与 paddle 的 numpy ABI 冲突**，导致 `..functional` / `..compliance.kaldi` 都加载不了。
+- **可选出路（按代价从低到高）**：
+  1. **跳过 `functional/__init__`**：直接 exec `functional/window.py`（拿 `get_window`）+ 给 `create_dct` 打桩
+     （`fbank` 不用它，只有 `mfcc` 用），再 exec `compliance/kaldi.py` —— 纯文件级加载，绕开包 `__init__`。
+  2. 重装/降级 paddlex 环境的 scipy（**有风险**，可能影响 paddle3d/bevlane 等既有工作，**不建议先做**）。
+  3. ④ 改为**共享特征**（torch 侧 `torchaudio.compliance.kaldi.fbank` 产出喂给两侧模型）—— 但这样 ④ 只测模型端，
+     与 ②（随机输入逐层）重复度高，**验收价值打折**；且仍需 Paddle 侧能跑模型（可，模型不依赖 scipy）。
+- **若走路线 1 的落地细节**：`fbank` 参数须两侧一致
+  （`dither=0, energy_floor=1.0, frame_length=25, frame_shift=10, low_freq=20, high_freq=0,
+  n_mels=80, sr=16000, snip_edges=True, window_type='povey', use_power/use_log_fbank=True,
+  remove_dc_offset=True ⇔ zero_mean_windows=True`）。
+- **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 过，仅剩 ④**。
