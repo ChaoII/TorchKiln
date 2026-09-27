@@ -1784,3 +1784,23 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
   - `Decoder` 的 `F0_conv`/`N_conv` 是 `stride=2`：`F0_conv(60) -> 30`；`encode` 期望 **514 = 512(asr)+2(F0,N)** 通道且时间维一致。
   - `Decoder.generator` 调用签名是 **`generator(x, s, F0_curve)`**（`Decoder.forward` 末尾）。
   - `Generator.forward` 内 `with torch.no_grad()` 包住谐波源部分。
+
+###### ✅ kokoro ② **完全 PASS**（补完 Generator 的固定种子对拍）
+- **脚本** `_downloads/kokoro_gen_seed.py`（三组实验）。
+- **A) 不播种**：两侧输出不同（确认随机性存在，与此前 `audio rel 0.517` 一致）。
+- **B) 两侧同步 `torch.manual_seed` 后**：
+  | seed | maxdiff | rel |
+  |---|---|---|
+  | 1234 | **0.000000e+00** | 0.0000 |
+  | 2026 | **0.000000e+00** | 0.0000 |
+- **C) `Generator` 内确定性部分**（谐波源全链）：
+  `har_source` / `uv` / `hs` / `har_spec` / `har_phase` / `har` / `noi_source`
+  **全部 `maxdiff = 0.000000e+00`** ✓
+- **⇒ 结论**：**kokoro 移植版与官方 pip 包的前向完全等价（`maxdiff = 0`）**，
+  含此前认为"有差异"的 `Generator`。此前 `rel 0.517/129` **纯粹来自源码里的随机噪声**
+  （`SineGen` 的 `rand_ini` + 两处 `randn_like`），**已用固定种子消除**。
+- **② 的对拍方法学（可复用）**：**含随机数的模块必须两侧同步播种**；
+  若不便播种，则**只比确定性部分**（本例 C 组）。两者结合可给出无争议的等价性结论。
+- **② 最终状态**：**全链 13+ 层逐位一致（0.000e+00）** ⇒ **PASS**。
+- **下一步**：**③ loss/梯度**（`KModel.forward_with_tokens` 带 `@torch.no_grad` —— 需另建可微路径，
+  或对 TTS 采用"重建损失 + 时长 + F0/能量"的多任务口径）→ **④** `pred_dur` 对齐 + 波形/频谱一致性。
