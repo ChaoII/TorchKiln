@@ -1461,3 +1461,17 @@ um_batches_tracked），形状不符 0；
   sample_frequency=16000)`；且 torchaudio **无 `zero_mean_windows`**，用 kaldi 原名 **`remove_dc_offset=True`**。
   两侧共同：`dither=0, energy_floor=1.0, frame_length=25, frame_shift=10, snip_edges=True`。
 - **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 全过，④ 模型端过/特征端待查**。
+
+##### MDTC ④ 特征差异排查进展（已排除 1 个假设）
+- **实验**：把两侧 `energy_floor` 从 1.0 改为 **0.0**（脚本 `sp24a/sp24b` 支持 `EF` 环境变量），
+  **差异完全没变**：`maxdiff 1.757107e-01 / rel 1.090e-02`（与 EF=1 逐位相同）
+  ⇒ **排除 `energy_floor` 假设**。
+- **仍未排除的嫌疑**（按可能性）：`preemphasis_coefficient=0.97` 预加重、`raw_energy=True` 的能量基准、
+  `round_to_power_of_two=True` 的 n_fft 对齐、`window_type="povey"` 窗函数实现、`low_freq=20/high_freq=0`。
+- **证据约束**：两侧 `max` **完全相同 5.1794**，只有 `min` 差（-16.118 vs -15.942）⇒ **绝大多数帧一致、少数帧不同**，
+  且**集中在低能量**帧 ⇒ 很可能是**能量为 0 的静音帧**上某一步的边界处理（log/sqrt 的 epsilon、或预加重在帧首样本）。
+- **下一步（决定性）**：对比两侧**中间量 `spectrogram`**（`paddlespeech.audio.compliance.kaldi.spectrogram`
+  vs `torchaudio.compliance.kaldi.spectrogram`）——若 spectrogram 就不同 ⇒ 差异在帧/窗/预加重阶段；
+  若相同 ⇒ 差异在 `_get_mel_banks`/log 阶段。再逐级定位。
+- **不影响已完成的结论**：模型端 `logits maxdiff 4.043443e-09`、HIT/filler 一致 —— **②③④ 的模型对齐已成立**。
+- **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 全过；④ 模型端 PASS、特征端 1.09% 待查（已排除 energy_floor）**。
