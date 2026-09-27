@@ -1046,3 +1046,38 @@
   而不是直接看 `E2EMetric`（它对窄框过严）。
 - 或确认 Paddle 侧手工复算脚本 `_downloads/ocr/diag_combine.py` 的入口（它是怎么绕过 tr=0.7 的），再对齐口径。
 - 本移植的**训练正确性已由 loss 逐位对齐证明**（§7.2），与该评估门槛问题无关。
+
+### 10. ⚠️ 更正 §6/§7.7/§9：`f_score 0.785 / e2e 0.536` 不是本原型的成绩（2026-09-27 关闭）
+**方法：同一评估器评两份预测 + 直接跑 Paddle 模型对拍。**
+
+#### 10.1 关键实验（脚本 `_downloads/ocr/common_evaluator.py` / `fw_infer_all.py` / `paddle_one_img.py`）
+1. **同一评估器（框架 `get_socre_A` + `combine_results(rec_flag=True)`）评两份预测**：
+   | 预测来源 | f_score | f_score_e2e | precision | recall | seqerr |
+   |---|---|---|---|---|---|
+   | Paddle `output/bench_pgnet/result.txt` | **0.7851** | **0.5364** | 0.8334 | 0.7421 | 0.315 |
+   | 框架自己跑的 `fw_result.txt` | 0.00051 | 0 | 0.0007 | 0.0004 | 1.0 |
+   → **评估器本身正确**（Paddle 预测经框架评估器复现 0.785/0.536），差异在预测。
+2. **直接跑 Paddle 模型（`latest.pdparams`，即真正用于 `.pth` 转换的那份权重）**：
+   | 图 | Paddle 模型(官方 eval 管线) | 框架 | `result.txt` |
+   |---|---|---|---|
+   | img1.jpg | **0 框** | **0 框** | 1 框 `retrosains` |
+   | img589.jpg | **2 框 `['fresh','et']`** | **2 框 `['fresh','et']`** | — |
+   | img995.jpg | **4 框 `['golden','ge','gate','brid']`** | **4 框一致** | — |
+   → **框架预测 == Paddle 模型预测**（含文本）；而 `result.txt` 的检出（7.59 框/图，合计 2276）
+     与两者（4.59 框/图，合计 1377）明显不同，**只有 38/300 图检出数相同**。
+
+#### 10.2 结论
+- **`output/bench_pgnet/result.txt` 是用另一份（更优）权重生成的**，不是 `tiny_pgnet_totaltext/latest.pdparams`。
+  §6 里「0.785/0.536 = 150 epoch 原型的真实能力」的归属**是错的**，本节更正。
+- **真正跑本原型（150 epoch / 无预训练 / 结构改过）时，Paddle 与框架得到同样的 ~0.0005**
+  —— **框架与 Paddle 之间没有差距**，验证链完整闭合：
+  权重 450/450 加载 → 前向 maxdiff 1.5e-3 → 后处理逐位一致（同输入同输出 `2 框 ['fresh','et']`）→ **预测一致** → **指标一致**。
+- §9 的解释仍成立：**预测框比 GT 窄（tr=0.464/0.099 < 0.7 被 Deteval 拒）**，是这份原型模型的真实短板。
+- **待办（若要本原型出好看的指标）**：需**重新训练**（更久 epoch / 带 sigmoid 重新对齐训练口径 / 用官方 r50 权重起点），
+  而不是调评估管线。
+
+#### 10.3 顺带澄清
+- PaddleOCR 官方 `PGHead` 里 `f_score` 有 `F.sigmoid`；**我的 `PGHeadLite`（Paddle 侧与 torch 侧都）原本没有**。
+  实测 Paddle 侧 `f_score` 范围 `0~403`（raw logits），阈值化用 `>0.5`；torch 侧加了 sigmoid 后
+  `sigmoid(raw)>0.5 ⟺ raw>0`，**预测几乎不变**（`UNDO_SIG=1` 反算 logit 后检出数/坐标一致）→ 两侧口径等价，均可。
+- `result.txt` 时间戳 09-26 21:09（与训练同晚），但内容与该 checkpoint 不符 —— **说明该文件是别的运行留下的，勿再引用**。
