@@ -1367,3 +1367,22 @@ n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + co
   **教训：涉及调用约定的问题必须实跑验证，不能只看代码**（同 §6 的"官方指标为 0 不等于模型废了"）。
 - **对齐 ① 的转换规则（预测）**：去 ackbone. 前缀 + BN _mean/_variance→running_mean/running_var + **linear.weight .T**；
   conv 权重（含 depthwise [in,1,k]）同形状不转。
+
+#### MDTC ① PASS + ② PASS（fp64 判定）
+- **①**：missing=0 / unexpected=0，可转换 236/275（39 个为 
+um_batches_tracked），形状不符 0；
+  参数 0.0344M → weights/mdtc_heysnips.pth (240.17KB)。
+  - ⚠️ **键结构本就一致，无需加任何前缀**（KWSModel = ackbone.* + linear.* 两边同名）—— 我先加 ackbone. 导致全未命中，又加了 linear. 前缀导致 linear.* 两个键 missing。
+  - linear.weight (32,1) → **.T**；depthwise conv (80,1,5) 同形不转。
+- **②**：input / after_pad / after_transpose 三层 **maxdiff = 0.00e+00** —— **确证 F.pad 6 值语义的 torch 等价写法正确**：
+  F.pad(x, (0,0, R,0))（torch pad 从最后一维开始配对 ⇒ C=(0,0)、T=(R,0)）⇔ Paddle F.pad(x,(0,0,R,0,0,0))。
+  | 层 | fp32 rel | fp64 rel |
+  |---|---|---|
+  | preprocessor | 4.47e-4 | **6.75e-12** |
+  | stack0/1/2 | 5.8e-4~9.5e-4 | 2.6e-10~6.0e-10 |
+  | output | 6.23e-4 | **2.84e-10**（maxdiff 6.08e-09） |
+  | output range | 0~21.364460 / 0~21.364410 | **0~21.364413 / 0~21.364413（完全相同）** |
+  - **判 PASS**：6e-10 是 fp64 数值累积（12 层 conv），非逻辑差异（pad 层 0.00e+00 已证结构/语义正确）。
+  - 三模型 fp64 量级对照：PANNs 3.55e-11 < **MDTC 6.02e-10** < ECAPA 1.43e-08（后者含 ASP 的 sqrt/softmax 敏感点）。
+- **脚本**：sp21a/sp21b(①转换) sp22a/sp22b(②含 FP64)。
+- **待做**：③ max_pooling_loss+梯度（先读 kws/models/loss.py 83 行）、④ 同音频 kaldi_fbank → logits 对拍。
