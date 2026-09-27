@@ -1713,3 +1713,20 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
   **只有"训练 loss"这一项没有官方参考**（hexgrad 从未公开）⇒ 那一项只能**自洽 + 参考 A'**。
 - **脚本**：`_downloads/kokoro_find_train.py`（找仓库）、`kokoro_train_repo.py`（探结构）、
   `kokoro_repo_probe.py`（探 hexgrad 官方仓）。
+
+###### ✅ kokoro 中文版 v1.1-zh 已获取 + ① 也 PASS（ffine=False 修法通用）
+- **用户提示正确**：`model.py::MODEL_NAMES` 里就有
+  `'hexgrad/Kokoro-82M-v1.1-zh' -> 'kokoro-v1_1-zh.pth'`（`KModel` 支持中文）。
+- **已下**：`_downloads/speech/kokoro/kokoro-v1_1-zh.pth` **327.25 MB @ 24.8 MB/s**
+  （ModelScope 仓库 `hexgrad/Kokoro-82M-v1.1-zh`，文件接口同 v1.0：`.../repo?Revision=master&FilePath=`）。
+  同目录另有其自己的 `config.json`（**v1.0 与 v1.1-zh 的 config 可能不同** —— 测试用的是同目录 v1.0 的 config，
+  若两版 `vocab`/`n_token` 不同则须分别取各自 config，**下一步要核对**）。
+- **① 中文版权重也 PASS**：`[['bert','bert_encoder','decoder','predictor','text_encoder']]`，重建 70 个
+  `InstanceNorm1d` 为 `affine=False` 后 **5 个子模块全部 `missing=0 / unexpected=0`**。
+  ⇒ **修法对两版权重通用**。
+- **两个权重并存**：`kokoro-v1_0.pth`（英文/多语言）+ `kokoro-v1_1-zh.pth`（**中文**）。
+- **脚本**：`_downloads/kokoro_zh_fetch.py`（查/下载 v1.1-zh）。
+- **下一步**：kokoro **② 同输入逐层前向 vs 官方包** —— 需先把模型**移植进 `torchkiln/audio/kokoro.py`**
+  （参考代码量：`model.py` 152 + `istftnet.py` 422 + `modules.py` 184 + `custom_stft.py` 198 ≈ **956 行**），
+  再用已验证的 **fp64 判定法** 对拍；③④ 同前三个模型的流程。
+  ⚠️ 注意固定随机 `ref_s`（1×512）与 `input_ids` 做可复现输入；`speed` 参数也要固定。
