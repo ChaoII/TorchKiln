@@ -1353,3 +1353,17 @@ n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + co
   是 `nn.Linear` ⇒ **需 .T**）→ ② 同 (N,80,T) 输入逐层对拍 + **fp64 判定** → ③ `max_pooling_loss` + 梯度
   （**注意零梯度参数按绝对判据**，见 ECAPA 教训）→ ④ 同音频 kaldi_fbank → logits/命中对比。
 - **脚本可复用**：`sp3a/sp3b`(转换) `sp10a/sp10b`(②含FP64) `sp12a/sp12b`(③) `sp14a/sp14b`(④)。
+
+#### KWS MDTC 的 2 个待解问题已解（_downloads/sp20_mdtc_probe.py，只需 paddle）
+- **Q1 键结构**：236 键 = **ackbone.* 234 + linear.* 2**；linear.weight = **(32,1)**（Paddle Linear [in,out] → **torch 需 .T** 得 (1,32)）；
+  preprocessor.conv1.conv.weight = **(80,1,5)** ← depthwise 与 torch **同形状，不需转**；eceptive_fields = 184。
+- **Q2 输入布局（关键）**：**输入是 (N, T, 80)（帧在前），不是 (N, 80, T)** ——
+  | 输入 | 结果 |
+  |---|---|
+  | (2,80,120) | ❌ The channel of input must be divisible by groups, received: the channel of input is 120 |
+  | **(2,120,80)** | ✅ OK → (2,120,32) |
+  报错信息**正好印证推断**：F.pad(x,(0,0,R,0,0,0)) 的 6 值 pad 从**最内层维度 C** 开始配对 ⇒ C=(0,0)、T=(R,0)（**时间维左 pad R=184，causal**）、N=(0,0) → (N,T+R,C)，再 	ranspose([0,2,1]) → (N,C,T) 进 conv ⇒ 若给 (N,80,T) 则 T 变通道 → 报错。
+- **撤回我先前的过早判断**：KWSModel 路径**没有坏**（权重里含 linear.* 说明它可用）。我只读源码就下"会 TypeError"的结论是错的 ——
+  **教训：涉及调用约定的问题必须实跑验证，不能只看代码**（同 §6 的"官方指标为 0 不等于模型废了"）。
+- **对齐 ① 的转换规则（预测）**：去 ackbone. 前缀 + BN _mean/_variance→running_mean/running_var + **linear.weight .T**；
+  conv 权重（含 depthwise [in,1,k]）同形状不转。
