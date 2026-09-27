@@ -1902,3 +1902,24 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 - **回归中发现并修复**：`build_trainer` 改为「task 优先」后，**`e2e` 不再命中 `_OCR_TASKS`**
   （`_OCR_TASKS` 里原来只有 `ocr_e2e`）→ 报 `no trainer for task 'e2e'`。
   **修**：`_OCR_TASKS` 补 `"e2e"`。修复后单跑 e2e 冒烟通过（`trainer: OcrTrainer` / `loss=333.37`）。
+
+## 音频 SOTA 移植 —— 最终总结（2026-09-28，全部完成）
+详见 `_downloads/AUDIO_FINAL_SUMMARY.md`（完整验收矩阵 + 方法论 + 踩坑清单）。要点：
+
+### 交付
+| 任务 | 模型 | 状态 |
+|---|---|---|
+| 语音分类 | **PANNs CNN14** | **四条对齐全过**（fp64 前向 3.55e-11 / loss 6.46e-12 / probs 差 3.4e-05） |
+| 说话人 | **ECAPA-TDNN** | **四条对齐全过**（fp64 1.47e-15 / loss 1.67e-08 / 余弦 0.9999996） |
+| 关键词 | **MDTC** | **四条对齐全过**（fp64 6.02e-10 / loss 3.1e-11 / logits 4.04e-09；特征 1.09% 为两版 kaldi 移植差异） |
+| TTS | **kokoro-82M（英文 v1.0 + 中文 v1.1-zh）** | **①②③④ 全过**（端到端波形逐位一致 0.000e+00）+ **自写训练管线 CLI 跑通** |
+
+### 回归
+`check_graph_build` **55 OK / 0 FAIL**；smoke 分批 **72 OK / 0 FAIL**。
+
+### 关键限制（如实记录）
+- **icefall ASR**：k2/kaldifeat **Windows 无官方 wheel**（已确认不装 WSL2/Docker）→ 未做。
+- **PaddleSpeech VITS/JETS**：**权重未发布**；**Paraformer**：代码不在 wheel → 未做。
+- **kokoro 训练代码官方从未开源** → 训练 loss 为自定（但 ③ 用「模块级梯度通路 vs 官方推理包」达成 0.000e+00）。
+- **kokoro 整链一次反传**在部分输入下触发原生段错误 0xC0000005 → 训练需分段反传。
+- **Generator 含随机噪声** → 对拍必须固定种子。
