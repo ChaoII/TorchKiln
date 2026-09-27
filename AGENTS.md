@@ -1440,3 +1440,24 @@ um_batches_tracked），形状不符 0；
   n_mels=80, sr=16000, snip_edges=True, window_type='povey', use_power/use_log_fbank=True,
   remove_dc_offset=True ⇔ zero_mean_windows=True`）。
 - **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 过，仅剩 ④**。
+
+##### MDTC ④ 结果：模型端 PASS，特征端差 1.09%（实现差异，非移植问题）
+- **模型端 ✅**：`logits maxdiff = 4.043443e-09`（阈值 0.02）、`Paddle max = torch max = 0.000001`、
+  **HIT/filler 判定一致**（两边都判 filler —— en.wav 不含 "hey snips"，**正确**）。
+- **特征端 ❌**：`feat maxdiff 1.757e-01 / rel 1.090e-02`（阈值 1e-3）。
+  - Paddle `range -16.1181..5.1794` vs torch `-15.9424..5.1794` —— **最大值完全相同，仅最小值差 0.176** ⇒
+    差异集中在**低能量帧**，是 `paddlespeech/audio/compliance/kaldi.py`（Paddle 自己的 kaldi 移植）与
+    `torchaudio` 版在 `energy_floor/raw_energy/preemphasis` 边界处理上的**实现差异**，**不是模型移植问题**
+    （logits 4e-09 已证模型端完全对齐）。
+  - **下一步**：对比两版 `fbank` 在低能量帧的中间量（`spectrogram` → `mel bank`），定位是哪一项参数/分支；
+    若确认是实现差异，④ 判据应改为「logits + HIT/filler」，并把特征差异**如实记为已知差异**。
+- **跑通 ④ 的关键（环境绕过）**：`paddlespeech.audio` / `.functional` / `.compliance` **三个都做成
+  「`__path__` 指向真实目录、跳过 `__init__`」的桩包** —— 因为：
+  `audio/__init__` 拉缺失的 resampy；`functional/__init__` 会 import `.functional` 触发
+  **`ImportError: The scipy install you are using seems to be broken`**（**scipy 其实没坏**，1.15.3 正常，
+  是 paddlespeech 自己的检查）；`compliance/__init__` 会 import librosa。
+  再给 `functional.create_dct` 打桩（`fbank` 不用，仅 `mfcc` 用）即可 `from .. import` 解析。
+- **参数名两侧不同（易错）**：Paddle `fbank(n_mels=80, sr=16000)` vs torchaudio `fbank(num_mel_bins=80,
+  sample_frequency=16000)`；且 torchaudio **无 `zero_mean_windows`**，用 kaldi 原名 **`remove_dc_offset=True`**。
+  两侧共同：`dither=0, energy_floor=1.0, frame_length=25, frame_shift=10, snip_edges=True`。
+- **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 全过，④ 模型端过/特征端待查**。
