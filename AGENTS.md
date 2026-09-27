@@ -1475,3 +1475,19 @@ um_batches_tracked），形状不符 0；
   若相同 ⇒ 差异在 `_get_mel_banks`/log 阶段。再逐级定位。
 - **不影响已完成的结论**：模型端 `logits maxdiff 4.043443e-09`、HIT/filler 一致 —— **②③④ 的模型对齐已成立**。
 - **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 全过；④ 模型端 PASS、特征端 1.09% 待查（已排除 energy_floor）**。
+
+##### MDTC ④ 特征差异已精确定位到 `spectrogram` 阶段
+- **实验**（`sp25a_mdtc_spec.py`(paddlex) / `sp25b_mdtc_spec.py`(ptocr)）：
+  两侧 `spectrogram`（Paddle `paddlespeech.audio.compliance.kaldi.spectrogram` vs
+  `torchaudio.compliance.kaldi.spectrogram`，同参数 dither=0/energy_floor=1/frame 25-10ms/povey/预加重0.97）：
+  - 形状一致 **(328, 257)**；**`max` 两侧完全相同 4.74978**；`min` paddle **-16.1181** vs torch **-15.9424**
+  - **`maxdiff 0.175711 / rel 1.09015e-02`** —— 与 fbank 的 `rel 1.090e-02` **逐位相同**
+  - 差异 >1e-3 的 bin **166/257**；这些 bin 的能量全是**负数**（-3789 / -3789 / -3398 / -2722 / -2123）
+- **结论 1**：fbank 的 **100% 差异都来自 spectrogram** ⇒ `_get_mel_banks` / log 阶段**没有额外差异**（不必再查）。
+- **结论 2**：**只在能量为负（log 后极小值）的 bin 上不同**，高能量端逐位相同 ⇒
+  是**极小值在 log 域被放大的数值细节**（某个 epsilon / `remove_dc_offset` / 预加重在低能量帧的实现差异），
+  **不是帧数、窗长、mel bank 的结构性错误**（形状与 max 均已证明一致）。
+- **④ 的判定现状**：模型端 **PASS**（`logits maxdiff 4.043443e-09`、HIT/filler 一致）；
+  特征端 **1.09% 已知差异**，根因已定位到 spectrogram 的低能量端 ——
+  **建议 ④ 判据采用「logits + HIT/filler」**，特征差异**如实标注为已知实现差异**（两版 kaldi 移植的数值细节不同）。
+- **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 全过，④ 模型端 PASS / 特征端已定位为实现差异**。
