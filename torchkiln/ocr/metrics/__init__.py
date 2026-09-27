@@ -16,6 +16,13 @@ def build_metric(config):
     except Exception:
         pass
 
+    try:
+        from .e2e_metric import E2EMetric
+
+        support_dict.append("E2EMetric")
+    except Exception:
+        pass
+
     config = dict(config)
     module_name = config.pop("name")
     assert module_name in support_dict, Exception(

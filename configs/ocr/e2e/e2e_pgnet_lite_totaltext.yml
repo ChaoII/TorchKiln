@@ -1,0 +1,168 @@
+Global:
+  model_name: e2e_pgnet_lite_totaltext
+  debug: false
+  use_gpu: true
+  device: null
+  epoch_num: 150
+  log_smooth_window: 20
+  print_batch_step: 10
+  save_model_dir: ./output/e2e_pgnet_lite_totaltext
+  save_epoch_step: 10
+  eval_batch_step:
+  - 0
+  - 2000
+  cal_metric_during_train: false
+  # 转换自 PaddleOCR 训练产物（weights/pgnet_lite_totaltext.pth, 4.9MB）
+  pretrained_model: weights/pgnet_lite_totaltext.pth
+  checkpoints: null
+  save_inference_dir: null
+  output: null
+  use_visualdl: false
+  infer_img: datasets/ocr/total_text/test/rgb
+  distributed: false
+  seed: 1024
+  # 端到端 PGNet 训练不使用 EMA（与 PaddleOCR 的 e2e 配置一致）
+  use_ema: false
+  ema_decay: 0.9998
+  ema_decay_type: threshold
+  show_eval_progress: true
+  # PGLoss 内含 CTC，保持 fp32
+  amp: false
+  # ---- e2e 专用（会被 create_operators 合并进各算子）----
+  character_dict_path: torchkiln/ocr/utils/ic15_dict.txt
+  character_type: EN
+  valid_set: totaltext
+  max_text_length: 50
+  max_text_nums: 30
+  tcl_len: 64
+Architecture:
+  task: e2e
+  model_type: e2e
+  algorithm: PGNet
+  Transform: null
+  Backbone:
+    name: PPLCNetV4E2E
+  Neck:
+    name: PGFPNLCNet
+    w: 64
+  Head:
+    name: PGHeadLite
+    w_char:
+    - 64
+    - 64
+    - 128
+    - 128
+    - 128
+    w_score:
+    - 64
+    - 64
+    - 128
+Loss:
+  name: PGLoss
+  tcl_bs: 64
+  max_text_length: 50
+  max_text_nums: 30
+  pad_num: 36
+Optimizer:
+  name: Adam
+  beta1: 0.9
+  beta2: 0.999
+  lr:
+    name: Cosine
+    learning_rate: 0.001
+    warmup_epoch: 50
+  regularizer:
+    name: L2
+    factor: 0.0001
+PostProcess:
+  name: PGPostProcess
+  score_thresh: 0.5
+  mode: fast
+  point_gather_mode: align
+Metric:
+  name: E2EMetric
+  mode: A
+  gt_mat_dir: ./train_data/total_text/gt
+  character_dict_path: torchkiln/ocr/utils/ic15_dict.txt
+  main_indicator: f_score_e2e
+Train:
+  dataset:
+    name: SimpleDataSet
+    data_dir: datasets/ocr/total_text/train
+    label_file_list:
+    - datasets/ocr/total_text/train/train.txt
+    transforms:
+    - DecodeImage:
+        img_mode: BGR
+        channel_first: false
+    - E2ELabelEncodeTrain: null
+    - PGProcessTrain:
+        batch_size: 14
+        use_resize: true
+        use_random_crop: false
+        min_crop_size: 24
+        min_text_size: 4
+        max_text_size: 512
+        point_gather_mode: align
+    - KeepKeys:
+        keep_keys:
+        - images
+        - tcl_maps
+        - tcl_label_maps
+        - border_maps
+        - direction_maps
+        - training_masks
+        - label_list
+        - pos_list
+        - pos_mask
+    ratio_list:
+    - 1.0
+  loader:
+    shuffle: true
+    drop_last: true
+    batch_size_per_card: 14
+    num_workers: 4
+    prefetch_factor: 4
+  resume_path: null
+Eval:
+  dataset:
+    name: SimpleDataSet
+    data_dir: datasets/ocr/total_text/test
+    label_file_list:
+    - datasets/ocr/total_text/test/test.txt
+    transforms:
+    - DecodeImage:
+        img_mode: BGR
+        channel_first: false
+    - E2ELabelEncodeTest: null
+    - E2EResizeForTest:
+        max_side_len: 768
+    - NormalizeImage:
+        scale: 1./255.
+        mean:
+        - 0.485
+        - 0.456
+        - 0.406
+        std:
+        - 0.229
+        - 0.224
+        - 0.225
+        order: hwc
+    - ToCHWImage: null
+    - KeepKeys:
+        keep_keys:
+        - image
+        - shape
+        - polys
+        - texts
+        - ignore_tags
+        - img_id
+    ratio_list:
+    - 1.0
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 1
+    num_workers: 0
+    prefetch_factor: 4
+profiler_options: null

@@ -923,3 +923,78 @@
 - 教训：**"官方指标为 0" 不等于 "模型废了"**，务必用官方函数手工复算交叉验证。
 - 模型真实能力（官方函数口径，可复现脚本 `_downloads/ocr/diag_combine.py`）：检测 **f_score 0.785**、
   **e2e f_score 0.536**（150 epoch / 无预训练 / 结构改过；官方 r50 = 600 epoch / 184MB）。
+
+### 7. 框架内端到端训练/评估链路补齐（2026-09-27）
+**结论：torch 侧 PGLoss 与 PaddleOCR 原版 PGLoss 在同批输入上总 loss 逐位一致；CLI 端到端训练跑通。**
+
+#### 7.1 新增/改动文件
+| 文件 | 说明 |
+|---|---|
+| `torchkiln/ocr/losses/e2e_pg_loss.py`（新） | `PGLoss` + `org_tcl_rois` + `pre_process`（移植 `ppocr/losses/e2e_pg_loss.py` + `extract_batchsize.py`） |
+| `torchkiln/ocr/data/imaug/pg_process.py`（新，1117 行） | `PGProcessTrain`（**原文件零 paddle 依赖**，仅改 1 处 import 为新路径，逐行搬运） |
+| `torchkiln/ocr/utils/e2e_metric/{Deteval,polygon_fast,__init__}.py`（新） | 官方 e2e 指标（`get_socre_A/B`、`combine_results`） |
+| `torchkiln/ocr/metrics/e2e_metric.py`（新） | `E2EMetric`（mode A/B） |
+| `torchkiln/ocr/modeling/e2e_pgnet_lite.py` | 头 `PGHeadLite` 补 **`f_score` 的 `torch.sigmoid`** |
+| `torchkiln/ocr/data/imaug/label_ops.py` | 补 `E2ELabelEncodeTrain` / `E2ELabelEncodeTest` |
+| `torchkiln/ocr/data/{imaug/__init__,simple_dataset}.py` | 注册新算子；`SimpleDataSet` 补 `img_id`（e2e 评估需要） |
+| `torchkiln/ocr/task.py` | 新增 `e2e_train_collate` / `e2e_eval_collate` + `self.name=="e2e"` 分派 |
+| `torchkiln/cli.py` / `ptcore/trainers/__init__.py` | 注册 `ocr_e2e`（`CONFIG_TASK_ALIAS["e2e"]="ocr_e2e"`、`_OCR_TASKS`、`TRAINER_REGISTRY`） |
+| `configs/ocr/e2e/e2e_pgnet_lite_totaltext.yml`（新） | 完整配置（`Architecture.task: e2e`，pretrained 指向转换后的 `.pth`） |
+
+#### 7.2 关键数值对齐（同批输入、同 RNG 种子）
+| 分量 | torch | Paddle | 结论 |
+|---|---|---|---|
+| **loss** | **349.08233642578125** | **349.08233642578125** | **逐位一致** |
+| score_loss | 0.9430578947067261 | 0.9430578947067261 | 一致 |
+| border_loss | 0.8673726320266724 | 0.8673725128173828 | 末位差（fp32 求和序） |
+| direction_loss | 0.3845565915107727 | 0.3845565915107727 | 一致 |
+| ctc_loss | 69.37747192382812 | 69.37747192382812 | 一致 |
+
+- 复算脚本：`_downloads/ocr/e2e_dump.py`（torch 侧导出批+前向）、`_downloads/ocr/e2e_paddle_loss.py`（Paddle 侧同输入）、
+  `_downloads/ocr/e2e_ctc_ref.py` / `e2e_ctc_cmp.py`（逐样本 CTC 对拍）。
+- ⚠️ **对拍必须同 RNG 种子**：`org_tcl_rois` 在 `vp_len > tcl_bs` 时用 `np.random.permutation` **随机剔除**样本；
+  两侧 RNG 状态不同会选中不同子集（表面看 mean 差 3~4%，实为子集不同）。**同种子后中间量 maxdiff=0.0、逐样本损失完全相同。**
+
+#### 7.3 踩坑：`ctc_loss` 的 log_softmax（导致损失为负）
+- **现象**：torch 版 `ctc_loss` 得 **-852**，Paddle 得 **+80.47**；其余三分量完全一致。
+- **根因**：**`paddle.nn.functional.ctc_loss` 内部会做 `log_softmax`**（所以 PaddleOCR 直接喂原始 logits）；
+  **`torch.nn.functional.ctc_loss` 不做**，要求传入 log 概率。
+- **修复**：`F.log_softmax(f_tcl_char_ld, dim=2)` 后再进 `F.ctc_loss` → 立即逐位对齐。
+- 一般规律：跨框架移植 CTC 时务必确认「谁做 log_softmax」。另 `reduction="none"` 下 torch 返回**未归一**的值，
+  `"mean"` 会再除以 target 长度。
+
+#### 7.4 踩坑：`PGHeadLite` 漏 sigmoid（导致 `score_loss` 为负）
+- **现象**：训练日志 `score_loss = -0.8379`（Dice 损失出现负值）。
+- **根因**：`PGHeadLite.forward` 未对 `f_score` 过 sigmoid，而**框架 `PGHead` 与 PaddleOCR `PGHead` 都有 `F.sigmoid`**。
+  - `DiceLoss(f_score, gt)` 要求 `f_score` 是概率；否则 `pred*gt` 可负 → loss 越界。
+  - `PGNet_PostProcess` **直接用 `score_thresh` 阈值化 `f_score`**（内部不再 sigmoid），所以头必须输出概率。
+- **修复**：`f_score = torch.sigmoid(...)` → `score_loss` 恢复为 **0.9811**。
+- 注：现有 `weights/pgnet_lite_totaltext.pth` 是**未加 sigmoid 时训练的**（Paddle 原型同此），
+  权重仍可加载（sigmoid 无参数），但**要发挥最佳精度需带 sigmoid 重训**。
+
+#### 7.5 数据管线要点
+- `PGProcessTrain` 输出**固定形状**：`images(3,512,512)`、`tcl_maps(1,128,128)`、`tcl_label_maps(1,128,128)`、
+  `border_maps(5,128,128)`、`direction_maps(3,128,128)`、`training_masks(1,128,128)`、
+  `label_list(30,50,1)`、`pos_list(30,64,3)`、`pos_mask(30,64,1)`（监督图在 **stride 4**，128=512/4）。
+- `pos_list` 三列 = **(img_id, y, x)**；`col0` 是**批内图片序号**（`PGProcessTrain.img_id` 自增循环，
+  周期 = 配置的 `batch_size`）→ **`Train.loader.batch_size_per_card` 必须与 `PGProcessTrain.batch_size` 一致**，
+  否则 `org_tcl_rois` 的 `gpu_id` 越界（已加钳制兜底，但仍应对齐配置）。
+- collate **全部转 float32**（对齐 PaddleOCR 的 `paddle.to_tensor(np.stack(...))`）；`pos_list` 在 `ctcloss` 内再 cast int 做索引。
+- 训练增广/归一化（含 BGR→RGB 交换）**全部烘焙在 `PGProcessTrain` 内**；评估走
+  `E2ELabelEncodeTest → E2EResizeForTest(768) → NormalizeImage → ToCHWImage`（两条路径的归一化结果一致）。
+
+#### 7.6 验证记录
+- `import` 全通；框架 `build_model` → **1.221M / 4.66MB**，输出 `f_score/f_border/f_char/f_direction` 与官方一致。
+- 全链路自测（`_downloads/ocr/e2e_selftest.py`）：数据→前向→PGLoss（loss 280.65，梯度回传正常）→后处理→`E2EMetric` 全通。
+- **CLI 端到端**：`tkiln train -c configs/ocr/e2e/e2e_pgnet_lite_totaltext.yml -o Global.epoch_num=1 ...`
+  - `Loaded pretrained: weights/pgnet_lite_totaltext.pth (missing=0 unexpected=0)` ✓
+  - `Start training: type=e2e epochs=1 steps/epoch=12 device=cuda:0`；1 epoch 6.8s；评估 300 图 17.6 img/s。
+  - `Training finished. Best f_score_e2e = 0.00000`。
+
+#### 7.7 ⚠️ 仍未解决：E2EMetric 的 `f_score_e2e ≈ 0`（与官方一致，非本移植引入）
+- 框架评估：`total_num_gt=2543`、`total_num_det=2474`、`global_accumulative_recall=5.2`、`f_score≈0.0017`、`f_score_e2e=0`。
+- **检测框数量正常但几乎无一对能通过 `Deteval` 的匹配** → 怀疑 GT 多边形与预测多边形的**坐标系/尺度**不一致
+  （`E2EResizeForTest` 不动 `polys`，而预测经 `shape_list` 反映射；需核 `shape_list` 的口径）。
+- 该现象**在 PaddleOCR 自己的 `tools/eval.py` 上也一样**（报 `f_score_e2e=0`），此前用官方函数手工复算得 `f_score 0.785 / e2e 0.536`
+  （见 §6）——**说明是官方评估链路本身的问题**，本移植忠实复现了它。
+- 待办：① 核对 `shape_list`（应记录 `[src_h, src_w, ratio_h, ratio_w]`）；② 或改用「同一评估器评双方模型」的口径做验收。

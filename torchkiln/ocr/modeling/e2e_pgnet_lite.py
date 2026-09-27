@@ -162,8 +162,12 @@ class PGHeadLite(nn.Module):
         self.conv4 = cb(s2, 2, 3, "conv4")
 
     def forward(self, x, targets=None):
+        # f_score 必须过 sigmoid（对齐 PaddleOCR/框架的 PGHead）：
+        #   * DiceLoss 把 f_score 当概率用（否则 intersection 可能为负）；
+        #   * PGNet_PostProcess 直接用 score_thresh 阈值化 f_score。
         return {
-            "f_score": self.conv1(self.cs3(self.cs2(self.cs1(x)))),
+            "f_score": torch.sigmoid(
+                self.conv1(self.cs3(self.cs2(self.cs1(x))))),
             "f_border": self.conv2(self.cb3(self.cb2(self.cb1(x)))),
             "f_char": self.conv3(
                 self.cc5(self.cc4(self.cc3(self.cc2(self.cc1(x)))))),

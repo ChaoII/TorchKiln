@@ -19,6 +19,13 @@ def build_loss(config):
     except Exception:
         pass
 
+    try:
+        from .e2e_pg_loss import PGLoss
+
+        support_dict += ["PGLoss"]
+    except Exception:
+        pass
+
     config = dict(config)
     module_name = config.pop("name")
     assert module_name in support_dict, Exception(

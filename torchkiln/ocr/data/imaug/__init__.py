@@ -60,7 +60,10 @@ from .label_ops import (
     NRTRLabelEncode,
     SARLabelEncode,
     MultiLabelEncode,
+    E2ELabelEncodeTrain,
+    E2ELabelEncodeTest,
 )
+from .pg_process import *
 
 # from .east_process import *
 # from .sast_process import *

@@ -50,6 +50,45 @@ def rec_collate(batch):
     return out
 
 
+def e2e_train_collate(batch):
+    """PGNet 训练批: 9 个定形张量
+
+    ``[images, tcl_maps, tcl_label_maps, border_maps, direction_maps,
+    training_masks, label_list, pos_list, pos_mask]``
+    ``PGProcessTrain`` 产出固定形状（512x512 / max_text_nums / max_text_length），
+    因此可直接 stack。
+    """
+    batch = [s for s in batch if s is not None and len(s) > 0]
+    if len(batch) == 0:
+        return []
+    num_keys = len(batch[0])
+    out = []
+    for k in range(num_keys):
+        arrs = [np.asarray(s[k]) for s in batch]
+        # PaddleOCR 全用 paddle.to_tensor(np.stack(...))，即 float32 统一；这里保持一致
+        # （pos_list 在 ctcloss 内再 cast 成 int 做索引，与 Paddle 的 tcl_pos cast 等价）。
+        out.append(torch.from_numpy(np.stack(arrs, axis=0)).float())
+    return out
+
+
+def e2e_eval_collate(batch):
+    """PGNet 评估批: ``[image, shape, polys, texts, ignore_tags, img_id]``。
+
+    与 PaddleOCR 的 ``E2EMetric`` 期望的 ``batch`` 布局一致
+    （mode A 用 ``batch[2..4]``，mode B 用 ``batch[5]``）。
+    """
+    batch = [s for s in batch if s is not None and len(s) > 0]
+    if len(batch) == 0:
+        return []
+    image = torch.from_numpy(np.stack([s[0] for s in batch], axis=0)).float()
+    shape = torch.from_numpy(np.stack([s[1] for s in batch], axis=0)).float()
+    polys = [s[2] for s in batch]
+    texts = [s[3] for s in batch]
+    ignore_tags = [s[4] for s in batch]
+    img_id = [s[5] for s in batch] if len(batch[0]) > 5 else [0] * len(batch)
+    return [image, shape, polys, texts, ignore_tags, img_id]
+
+
 class OcrTask(TaskAdapter):
     """Text detection (``model_type: det``) / recognition (``rec``)."""
 
@@ -85,11 +124,15 @@ class OcrTask(TaskAdapter):
     def train_collate(self, batch):
         if self.name == "det":
             return det_train_collate(batch)
+        if self.name == "e2e":
+            return e2e_train_collate(batch)
         return rec_collate(batch)
 
     def eval_collate(self, batch):
         if self.name == "det":
             return det_eval_collate(batch)
+        if self.name == "e2e":
+            return e2e_eval_collate(batch)
         return rec_collate(batch)
 
     # ----------------------------------------------------------------- forward
@@ -104,6 +147,14 @@ class OcrTask(TaskAdapter):
         if self.name == "det":
             shape_list = batch[1].cpu().numpy()
             post_result = post_process(preds, shape_list)
+            metric(post_result, batch)
+        elif self.name == "e2e":
+            shape_list = batch[1].cpu().numpy()
+            preds_cpu = {
+                k: v.detach().cpu() if torch.is_tensor(v) else v
+                for k, v in preds.items()
+            }
+            post_result = post_process(preds_cpu, shape_list)
             metric(post_result, batch)
         else:
             preds_cpu = preds.detach().cpu()

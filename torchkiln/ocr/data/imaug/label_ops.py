@@ -303,3 +303,91 @@ class MultiLabelEncode(BaseRecLabelEncode):
             data_out["label_sar"] = gtc["label"]
         data_out["length"] = ctc["length"]
         return data_out
+
+
+class E2ELabelEncodeTrain(object):
+    """PGNet 训练用标签编码: JSON 标签 -> polys / texts / ignore_tags。
+
+    对齐 PaddleOCR ``ppocr/data/imaug/label_ops.py::E2ELabelEncodeTrain``。
+    随后由 ``PGProcessTrain`` 生成 TCL 监督图（tcl_maps / border_maps /
+    direction_maps）与字符点位置（pos_list / pos_mask）。
+    """
+
+    def __init__(self, **kwargs):
+        pass
+
+    def __call__(self, data):
+        import json
+
+        label = data["label"]
+        label = json.loads(label)
+        nBox = len(label)
+        boxes, txts, txt_tags = [], [], []
+        for bno in range(0, nBox):
+            box = label[bno]["points"]
+            txt = label[bno]["transcription"]
+            boxes.append(box)
+            txts.append(txt)
+            if txt in ["*", "###"]:
+                txt_tags.append(True)
+            else:
+                txt_tags.append(False)
+        boxes = np.array(boxes, dtype=np.float32)
+        txt_tags = np.array(txt_tags, dtype=np.bool_)
+
+        data["polys"] = boxes
+        data["texts"] = txts
+        data["ignore_tags"] = txt_tags
+        return data
+
+
+class E2ELabelEncodeTest(BaseRecLabelEncode):
+    """PGNet 评估用标签编码: 额外把文本编码成 id（供 ``E2EMetric`` 用）。
+
+    对齐 PaddleOCR ``ppocr/data/imaug/label_ops.py::E2ELabelEncodeTest``。
+    注意文本会被 ``lower()`` —— 与 PaddleOCR 一致。
+    """
+
+    def __init__(
+        self,
+        max_text_length,
+        character_dict_path=None,
+        use_space_char=False,
+        lower=False,
+        **kwargs
+    ):
+        super(E2ELabelEncodeTest, self).__init__(
+            max_text_length, character_dict_path, use_space_char, lower
+        )
+
+    def __call__(self, data):
+        import json
+
+        padnum = len(self.dict)
+        label = data["label"]
+        label = json.loads(label)
+        nBox = len(label)
+        boxes, txts, txt_tags = [], [], []
+        for bno in range(0, nBox):
+            box = label[bno]["points"]
+            txt = label[bno]["transcription"]
+            boxes.append(box)
+            txts.append(txt)
+            if txt in ["*", "###"]:
+                txt_tags.append(True)
+            else:
+                txt_tags.append(False)
+        boxes = np.array(boxes, dtype=np.float32)
+        txt_tags = np.array(txt_tags, dtype=np.bool_)
+        data["polys"] = boxes
+        data["ignore_tags"] = txt_tags
+        temp_texts = []
+        for text in txts:
+            text = text.lower()
+            text = self.encode(text)
+            if text is None:
+                return None
+            text = text + [padnum] * (self.max_text_len - len(text))
+            temp_texts.append(text)
+        data["texts"] = np.array(temp_texts)
+        return data

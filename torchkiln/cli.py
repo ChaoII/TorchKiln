@@ -66,12 +66,15 @@ TASK_ALIASES = {
     "ocr-det": "ocr_det",
     "ocr_rec": "ocr_rec",
     "ocr-rec": "ocr_rec",
+    "ocr_e2e": "ocr_e2e",
+    "ocr-e2e": "ocr_e2e",
+    "e2e": "ocr_e2e",
 }
 
 MODES = ("train", "val", "export", "predict", "check")
 
 # 配置里的 Architecture.task -> CLI 命名空间 / 模型族
-CONFIG_TASK_ALIAS = {"det": "ocr_det", "rec": "ocr_rec"}
+CONFIG_TASK_ALIAS = {"det": "ocr_det", "rec": "ocr_rec", "e2e": "ocr_e2e"}
 FAMILY_OF = {
     "detect": "yolo",
     "segment": "yolo",
@@ -158,7 +161,7 @@ def _config_task(argv):
         raw = str(arch.get("task") or arch.get("name") or "").lower()
         for key in ("plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
                     "lane_bev", "lane_seg", "lane_row", "pc_seg", "det3d", "detect", "segment", "obb", "pose",
-                    "classify", "semantic", "depth", "det", "rec", "cls"):
+                    "classify", "semantic", "depth", "e2e", "det", "rec", "cls"):
             if key in raw:
                 return key, cfg
         return (dirname if dirname in ("det", "rec", "cls", "pc") else None), cfg

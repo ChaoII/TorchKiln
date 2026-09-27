@@ -431,12 +431,20 @@ class SimpleDataSet(Dataset):
             file_name = substr[0]
             file_name = self._try_parse_filename_list(file_name)
             label = substr[1]
+            # PaddleOCR's PGDataSet parses an image id from the line for e2e
+            # evaluation (E2EMetric mode B uses it to locate GT mat files).
+            img_id = 0
+            if self.mode == "eval":
+                try:
+                    img_id = int(data_line.split(".")[0][7:])
+                except Exception:
+                    img_id = 0
             img_path = (
                 file_name
                 if file_name.startswith("http://") or file_name.startswith("https://")
                 else os.path.join(self.data_dir, file_name)
             )
-            data = {"img_path": img_path, "label": label}
+            data = {"img_path": img_path, "label": label, "img_id": img_id}
             if not _img_path_exists(img_path):
                 raise Exception("{} does not exist!".format(img_path))
             data["image"] = _load_image_bytes(img_path)
