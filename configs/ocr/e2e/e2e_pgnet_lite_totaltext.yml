@@ -74,6 +74,12 @@ Optimizer:
     name: Cosine
     learning_rate: 0.001
     warmup_epoch: 50
+    # ⚠️ 关键: 框架的 _GroupWarmupLR 是 ultralytics 语义——第 0 个 param_group(=bias 组)
+    # 会从 warmup_bias_lr(默认 0.1) 降到目标 LR。PaddleOCR **没有**这个机制(对全部参数
+    # 统一从 0 线性 warmup 到 base_lr)。本配置 warmup_epoch=50, 不设为 0 会让 bias
+    # 在 0.1 下跑 50 个 epoch(权重才 1e-4 量级) -> f_score 基线被抬高 ->
+    # 检出暴增(实测 det 2143->8476) 而 recall 下降(6.6->2.6)。
+    warmup_bias_lr: 0.0
   regularizer:
     name: L2
     factor: 0.0001
