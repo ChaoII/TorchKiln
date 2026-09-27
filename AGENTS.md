@@ -1665,3 +1665,26 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
   ② 同 input_ids+ef_s 逐层前向 vs 官方（+**fp64 判定法**）→ ③ 同输入 loss/梯度 →
   ④ 推理指标（TTS 口径：波形/频谱一致性 或 pred_dur 对齐）。
   ⚠️ ef_s 是 1×512 的 style 向量（s = ref_s[:,128:] 给 predictor、ef_s[:,:128] 给 decoder）—— 需固定随机 ef_s 对拍。
+
+###### ⚠️ 方案 A（拉官方训练脚本）**不可行**：hexgrad 从未开源 kokoro 训练代码
+- **hexgrad/kokoro 仓库 108 文件全清单**（kokoro_repo_probe.py / 	ree.json，	runcated=False）：
+  `kokoro/` **7 个文件（= PyPI 包，只有推理）** + `demo/`(7) + `examples/`(4) +
+  `kokoro.js/`(83, JS 移植) + `voices/*.bin` + `tests/` + README/pyproject/uv.lock
+  ⇒ **无 	rain.py / loss.py / dataset / optimizer**，顶层只有 README.md。
+  仓库 29122 KB 主要被 LFS 权重/样本占用，**代码本体极小**。
+- **hexgrad 名下只有 2 个仓库**：`hexgrad/kokoro`（推理）+ `hexgrad/misaki`（G2P）→ **官方确无训练代码**。
+- **GitHub 代码搜索需要认证**（`401 Unauthorized`）→ 本机无 token，搜不了 code search。
+- **第三方训练代码候选（仓库搜索结果）**：
+  | 仓库 | ★ | 说明 |
+  |---|---|---|
+  | **`jonirajala/kokoro_training`** | **46** | "Training code for kokoro tts model" ← 最直接、最高星 |
+  | `BovineOverlord/Derpy-Turtle-The-Kokoro-Trainer` | 14 | Windows GUI 构建 Kokoro |
+  | `gushilabs/train-kokoro-encoder-styletts2` | 4 | Kokoro 基于 StyleTTS2，训 encoder |
+  | `sammy4321/Kokoro-Indic-Fine-Tuning` | 2 | 微调（非从零） |
+- **⚠️ 这是第三方代码，不是官方**：质量、完整性、许可证、与 `kokoro-v1_0.pth` 的架构是否一致**都未知**，
+  采纳前必须核对（尤其：它的 loss 是否覆盖 iSTFTNet/PL-BERT/ProsodyPredictor 的全部分支）。
+- **⇒ 方案 A 实际退化为二选一**：
+  - **A'**：用第三方 `jonirajala/kokoro_training`（★46）作训练蓝本 —— 快，但需先做可信度/架构一致性核对；
+  - **B**：自写训练管线（loss + 数据 + 任务适配），贴合 `torchkiln` 架构但工作量大，且**必须自己定 loss 组合**
+    （官方未公开，无从对齐 ⇒ ③ 这条无法再"对照官方"，只能自洽）。
+- **注**：kokoro 的 **① 已 PASS**；**②③④ 仍可做**（基准=官方 **推理** 包，它存在），**不受训练代码缺失影响**。
