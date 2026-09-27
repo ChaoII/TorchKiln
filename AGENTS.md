@@ -1306,3 +1306,19 @@ n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + co
 - **脚本**：sp10a/b_ecapa_fwd.py(②) sp12a/b_ecapa_loss.py(③，loss 用 MSE(emb, 固定 target)，
   因为说话人模型输出是 embedding 而非分类 logits) sp13_grad_abs.py(看梯度绝对量级，定位"分母过小虚高")。
 - **下一步**：④ 端到端（同音频 → fbank → embedding，比 maxdiff + 余弦），再做 KWS MDTC。
+
+#### ECAPA ④ PASS — 四条全过（说话人 ECAPA-TDNN 完成）
+- 特征: PaddleSpeech 的 fbank 入口是 **`paddlespeech.audio.compliance.librosa.melspectrogram`**
+  （不是 kaldi fbank; 全 vector 目录无 compute_fbank）。参数: `sr=16000, window_size=400`（**docstring 明确 window_size 同时是 FFT size 与 window length**，故 n_fft=400 而非 512）、
+  `hop_length=160, n_mels=80, fmin=50(默认), fmax=None(=8000), window=hann, center=True, pad_mode=reflect`,
+  `power=2.0, to_db=True, ref=1.0, amin=1e-10, top_db=None`。
+- **torch 复刻**: `torchaudio.MelSpectrogram(sr=16000,n_fft=400,win_length=400,hop_length=160,window_fn=hann,center=True,pad_mode=reflect,power=2.0,n_mels=80,f_min=50,f_max=8000,norm=slaney,mel_scale=slaney)` + `10*log10(clamp(mel,1e-10))`（ref=1 → 无减项；top_db=None → 无 clamp）→ **特征 rel 4.73e-06**（maxdiff 3.97e-04）。
+- **embedding**: 相对 maxdiff **0.001010**、**余弦 0.9999996424**、norm 123.0696 vs 123.0715 → **PASS**。
+- ⚠️ **④ 判据必须按输出量纲设**：我最初照搬 PANNs 的 `绝对 maxdiff ≤ 0.02`（那是 probs 0~1 的口径），对
+  norm≈123 / std≈8.9 的 192 维 embedding 不适用（实测 0.0248 只占 std 的 0.28%）。
+  **正确判据 = 余弦(说话人验证的真实使用口径) + 相对 maxdiff**；其 1.01e-03 与 ② 的 fp32 `fc` 1.08e-03 同源。
+- **加载 `librosa.py` 的方法**（跨环境坑）：它 `from ..utils import depth_convert, ParameterError`，
+  而真包链 `paddlespeech.audio.__init__` 会拉到缺失的 resampy →
+  **桩 `paddlespeech.audio`（设 `__path__=[]`）+ `paddlespeech.audio.utils`（注入 depth_convert/ParameterError），
+  再 exec 源码且设 `mod.__package__='paddlespeech.audio.compliance'`** 才能让相对导入解析。
+- 脚本: `sp14a_ecapa_e2e.py`(paddle) / `sp14b_ecapa_e2e.py`(torch)。
