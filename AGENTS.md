@@ -1646,3 +1646,22 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
   （⚠️ 若 	rack_running_stats 也有差异，missing 里会多出 unning_mean/var；实测 missing 只有 weight/bias ⇒ 只差 ffine。）
 - **验证口径**：修后 predictor/decoder 应达 missing=0 / unexpected=0，① 即 PASS（ert/bert_encoder/text_encoder 已 PASS）。
 - **对齐基准**（与前三个模型不同）：kokoro 是纯 torch ⇒ **②③④ 与官方 kokoro 包逐层对拍**（+fp64 判定法）。
+
+###### ✅ kokoro ① PASS（修法已验证）
+- **验证脚本 _downloads/kokoro_fix_test.py**：把模型里所有 InstanceNorm1d 重建成 **ffine=False**（模拟产权重的旧版口径）后加载：
+  | 子模块 | 修前 missing | **修后 missing** | unexpected |
+  |---|---|---|---|
+  | ert / ert_encoder / 	ext_encoder | 0 | **0** | 0 |
+  | predictor | 24 | **0** | 0 |
+  | decoder | 116 | **0** | 0 |
+  | **合计** | 140 | **0** | **0** |
+  - **重建的 InstanceNorm1d 数量 = 70**。
+- **① 的两条要点（移植到 	orchkiln 时照做）**：
+  1. **键处理**：k[7:] 去掉 module. 前缀（实测 unexpected=0，**不需要** .fc.→.norm. 改名 —— 那是我上一轮的误判）。
+  2. **模型构造**：AdaIN1d 内的 InstanceNorm1d 必须 **ffine=False**（旧版权重无 weight/bias）。
+- **踩过的桩包坑**：load_kokoro() 第二次调用时 importlib.find_spec 抛 **ValueError: kokoro.__spec__ is None**
+  （桩包把 __spec__ 置 None 后，ind_spec **抛异常而非返回 None**）→ 用 **	ry/except ValueError + 模块级 _ROOT 缓存** 解决。
+- **下一步（kokoro ②③④）**：对齐基准是**官方 kokoro 包**（纯 torch，无跨框架）：
+  ② 同 input_ids+ef_s 逐层前向 vs 官方（+**fp64 判定法**）→ ③ 同输入 loss/梯度 →
+  ④ 推理指标（TTS 口径：波形/频谱一致性 或 pred_dur 对齐）。
+  ⚠️ ef_s 是 1×512 的 style 向量（s = ref_s[:,128:] 给 predictor、ef_s[:,:128] 给 decoder）—— 需固定随机 ef_s 对拍。
