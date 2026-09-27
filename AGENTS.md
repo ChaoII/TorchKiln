@@ -1136,3 +1136,27 @@
     GPU 0.135s/step < 数据 0.678s/step → 4 worker 后数据 ≈0.17s，与 GPU 基本平衡
 - ⚠️ 注意：剖析脚本必须 `num_workers=0`，否则 Windows spawn 会重跑主模块导致递归。
 - 训练命令：`python -m torchkiln train -c configs/ocr/e2e/e2e_pgnet_lite_totaltext.yml -o Global.eval_epoch_step=10`
+
+### 13. 定期诊断脚本（监控根因，而非门槛后的 recall）+ 首次基线
+- **背景**：`f_score_e2e` 长期为 0，且 `global_accumulative_recall` 在极低区间(20/2543)
+  震荡 11↔23，**是门槛后的二值量、噪声极大**，不适合当监控信号。
+- **脚本 `_downloads/ocr/e2e_watch.py`**（后台每 120s 跑一次，输出 `_downloads/ocr/e2e_watch.csv`）：
+  固定前 40 张 val 图，加载 `best_accuracy.pth`(退化为 `latest.pth`)，算：
+  | 字段 | 含义 |
+  |---|---|
+  | `n_det` | 检出框数 |
+  | `tr_med` / `tr_p90` | 最佳匹配的 `tr = 交集/GT面积` 中位数 / 90 分位（Deteval 门槛 **0.7**） |
+  | `tr_pass` | `tr>=0.7` 的比例 ← 能否通过官方匹配的直接指标 |
+  | **`aratio_med`** | **预测框面积 / 匹配 GT 面积（中位数）← §9「框太窄」的直接测量** |
+  | `recall`/`f_score`/`f_score_e2e` | 用官方 `get_socre_A`+`combine_results(rec_flag=True)` 复算（与训练日志同口径） |
+- **首次基线（epoch ~18 的 best 权重）**：
+  ```
+  n_det=193  tr_med=0.423  tr_p90=0.662  tr_pass=0.074  aratio=0.518
+  recall=0.0515  f_score=0.0550  f_score_e2e=0.0081
+  ```
+  → **`aratio=0.518`：预测框面积只有 GT 的 52%**（框只有一半宽），因此 `tr_med` 卡在 0.423
+  远低于 0.7 门槛，`tr_pass` 仅 7.4% —— 与 §9 的 shapely 精算完全吻合。
+- **判据（比 recall 灵敏）**：训练若学好 `f_border`，`aratio_med` 应从 0.518 升向 ≥0.7，
+  随后 `tr_pass↑` → `recall` 才有意义。若 `aratio` 长期不动 → 说明 `border_loss` 没起作用，
+  需查 loss 权重/`f_border` 分支，而不是继续盲跑。
+- 注意：`_downloads/` 不入库；脚本靠 `sys.path` 注入仓库根 + ptocr 环境运行。
