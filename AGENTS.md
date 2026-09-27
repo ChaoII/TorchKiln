@@ -1198,3 +1198,58 @@ PaddleOCR 官方 `PGHead` 有 sigmoid 是因为它**从零一起训练**；在**
 `e2e_loss_break.py` 先 CUDA OOM，随后**训练与 watchdog 两个进程同时被杀**（日志无报错、
 GPU 归零，13:43:40 中断）。疑为 OOM 触发驱动重置（与本机早前
 `CUDNN_STATUS_EXECUTION_FAILED_CUDART` 同类）。
+
+## 音频 SOTA 移植（PaddleSpeech → TorchKiln，2026-09-27 起）
+### 依赖/资源盘点（关键结论，勿重复踩）
+- **PaddleSpeech 源码不需要克隆 GitHub**（本机 GitHub 仅 0.03 MB/s）：
+  **PyPI `paddlespeech==1.5.0` wheel 只有 1.7 MB，却含 127 个模型 `.py`** + `resource/pretrained_models.py`（**152 个 bcebos 权重 URL**）+ 全部 `*.yml` 配置。
+  装法：`pip install --no-deps paddlespeech==1.5.0`（**绝不能带依赖**，会拖入 paddlepaddle）。
+- **权重下载速度**：`bj.bcebos.com` / `paddlespeech.cdn.bcebos.com` 实测 **7~105 MB/s**（GitHub 0.03 MB/s 差 3500×）。
+- **环境分工**：`paddlex` 有 paddle(3.1.1)，`ptocr` 有 torch(2.12.1)+torchaudio(2.11.0) → **跨框架对拍要拆成 Step-A(paddlex)/Step-B(ptocr) 两个脚本，用 npz 交接**。
+- **torchaudio 2.11.0 装在 torch 2.12.1 下可用**（`pip install --no-deps`）：`kaldi.fbank`/`rnnt_loss`/`MelSpectrogram` 全部正常 —— 不必冒险升级 torch。
+
+### ❌ 做不了的（源码或权重缺失，别浪费时间）
+| 项 | 状态 |
+|---|---|
+| **Paraformer** | 代码就不在 wheel 里（0 条） |
+| **VITS / JETS**（TTS SOTA） | 有代码但**权重 0 条（未发布）** |
+| **icefall ASR 移植** | **k2 / kaldifeat 在 Windows 无官方 wheel**（PyPI 那份是 `cpython-39-x86_64-linux-gnu.so` + 强制 `torch==1.13.1`；k2 Release 只发 manylinux/macOS）→ icefall 的 pruned RNNT loss/beam search 跑不了；用户已决定**不装 WSL2/Docker** |
+| icefall 仓库符号链接 | `egs/**` 的 `zipformer.py` 等是**符号链接被落成 44~76 字节文本**（真源码在 `egs/librispeech/ASR/pruned_transducer_stateless7/`，76KB）；共 81 个 0 字节 `__init__.py` |
+
+### ✅ 已完成：PANNs CNN14（语音分类）—— 四条对齐全过
+**源码**：`paddlespeech/cls/models/panns/panns.py`（310 行，`CNN14/CNN10/CNN6` + `ConvBlock/ConvBlock5x5`）
+**权重**：`https://bj.bcebos.com/paddleaudio/models/panns_cnn14.pdparams`（**491.3 MB @105 MB/s**，68 键 / 80.77M 参数）
+配置 `panns.yaml`：`sample_rate 32000, n_fft 1024, hop_length 320, window_length 1024, f_min 50, f_max 14000, n_mels 64`
+
+| 条目 | 结果 | 数据 |
+|---|---|---|
+| ① 权重加载 | **PASS** | `missing=0 / unexpected=0`；**转换规则只有 2 条**：`_mean/_variance→running_mean/var` + `fc1`/`fc_audioset` 两个 Linear **`.T`**（Conv 4D 同形状不需转） |
+| ② 逐层前向 | **PASS** | **fp64 rel 3.55e-11**（`bn0` 4.04e-16 = 精度极限）；fp32 top5 一致、输出 maxdiff 3.9e-05 |
+| ③ 单步 loss/梯度 | **PASS** | **fp64 loss 6.46e-12**、全 **42/42** 个参数梯度 **2.72e-11** |
+| ④ 同权重推理指标 | **PASS** | probs 最大差 **0.000034**（阈值 0.02）、**top5 完全一致**、**特征 rel 3.79e-05** |
+
+**产物**：`torchkiln/audio/panns.py`、`torchkiln/audio/__init__.py`、`weights/panns_cnn14.pth`(308 MB)
+脚本：`_downloads/sp3a_dump/sp3b_convert/sp4a/sp4b/sp5a/sp5b/sp6a/sp6b_*.py`
+
+#### ⭐ 方法论：用 fp64 判定「fp32 舍入」还是「真 bug」（强烈推荐复用）
+fp32 对拍时 ②rel 只有 **6.8e-4**（我的 1e-4 阈值判 FAIL）。**把两侧都切 fp64 再对拍**：
+- **fp64 rel → 3.55e-11** ⇒ **证明是 fp32 舍入累积，移植正确**；若 fp64 仍是 1e-4 才是真 bug。
+- 用法：`paddle.set_default_dtype("float64")` + 权重 `v.astype("float64")`；torch 侧 `model.double()`；阈值 1e-10。
+- **fp32 下误差随深度放大**：block1 1e-7 → block3 1.9e-4 → out 3.6e-4（正常）；fp32 梯度可放大到 2.3e-2。
+
+#### 对拍脚本的两个易错点（都踩过）
+1. **Paddle `paddle.Tensor.max(axis)` 只返回值**，torch `x.max(dim)` 返回 `(values,idx)` → 用 **`torch.amax(x, dim)`**。
+2. **Linear 梯度与权重同布局**：Paddle `[in,out]` vs torch `[out,in]` → **对比前对 Paddle 梯度 `.T`**（否则方阵 `fc1` rel=1.0、`fc_audioset` 直接形状不符；我第一版把 42 个参数误判成 41 个）。
+
+#### 官方脚本的问题（同 tools/eval.py 一例，勿信官方"跑不起来"）
+- PaddleSpeech `cls/exps/panns/predict.py` 写 `LogMelSpectrogram(**feat_conf)`，但 `panns.yaml` 用 `sample_rate/window_length`，
+  而 **paddle 3.1.1 的签名是 `sr/win_length`** → **官方 predict.py 直接 TypeError**。正确映射：
+  `LogMelSpectrogram(sr=32000, n_fft=1024, hop_length=320, win_length=1024, window='hann', f_min=50, f_max=14000, n_mels=64)`。
+- `paddlespeech.cls` 的 import 链会拉到缺失的 `resampy` → **桩掉** `paddlespeech{,.audio,.audio.utils,.audio.utils.download,.utils,.utils.env}` 这几个模块，
+  再 `exec(源码)` 动态加载 `CNN14`（`panns.py` 里那两个 import 只服务 `pretrained=True` 在线下载，本流程用本地权重）。
+
+#### ④ 的验收口径（可复用到后面所有音频模型）
+不追求外部 SOTA 榜单数字，而是**同权重端到端**：真实音频 → 特征 → 模型 → **`probs 最大差 ≤0.02` + top-5 集合一致**。
+实测 `probs 差 0.000034`、top5 全一致；**torchaudio `MelSpectrogram` 复刻 Paddle 口径**：
+`power=2.0, norm='slaney', mel_scale='slaney', center=True, pad_mode='reflect', window_fn=hann`，log 用 `10*log10(clamp(mel,1e-10))`（`ref=1.0, amin=1e-10, top_db=None`）。
+特征 maxdiff 3.34e-03 / rel 3.79e-05。样例音频 `paddlespeech.cdn.bcebos.com/PaddleAudio/en.wav`（16k → 线性重采样 32k）。
