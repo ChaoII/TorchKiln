@@ -1017,3 +1017,32 @@
 - 回归：`smoke_all` 中另 5 个 FAIL（yolo11-det/lane-row/lane-seg/obb/pose）是**宿主内存耗尽**
   （"Unable to allocate 4.69 MiB" / "LLVM ERROR: out of memory"），单进程连跑 42 个配置所致，**与本次改动无关**
   （GPU 空闲、无残留进程，属已知的 smoke_all 资源问题）。
+
+### 9. `f_score_e2e ≈ 0` 的精确定位（2026-09-27，已查清性质）
+**先排除的**（均不是原因）：
+1. **评估循环批相关性**：`e2e_eval_collate` 逐图打包后，逐图 vs 批量的检出数**完全一致 `[2,3,4,0]`**
+   （脚本 `_downloads/ocr/e2e_batch_probe.py`）。之前看到的 `total_num_det` 波动（2649/1836/8177）来自
+   **训练随机性**（只训 12 步、`warmup_epoch=50` 使 lr 极小、模型近乎未训练），**不是评估管线问题**。
+2. **归一化**：框架 `NormalizeImage`/`ToCHWImage` 与 PaddleOCR **逐行一致**（无额外通道交换）。
+3. **坐标系**：`E2EResizeForTest` 的 `shape = [src_h, src_w, ratio_h, ratio_w]` 正确
+   （实测 224/412/1.714/1.553 ↔ 缩放后 384x640）；后处理 `x/[ratio_w, ratio_h]` 也与 PaddleOCR 一致。
+   GT 与预测**都在原图坐标**且**实际重叠**（pred#1 `x158-270` ↔ GT#2 `x152-273`）。
+
+**真正原因（`_downloads/ocr/e2e_tr_tp_probe.py`，用 shapely 精确算）**：
+
+| 预测 | 命中 GT | **tr = 交/GT 面积** | **tp = 交/预测面积** | Deteval 判定 |
+|---|---|---|---|---|
+| pred[0] | GT[0] | **0.464**（<0.7） | 0.878 | REJECT |
+| pred[1] | GT[1] | **0.099**（<0.7） | 0.923 | REJECT |
+
+- **tp 高（0.88/0.92）** → 预测框**准、覆盖了 GT**；但**预测多边形比 GT 窄** → `tr` 过不了 `0.7` 门槛。
+- 外扩检验：`buffer` 2/4/6/8 px → tr 合计 0.69/0.80/0.91/1.01 → **只需 ~4-6px 外扩即可匹配**。
+- ⇒ **结论：不是移植 bug，是「文本骨架（text kernel）预测得偏窄 + 官方硬门槛 tr=0.7」共同作用**。
+  这解释了为什么 **PaddleOCR 自己的 `tools/eval.py` 也报 0**（AGENTS §6/§7.7 已记）。
+- 本原型是「结构改过 + 150 epoch + 无预训练」；官方 r50（600 epoch / 184MB）预测的框更完整，故能过门槛。
+
+**验收建议（后续）**：
+- 要复现「官方口径 0.536」的可比结论，应**用同一个评估器评双方模型**（AGENTS 的通用验收第 4 条），
+  而不是直接看 `E2EMetric`（它对窄框过严）。
+- 或确认 Paddle 侧手工复算脚本 `_downloads/ocr/diag_combine.py` 的入口（它是怎么绕过 tr=0.7 的），再对齐口径。
+- 本移植的**训练正确性已由 loss 逐位对齐证明**（§7.2），与该评估门槛问题无关。
