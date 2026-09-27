@@ -1804,3 +1804,26 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
 - **② 最终状态**：**全链 13+ 层逐位一致（0.000e+00）** ⇒ **PASS**。
 - **下一步**：**③ loss/梯度**（`KModel.forward_with_tokens` 带 `@torch.no_grad` —— 需另建可微路径，
   或对 TTS 采用"重建损失 + 时长 + F0/能量"的多任务口径）→ **④** `pred_dur` 对齐 + 波形/频谱一致性。
+
+###### ✅ kokoro ③ PASS（模块级梯度通路，两侧逐位一致）+ 整链反传的原生限制
+- **背景**：**官方无 loss**（训练代码未开源）⇒ ③ 用**自定损失**，验证的是「移植后梯度通路完整 + 两侧一致」，而非 loss 数值对齐。
+- **⭐ 整链一次反传会触发原生段错误**：退出码 **-1073741819 =  xC0000005 = ACCESS_VIOLATION**，
+  **无 Python traceback**（不是异常，是原生崩溃）。排查结论：**逐个模块单独 forward+backward 全部正常**（退出码 0），
+  只有「整链一次反传」崩溃 ⇒ 疑似 `Generator.forward` 内的 `with torch.no_grad()`（`istftnet.py` L306）
+  与 `custom_stft` **复数 iSTFT** 组合、在整链 autograd 图下触发原生层 bug。
+  **规避**：训练时**按模块分段反传**（或改走官方无 iSTFT 的分支）。
+- **分段对拍结果**（`_downloads/kokoro_loss3.py`，official vs torchkiln，同权重同输入）：
+  | 分段 | loss | 梯度数 | 最大相对误差 |
+  |---|---|---|---|
+  | `bert` | 0.28293204 / 0.28293204 | 23 | **0.000e+00** |
+  | `bert_encoder` | 0.79446465 / 0.79446465 | 25 | **0.000e+00** |
+  | `text_encoder` | 0.15265706 / 0.15265706 | 24 | **0.000e+00** |
+  | `predictor(duration)` | 19.98767853 / 19.98767853 | 65 | **0.000e+00** |
+  | `decoder`（含 Generator） | 29226.50976562 / 29226.50976562 | **373** | **0.000e+00** |
+  ⇒ **5 段 loss + 510 个参数梯度全部逐位一致** ⇒ **梯度通路与官方等价**。
+- **移植要点（本轮新增）**：
+  - `CustomAlbert` **继承 `AlbertModel` 本体**（不是 `.bert` 属性）→ 调 `km.bert(...)` 而非 `km.bert.bert(...)`。
+  - 逐模块反传可 zero_grad(set_to_none=True) + 只取该模块的 `p.grad`。
+- **逐项排查记录（都已单独验证 OK，退出码 0）**：`bert` / `bert_encoder` / `text_encoder` /
+  `predictor.lstm+duration_proj` / `predictor.F0Ntrain` / `decoder(含 Generator, 373/375 参数有梯度)`。
+- **③ 判定**：**模块级梯度通路 PASS**（判据：两侧 loss 与梯度逐位一致）；**整链反传限制已如实记录**。
