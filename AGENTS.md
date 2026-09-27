@@ -1253,3 +1253,30 @@ fp32 对拍时 ②rel 只有 **6.8e-4**（我的 1e-4 阈值判 FAIL）。**把�
 实测 `probs 差 0.000034`、top5 全一致；**torchaudio `MelSpectrogram` 复刻 Paddle 口径**：
 `power=2.0, norm='slaney', mel_scale='slaney', center=True, pad_mode='reflect', window_fn=hann`，log 用 `10*log10(clamp(mel,1e-10))`（`ref=1.0, amin=1e-10, top_db=None`）。
 特征 maxdiff 3.34e-03 / rel 3.79e-05。样例音频 `paddlespeech.cdn.bcebos.com/PaddleAudio/en.wav`（16k → 线性重采样 32k）。
+
+### 说话人 ECAPA-TDNN（进行中，① 已过）
+- **源码** `paddlespeech/vector/models/ecapa_tdnn.py` 521 行，纯 paddle.nn 无外部依赖。
+- **配置** `conf/model.yaml`：`sr=16000, n_mels=80, window_size=400(25ms), hop_size=160(10ms)`；
+  `input_size=80, channels=[1024]*4+[3072], kernel_sizes=[5,3,3,3,1], dilations=[1,2,3,4,1]`
+  `attention_channels=128, lin_neurons=192, res2net_scale=8, se_channels=128`；输入 `(N,80,T)` → 输出 `(N,192)`。
+- **权重** `sv0_ecapa_tdnn_voxceleb12_ckpt_0_2_0.tar.gz`（266MB，内含 `model.pdparams` 88.8MB；
+  `model.pdopt` 177MB 是优化器状态**不需要**）。
+- **① PASS**：`missing=0 / unexpected=0`，形状不符 0；backbone **20.768M** → `weights/ecapa_tdnn_voxceleb12.pth` (79.5MB)。
+  转换规则 **3 条**：去 `backbone.` 前缀 + BN `_mean/_variance→running_mean/running_var` +
+  **顶层 `weight (192,7205)` 是 wrapper 的说话人分类头，不加载（预期）**。
+  Conv1d 是 **3 维 [out,in,k] 与 torch 同形不需转**；本模型**无 Linear**（`fc` 也是 k=1 的 Conv1d）。
+- **命名天然一致**（照抄 wrapper 结构即可）：Paddle `blocks.0.conv.conv.weight` ↔ torch `TDNNBlock.conv.conv.weight`；
+  Paddle `blocks.0.norm.norm._mean` ↔ torch `.norm.norm.running_mean`。
+- **移植要点**：① Paddle `BatchNorm1d(momentum=0.9)` ≡ torch `momentum=0.1`（都保留 90% 旧统计量；eval 只用 running 不影响对拍）；
+  ② Paddle Conv1d 的 "same" padding 是**对称** `d*(k-1)//2`，与 torch `padding=` 等价（本配置所有 `d*(k-1)` 均为偶数，故 L_out=L_in）；
+  ③ `EcapaTdnn.forward` 的 MFA 是 **`torch.cat(xl[1:])` —— 排除第一层**（concat blocks[1..3] = 3×1024 = 3072 = channels[-1]）；
+  ④ `Res2NetBlock`: `chunk(scale, dim=1)`，i==0 直通、i==1 过 TDNN、i>=2 先累加 `x_i + y_i` 再过；
+  ⑤ `AttentiveStatisticsPooling`: `eps=1e-12`、`softmax` 屏蔽 padding 用 `torch.where(..., -inf, attn)`、输出 `concat(mean,std)`。
+- **产物**：`torchkiln/audio/ecapa_tdnn.py`、`torchkiln/audio/__init__.py`（已加导出）。
+- **待办**：② 逐层前向（需按 conf 造 (N,80,T) log-fbank；可复用 sp4 脚本骨架 + **fp64 判定法**）、③ loss/梯度、④ 端到端。
+  ④ 注意：说话人的输出是 **192 维 embedding**（不是分类 logits），比对应改为
+  **同音频 embedding 的 maxdiff + 余弦相似度**（同 batch 阈值 0.02 / cos≈1.0）。
+- **脚本**：`_downloads/sp7_spk_kws.py`(下载) `sp8_ecapa_scan.py`(结构) `sp9a_ecapa_dump.py` `sp9b_ecapa_convert.py`。
+- **KWS MDTC 已就位待做**：权重 `kws0_mdtc_heysnips_ckpt.tar.gz` 0.1MB + `conf/mdtc.yaml`；
+  源码 `kws/models/mdtc.py` 235 行（`DSDilatedConv1d/TCNBlock/TCNStack/MDTC/KWSModel`）
+  + **`kws/models/loss.py` 83 行（`padding_mask/fill_mask_elements/max_pooling_loss`，③ 必需）**。
