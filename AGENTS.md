@@ -1081,3 +1081,31 @@
   实测 Paddle 侧 `f_score` 范围 `0~403`（raw logits），阈值化用 `>0.5`；torch 侧加了 sigmoid 后
   `sigmoid(raw)>0.5 ⟺ raw>0`，**预测几乎不变**（`UNDO_SIG=1` 反算 logit 后检出数/坐标一致）→ 两侧口径等价，均可。
 - `result.txt` 时间戳 09-26 21:09（与训练同晚），但内容与该 checkpoint 不符 —— **说明该文件是别的运行留下的，勿再引用**。
+
+### 11. 显存约束取消 + GPU 利用率（2026-09-27，用户决定）
+- **AGENTS 原「batch 最多占显存 1/4(≤4GB)」的约束已由用户取消** —— 改为**把 GPU 拉满、利用率最大**，
+  明确不接受训练时 GPU 占用/利用率很低。
+  （下方"显存 / batchsize 约束"一节仍保留在原文，但 e2e 训练不受其 1/4 限制。）
+- **e2e 训练的 batch 选择经验（关键，别再走弯路）**：
+  | batch | allocated | step 时长 | GPU 利用率 | 结论 |
+  |---|---|---|---|---|
+  | 14 | 3.47 GB | ~0.57s | 99%（单点采样） | 可用 |
+  | 32 | 7.32 GB | ~1.5s | — | 内存中等 |
+  | 48 | 11.14 GB | **16.1s** | **均值 ~8%，掉到 0% 共 4 次** | ❌ 数据管线跟不上 |
+  | 64 | 15.75 GB | — | — | 逼近 16 GiB 上限，评估易 OOM |
+  | **16** | 5.9 GB | ~2.4s | **均值 98.6%，最低 95%** | ✅ **当前配置** |
+- **根因**：`PGProcessTrain`（TCL 点采集/几何）是**纯 CPU 单样本**开销，
+  batch 越大单步等待数据的时间占比越高 → GPU 反而空转。
+  **batch=48 时 step 内 GPU 只有 ~10% 时间在算**；batch=16 时数据管线刚好喂得饱。
+- **当前配置 `configs/ocr/e2e/e2e_pgnet_lite_totaltext.yml`**：
+  `Train.loader.batch_size_per_card: 16` + `num_workers: 4` + `prefetch_factor: 4`
+  ⚠️ **必须同步改 `PGProcessTrain.batch_size: 16`**（它维护 `img_id` 自增周期 = batch，
+  与 loader batch 不一致会让 `org_tcl_rois` 的 `gpu_id` 越界/钳制，虽然有兜底但会错配）。
+  实测：78 步/epoch（1255 图 / 16）、显存 5938 MiB、**利用率 98.6%（最低 95%）**。
+- **`num_workers=8` 在大 batch 下曾导致宿主内存峰值崩溃**：
+  报 `Unable to allocate 1.00 MiB for an array with shape (512,512)`（来自 `PGProcessTrain.fit_and_gather_tcl_points_v3`）。
+  4 worker + batch 16 稳定。
+- **`accumulate` 语义**：仅当 `Optimizer.nbs` 存在时才 `accumulate = round(nbs/batch)`；本配置无 `nbs` → **`accumulate=1`**，
+  每个 batch 一次优化器更新（无累积开销）。
+- 训练命令：`python -m torchkiln train -c configs/ocr/e2e/e2e_pgnet_lite_totaltext.yml -o Global.eval_epoch_step=5`
+  （每 5 epoch 评估一次；`eval_epoch_step` 默认 1 = 每 epoch 评，会吃掉约 2.5h）
