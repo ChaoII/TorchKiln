@@ -1754,3 +1754,33 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
   `
   **81.763 M 与最初盘点的权重总量完全一致** ✓
 - **下一步**：② 同输入（固定 `input_ids` + `ref_s(1×512)` + `speed=1`）逐层前向 vs **官方 kokoro 包**（+fp64 判定法）→ ③（注意 `forward_with_tokens` 带 `@torch.no_grad`，需另建可微路径）→ ④（`pred_dur` 对齐 + 波形/频谱一致性）。
+
+###### kokoro ② 结果：**前 13 层逐位一致（maxdiff = 0.000e+00），唯一差异在 Generator —— 因其内部有 3 处随机噪声**
+- **对拍脚本**：`_downloads/kokoro_fwd_cmp.py`（全链）+ `kokoro_dec2.py`（decoder 内部细分）。
+- **全链结果（torchkiln 移植版 vs 官方 pip 包，同 config/同权重/同固定输入）**：
+  | 层 | 形状 | maxdiff |
+  |---|---|---|
+  | `bert_dur` / `d_en` / `d` / `lstm_x` / `duration_raw` | 768/512/640/512/50 | **0.000e+00** |
+  | `pred_dur` | (14,) | **0.000e+00（完全一致）** |
+  | `pred_aln_trg` / `en` / `F0_pred` / `N_pred` / `t_en` / `asr` | 对齐矩阵/F0/能量 | **0.000e+00** |
+  | **`audio`** | (358800,) | rel **0.517** ❌ |
+- **decoder 内部细分（`kokoro_dec2.py`）**：`F0_conv` / `N_conv` / `encode_out` / `asr_res` /
+  `decode[0]`~`decode[3]` **全部 `maxdiff = 0.000e+00`** ⇒ **差异精确定位到 `Generator`**。
+  - 同时再次确认修法对比：**官方 decoder 加载 `missing=116`｜torchkiln `missing=0`**，
+    但**前 13 层仍逐位一致** ⇒ **`affine=False` 替换与官方前向等价**（已实证）。
+- **⭐ `Generator` 有随机性（根因）**：`istftnet.py` 内 **3 处随机数**：
+  - `L156 SineGen._f02sine`：`rand_ini = torch.rand(...)`（**正弦初相随机**）
+  - `L211 SineGen.forward`：`noise = noise_amp * torch.randn_like(sine_waves)`（加性高斯噪声）
+  - `L259 SourceModuleHnNSF.forward`：`noise = torch.randn_like(uv) * self.sine_amp / 3`（噪声分支）
+  ⇒ 谐波源激励本质带随机性、作者**未做 deterministic 处理** ⇒ **两次前向不可能一致**，
+  **与移植无关**（`generator` rel 129 由此而来）。
+- **⇒ ② 的判定**：**前 13 层（含整个 predictor/text_encoder/decoder 主干）`maxdiff = 0.000e+00` 即 PASS**；
+  `Generator` 的差异**须用固定随机种子**（`torch.manual_seed` + 两侧同时在前向里播种）才能对拍，
+  或**只对 `Generator` 的确定性部分**（`har_spec`/`har_phase` 来自 `stft.transform`、`conv_post` 输出）比对。
+- **新增已探明的输入口径（勿再踩）**：
+  - `ref_s` 必须是 **(1, 256)**（官方 `voice.pack` 是 `(511,1,256)`，pipeline 取一条）；
+    `ref_s[:,128:]`=(1,128)→predictor 的 s（`style_dim=128`），`ref_s[:,:128]`=(1,128)→decoder 的 style。
+    （我最初用 (1,512) 导致 `14x896 vs 640x1024` 报错。）
+  - `Decoder` 的 `F0_conv`/`N_conv` 是 `stride=2`：`F0_conv(60) -> 30`；`encode` 期望 **514 = 512(asr)+2(F0,N)** 通道且时间维一致。
+  - `Decoder.generator` 调用签名是 **`generator(x, s, F0_curve)`**（`Decoder.forward` 末尾）。
+  - `Generator.forward` 内 `with torch.no_grad()` 包住谐波源部分。
