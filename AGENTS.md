@@ -1322,3 +1322,34 @@ n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + co
   **桩 `paddlespeech.audio`（设 `__path__=[]`）+ `paddlespeech.audio.utils`（注入 depth_convert/ParameterError），
   再 exec 源码且设 `mod.__package__='paddlespeech.audio.compliance'`** 才能让相对导入解析。
 - 脚本: `sp14a_ecapa_e2e.py`(paddle) / `sp14b_ecapa_e2e.py`(torch)。
+
+### 优先级 3：KWS MDTC（源码与配置已读完，移植前待解 2 个问题）
+- **特征** `conf/mdtc.yaml`: `feat_type: kaldi_fbank`，`sample_rate 16000, frame_shift 10(ms),
+  frame_length 25(ms), n_mels 80` → torch 侧用 **`torchaudio.compliance.kaldi.fbank`**（早前已验证可用；
+  建议 `dither=0` 以便可复现）。
+- **模型配置**: `MDTC(num_keywords=1, stack_num=3, stack_size=4, in_channels=80,
+  res_channels=32, kernel_size=5)`；`causal=True` 默认。包装 `KWSModel(backbone, num_keywords)`。
+- **权重**: `_downloads/speech/mdtc_heysnips/ckpt/model.pdparams`（0.2MB）+ `conf/mdtc.yaml` ✅ 已就位。
+- **源码结构**（`paddlespeech/kws/models/mdtc.py` 235 行，纯 paddle.nn）：
+  | 类 | 行 | 要点 |
+  |---|---|---|
+  | `DSDilatedConv1d` | 21-54 | depthwise `conv(groups=in_channels)` → `bn` → `pointwise 1x1`；`padding=0`（**手动 pad**） |
+  | `TCNBlock` | 57-98 | `conv1→bn1→relu1→conv2(1x1)→bn2`；残差分支对输入做**切片** `inputs[:, :, R:]`(causal) 或 `[:, :, half:-half]`；`in==res` 才相加 |
+  | `TCNStack` | 101-157 | `dilations = [2**l for s in stack_size for l in stack_num]`（即 3 组 1,2,4,8 共 12 个 block）；`nn.Sequential` |
+  | `MDTC` | 160-221 | `preprocessor=TCNBlock(in→res,d=1)` + `stack_num 个 TCNStack`；输出对多 stack 结果**对齐后求和**再 transpose 返回 **`(outputs, None)`** |
+  | `KWSModel` | 224-233 | `linear(hidden_dim→num_keywords)` + `Sigmoid` |
+- **loss（`kws/models/loss.py` 83 行）**: `padding_mask(lengths)` / `fill_mask_elements(condition, value, ...)` /
+  `max_pooling_loss(logits, ...) → ③ 必需，**尚未读细节**。
+- ⚠️ **移植前必须先解的 2 个问题（勿猜）**：
+  1. **`MDTC.forward` 返回 `(tensor, None)` 元组**，而 `KWSModel.forward` 写 `outputs = self.backbone(x)`
+     再 `self.linear(outputs)` → 对元组做 Linear **会 TypeError** ⇒ **官方 KWSModel 路径本身是坏的**
+     （与 `cls/exps/panns/predict.py` 的 TypeError、`tools/eval.py` 同类）。
+     移植时**自己组装 backbone+linear**，并把这个不一致记为「官方问题」。
+  2. **`MDTC.forward` 的 `F.pad(x, (0,0, receptive_fields, 0, 0,0), 'constant')` 用了 6 值 pad**
+     （paddle pad 从**最内层维度**开始配对），紧接着 `transpose([0,2,1])` ⇒ **必须先确认输入是 `(N,C,T)` 还是 `(N,T,C)`**、
+     padding 到底加在时间维还是通道维。**这是移植正确性的关键**，猜错会得到完全错误的前向。
+     解法：打印 `mdtc.yaml` 训练入口的 dataloader 输出形状，或直接跑一次 Paddle `MDTC` 打印 `F.pad` 前后形状。
+- **四条对齐的计划**（复用已验证流程）：① 键结构 dump + 转换（BN 改名 + 可能的 Linear .T；注意 `KWSModel.linear`
+  是 `nn.Linear` ⇒ **需 .T**）→ ② 同 (N,80,T) 输入逐层对拍 + **fp64 判定** → ③ `max_pooling_loss` + 梯度
+  （**注意零梯度参数按绝对判据**，见 ECAPA 教训）→ ④ 同音频 kaldi_fbank → logits/命中对比。
+- **脚本可复用**：`sp3a/sp3b`(转换) `sp10a/sp10b`(②含FP64) `sp12a/sp12b`(③) `sp14a/sp14b`(④)。
