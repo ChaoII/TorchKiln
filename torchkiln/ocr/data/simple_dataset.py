@@ -205,6 +205,11 @@ class SimpleDataSet(Dataset):
 
         self.delimiter = dataset_config.get("delimiter", "\t")
         label_file_list = dataset_config.pop("label_file_list")
+        # PGNet(PGProcessTrain) 会按几何/随机缩放拒绝大量样本(实测 batch=16 只剩 6 个
+        # 有效)。PaddleOCR 的 PGDataSet 此时会**递归重试**拿一个新样本，而不是返回空；
+        # 默认 False 保持 det/rec 原语义(空样本由 collate 丢弃)。
+        self.retry_on_none = bool(dataset_config.get("retry_on_none", False))
+        self._retry_count = 0
         data_source_num = len(label_file_list)
         ratio_list = dataset_config.get("ratio_list", 1.0)
         if isinstance(ratio_list, (float, int)):
@@ -462,6 +467,15 @@ class SimpleDataSet(Dataset):
         if outs is None:
             # A failed/None sample is returned as an empty sample and is
             # discarded by `det_collate_fn` (Paddle's det collate drops None).
+            if self.retry_on_none and self._retry_count < 30:
+                # 对齐 PaddleOCR PGDataSet: 被 PGProcessTrain 拒绝时随机重取一个样本
+                # （最多 30 次，防死循环）
+                self._retry_count += 1
+                try:
+                    nxt = self.__getitem__(int(np.random.randint(self.__len__())))
+                finally:
+                    self._retry_count -= 1
+                return nxt
             return []
         return outs
 

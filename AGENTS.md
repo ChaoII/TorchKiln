@@ -1109,3 +1109,30 @@
   每个 batch 一次优化器更新（无累积开销）。
 - 训练命令：`python -m torchkiln train -c configs/ocr/e2e/e2e_pgnet_lite_totaltext.yml -o Global.eval_epoch_step=5`
   （每 5 epoch 评估一次；`eval_epoch_step` 默认 1 = 每 epoch 评，会吃掉约 2.5h）
+
+### 12. e2e 训练提速（9~10h → 3.1h），三个根因（2026-09-27）
+- **骨干确认是 PP-LCNetV4**（`PPLCNetV4E2E` 0.385M + `PGFPNLCNet` 0.422M + `PGHeadLite` 0.414M = 1.22M）。
+  **慢不是骨干的问题**，而是下面三点：
+1. **`retry_on_none` 缺失 → 每个 batch 只剩 6/16 个有效样本（关键 bug）**
+   - `PGProcessTrain` 按几何/随机缩放拒绝大量样本（`min(new_w,new_h) < input_size*0.5`、
+     全 ignore、`len(pos_list)>max_text_nums` 等），**实测 batch=16 collate 后只有 6 个**。
+   - **PaddleOCR `PGDataSet` 是「被拒就随机重取」**；框架 `SimpleDataSet` 却是「返回 `[]` 由 collate 丢弃」→
+     **每 epoch 实际只用到 ~37% 数据**，且 GPU 白算。
+   - **修复**：`SimpleDataSet` 新增 `retry_on_none`（默认 False，det/rec 语义不变），
+     e2e 在配置里设 `Train.dataset.retry_on_none: true`（带 30 次重试上限防死循环）。
+     修后 batch 恢复 **16/16**。
+2. **训练没开 AMP → GPU 单步 1.326s**
+   - 模型虽只有 1.22M 参数，但 `PGFPNLCNet`/`PGHeadLite` 都在 **stride 4（128×128）** 上做 conv，
+     batch16 时是百 GFLOP 级，fp32 下单步 **1.326s**。
+   - 开 `Global.amp: true` 后 **0.135s/step（9.8×）**。
+   - 安全性：`ptcore/trainers/base.py` 已在 loss 前 `_to_fp32(preds)`（**递归处理 dict**），
+     且 `evaluate()` 强制 fp32 → CTC/后处理不受 fp16 影响。**e2e 可放心开 AMP**。
+3. **显存约束（§11）**：batch=48 时数据管线喂不饱（利用率 8%，掉 0%），batch=16 稳定。
+- **实测（batch16 + workers4 + AMP + retry_on_none）**：
+  - epoch 时长 **75.5s**（150 epoch ≈ **3.1h**，含每 10 epoch 一次评估）
+  - **GPU 利用率均值 98.5%，最低 93%**；显存 3582 MiB
+  - loss 正常下降：step10 **60.42** → step20 **54.76**（无 NaN）
+  - 分段计时（`_downloads/ocr/e2e_profile.py`，num_workers=0）：
+    GPU 0.135s/step < 数据 0.678s/step → 4 worker 后数据 ≈0.17s，与 GPU 基本平衡
+- ⚠️ 注意：剖析脚本必须 `num_workers=0`，否则 Windows spawn 会重跑主模块导致递归。
+- 训练命令：`python -m torchkiln train -c configs/ocr/e2e/e2e_pgnet_lite_totaltext.yml -o Global.eval_epoch_step=10`

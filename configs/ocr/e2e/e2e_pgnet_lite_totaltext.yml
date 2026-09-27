@@ -12,6 +12,8 @@ Global:
   - 0
   - 2000
   cal_metric_during_train: false
+  # stride-4 头/颈在 512x512 下很重, 训练开 AMP 提速(损失在 fp32 下算, 见 trainer)
+  amp: true
   # 转换自 PaddleOCR 训练产物（weights/pgnet_lite_totaltext.pth, 4.9MB）
   pretrained_model: weights/pgnet_lite_totaltext.pth
   checkpoints: null
@@ -27,7 +29,6 @@ Global:
   ema_decay_type: threshold
   show_eval_progress: true
   # PGLoss 内含 CTC，保持 fp32
-  amp: false
   # ---- e2e 专用（会被 create_operators 合并进各算子）----
   character_dict_path: torchkiln/ocr/utils/ic15_dict.txt
   character_type: EN
@@ -91,6 +92,9 @@ Train:
     data_dir: datasets/ocr/total_text/train
     label_file_list:
     - datasets/ocr/total_text/train/train.txt
+    # PGProcessTrain 会按几何/随机缩放拒绝大量样本(实测 ~60%)，被拒时随机重取，
+    # 与 PaddleOCR PGDataSet 行为一致（否则每个 batch 有效数缩水到 6/16）
+    retry_on_none: true
     transforms:
     - DecodeImage:
         img_mode: BGR
