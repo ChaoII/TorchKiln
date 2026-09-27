@@ -1688,3 +1688,28 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
   - **B**：自写训练管线（loss + 数据 + 任务适配），贴合 `torchkiln` 架构但工作量大，且**必须自己定 loss 组合**
     （官方未公开，无从对齐 ⇒ ③ 这条无法再"对照官方"，只能自洽）。
 - **注**：kokoro 的 **① 已 PASS**；**②③④ 仍可做**（基准=官方 **推理** 包，它存在），**不受训练代码缺失影响**。
+
+###### 第三方 jonirajala/kokoro_training(★46) 已探明 —— 评估：**可作参考，但不是"对齐基准"**
+- **仓库元信息**：570 KB / 41 文件 / pushed_at 2025-11-15 / **license = None（无许可证）** / desc "Training code for kokoro tts model"。
+- **结构**（_downloads/kokoro_train_repo.py 探明，	runcated=False）：
+  | 目录 | 内容 |
+  |---|---|
+  | `audio/` | `audio_utils.py` / `hifigan_vocoder.py` / `vocoder_manager.py` |
+  | `data/` | `english_phoneme_processor.py` / **`ljspeech_dataset.py`**（LJ Speech，**非官方数据**） |
+  | `kokoro/` | `model.py` / **`model_transformers.py`** / `positional_encoding.py` / **`postnet.py`** ← **自己重新实现模型** |
+  | `training/` | **`english_trainer.py`** / `config_english.py` / `checkpoint_manager.py` / `adaptive_memory_manager.py` / `interbatch_profiler.py` / `mps_grad_scaler.py` |
+  | `tests/` | `test_dual_loss.py` / `test_overfit.py` / `test_training_health.py` / `test_vocoder_quality.py` / `test_warmup_schedule.py` |
+  | 根 | `setup_ljspeech.py` / `training_english.py` / `inference_english.py` / `requirements.txt` |
+  | 其它 | `overfit_test_output/{generated_mel.pt, training_sample.pt, model_config.json}` |
+- **⚠️ 三个风险（采纳前必须核对）**：
+  1. **无许可证**（`license=None`）→ 使用/分发法律不确定。
+  2. **它重新实现了模型**（`model_transformers.py` + `postnet.py`）→ **可能与 `kokoro-v1_0.pth` 架构不一致**
+     ⇒ **不能当"对齐基准"**，只能当"训练管线设计的参考"。
+  3. `ljspeech_dataset` + `english_trainer` → **只是"一个能跑的英语训练"，不是"官方训练"**
+     （官方是多说话人 + 多语言 + PL-BERT + iSTFTNet 的组合）。
+- **⇒ 结论**：A' 的**正确用法**是拿它的 **loss 组合 / trainer 结构 / 数据增强**做参考来设计 B（自写），
+  而**不**把它当权威参考去对拍（否则会像"对照一个非官方实现"，对齐失去意义）。
+- **⚠️ 但 ②③④ 的对齐不受影响**：它们的基准是**官方 kokoro 推理包**（存在、官方），仍然可严格对拍。
+  **只有"训练 loss"这一项没有官方参考**（hexgrad 从未公开）⇒ 那一项只能**自洽 + 参考 A'**。
+- **脚本**：`_downloads/kokoro_find_train.py`（找仓库）、`kokoro_train_repo.py`（探结构）、
+  `kokoro_repo_probe.py`（探 hexgrad 官方仓）。
