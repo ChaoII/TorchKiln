@@ -1607,3 +1607,22 @@ um_batches_tracked），形状不符 0；
   **修法**：加载时键名映射 `.fc.` → `.norm.`（predictor 24 + decoder 116 个缺失键全是此原因）。
 - **下一步**：① 补键名映射到 `missing=0` → ② 同输入与**官方 `kokoro` 包**逐层对拍（+fp64 判定法）
   → ③ 同输入 loss/梯度 → ④ 推理指标（TTS 口径，波形/频谱一致性，需另定）。
+
+###### kokoro ① 的精细根因：不是简单改名，是**版本间结构性差异**（AdaLayerNorm 同时有 
+orm 和 c）
+- **我上一步的".fc. → .norm. 改名"方向是错的**：加了改名后 `missing` 列表里**同时出现**
+  `F0.0.norm1.norm.weight` **和** `F0.0.norm1.fc.weight` ⇒ **当前 `kokoro 0.9.4` 的
+  `AdaLayerNorm` 同时拥有 `norm` 与 `fc` 两个子模块**，而**权重里只有 `.fc.*`**。
+  → 不是改名问题，是**权重缺 `.norm.*` 那一份**。
+- **完整证据（`predictor` 的 `load_state_dict` 报错）**：
+  - `missing` 同时含：`F0.0.norm1.norm.weight` + `F0.0.norm1.fc.weight`、`N.0.norm2.fc.weight`…
+  - `unexpected` 全部**仍带 `module.` 前缀**（`module.text_encoder.lstms...` / `module.F0.0.norm1.fc.weight`）
+    ⇒ 说明 `k[7:]` 对这批键**没生效**，或 `sub` 内前缀不统一，**需逐键核对而不是整批切片**。
+- **下一步必须先做**（不要猜）：
+  1. 打印**权重里同一模块的完整键集合**（如 `module.F0.0.*` 全部键）与**模型期望的键集合**（`F0.0.*` 全部键）**并列比对**，
+     找出 .norm.* 对应的权重键到底叫什么（可能叫 `.LayerNorm.*` / `.norm.weight` 且前缀不同 / 或旧版权重根本没有）。
+  2. 核对 `modules.py::AdaLayerNorm` 与 `istftnet.py` 里 `norm1/norm2` 的**实际子模块结构**（是 `LayerNorm` 还是 `LinearNorm`）。
+  3. 再决定：是**换旧版 kokoro 代码**（pip install 一个更老的版本，让键名对上），还是**在 torchkiln 侧自己写映射**。
+  - ⚠️ **换版本前先看 `config.json` 的权重是哪个 kokoro 版本产出的**（`kokoro-v1_0.pth` 对应 v1.0）。
+- **教训**：这次我又一次"听起来合理就动手"了（改名方案没先验证模型期望的键集合）。
+  **正确顺序永远是：先打印「权重键集合」与「模型期望键集合」两个集合的差集，再设计映射。**
