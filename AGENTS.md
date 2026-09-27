@@ -1292,3 +1292,17 @@ n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + co
 - **残余 ~1e-3 疑似 fp32 舍入**（与 PANNs ② 的 fp32 6.8e-4 同量级）→ **下一步用 fp64 判定法确证**（阈值 1e-10）。
 - 另：paddle 3.1.1 的 set_state_dict() **无 eturn_missing=** 参数；PaddleSpeech 的 TDNNBlock.forward(x) **不接受 lengths**（EcapaTdnn.forward 的 try/except 就是为此）。
 - 脚本：sp10a/sp10b_ecapa_fwd.py（②对拍）、sp11a_paddle_load_check.py（①的加载验证，仅需 paddle）。
+
+#### ECAPA ①②③ 结果（④ 待做）
+- **① PASS**：missing=0 / unexpected=0，200/201 键（第 201 个是 wrapper 分类头 weight(192,7205)，不加载属预期）。
+- **② PASS（fp64）**：locks0 **1.47e-15**（精度极限）、locks1~3 8e-12~1.8e-11、mfa **1.38e-11** 全部 <1e-10；
+  sp 起放大到 5.5e-9 → c 1.43e-8；**embedding 余弦 = 1.0000000000**。
+  - **残余集中在 AttentiveStatisticsPooling**：含 sqrt(clamp(var,1e-12))（d(sqrt)/dvar 对小方差可达 1e5 倍）+ softmax → **数值敏感点，非逻辑 bug**（前半段 conv/BN/Res2Net/SE/MFA 全 1e-11 级已证正确）。
+- **③ PASS（fp64）**：loss rel **1.67e-08**（阈值 1e-7）、embedding rel 1.43e-08、**可比梯度 138/138**、**非零梯度最差 rel 1.34e-07**（mfa.norm.norm.weight）。
+  - ⚠️ **判定方法必须跳过零梯度参数**：sp.conv.conv.bias 的 |grad|max 在 fp64 是 **8.88e-16**（fp32 是 4.77e-6），
+    **数学上恒为 0** —— 因为 ASP.conv 的输出进 softmax，**bias 的加性常数被 softmax 平移不变性抵消**。
+    用 el = maxdiff/max|pg| 会因分母过小**虚高到 8.5 / 1.41**（我第一版就误判 FAIL）。
+    **正确做法**：denom < 1e-10 时改用**绝对误差判据**。
+- **脚本**：sp10a/b_ecapa_fwd.py(②) sp12a/b_ecapa_loss.py(③，loss 用 MSE(emb, 固定 target)，
+  因为说话人模型输出是 embedding 而非分类 logits) sp13_grad_abs.py(看梯度绝对量级，定位"分母过小虚高")。
+- **下一步**：④ 端到端（同音频 → fbank → embedding，比 maxdiff + 余弦），再做 KWS MDTC。
