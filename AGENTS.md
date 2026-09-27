@@ -1886,3 +1886,19 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
   7. 损失里 **`MelSpectrogram` 未按设备缓存** → 改 **按 `str(device)` 缓存并把模块 `.to(dev)`**。
 - **⚠️ 训练限制**：`Generator` 含随机噪声（需固定种子）；**整链一次反传在部分输入下触发原生段错误 0xC0000005**（③ 已记录）；CLI 冒烟下常规 batch 反传正常。
 - **待完善（非阻塞）**：① 评估指标很简（wav_l1/余弦，正式评测应加 mel/F0 指标）；② 时长损失口径自定；③ `ref_s` 用确定性随机（真实训练需 voice pack 或参考音频编码器）。
+
+###### E) 集成与回归（全绿）
+- **导出**：`torchkiln/audio/__init__.py` 增加 `KokoroLoss` / `KokoroDataset` / `kokoro_collate`（`__all__` 29 项）。
+- **回归结果**：
+  | 项 | 结果 |
+  |---|---|
+  | `tools/check_graph_build.py` | **55 OK / 0 FAIL** |
+  | smoke（分批，72 个 config） | **72 OK / 0 FAIL**（含 `kokoro_demo.yml`） |
+- **⚠️ 环境坑（重要）**：`tools/smoke_all.py` **同进程连跑会耗尽宿主内存**（表现为中途只跑出 6~7 个就
+  `Unable to allocate ...`／进程静默退出）。
+  **对策**：用**分批跑**（`_downloads/smoke_batched.py`：逐 config 起独立子进程），实测 72/72 全绿。
+  - 该脚本还有两个曾经的坑：① `.format()` 与模板里的 `{}` 冲突 → 改字符串拼接；
+    ② **判定不能只看最后一行输出**（日志会淹没 OK 标记）→ 要**在整段输出里搜 `OK`/`FAIL`/`SKIP`**。
+- **回归中发现并修复**：`build_trainer` 改为「task 优先」后，**`e2e` 不再命中 `_OCR_TASKS`**
+  （`_OCR_TASKS` 里原来只有 `ocr_e2e`）→ 报 `no trainer for task 'e2e'`。
+  **修**：`_OCR_TASKS` 补 `"e2e"`。修复后单跑 e2e 冒烟通过（`trainer: OcrTrainer` / `loss=333.37`）。

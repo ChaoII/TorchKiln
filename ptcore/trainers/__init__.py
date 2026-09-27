@@ -58,7 +58,7 @@ TRAINER_REGISTRY = {
 }
 
 AVAILABLE = tuple(sorted(TRAINER_REGISTRY))
-_OCR_TASKS = ("det", "rec", "ocr_det", "ocr_rec", "ocr_e2e")
+_OCR_TASKS = ("det", "rec", "ocr_det", "ocr_rec", "ocr_e2e", "e2e")
 
 
 def get_trainer(task):
