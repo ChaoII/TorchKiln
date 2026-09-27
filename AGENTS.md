@@ -1827,3 +1827,19 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
 - **逐项排查记录（都已单独验证 OK，退出码 0）**：`bert` / `bert_encoder` / `text_encoder` /
   `predictor.lstm+duration_proj` / `predictor.F0Ntrain` / `decoder(含 Generator, 373/375 参数有梯度)`。
 - **③ 判定**：**模块级梯度通路 PASS**（判据：两侧 loss 与梯度逐位一致）；**整链反传限制已如实记录**。
+
+###### ✅ kokoro ④ PASS（英文 v1.0 + 中文 v1.1-zh 双版）
+- **脚本** `_downloads/kokoro_e2e4.py`（同权重同输入同种子；TTS 口径）。
+- | 指标 | 英文 v1.0 | **中文 v1.1-zh** |
+  |---|---|---|
+  | `missing` | official=140 / **torchkiln=0** | official=140 / **torchkiln=0** |
+  | `pred_dur` | **逐位一致** `[3,2,2,2,2,2,2,2]` | **逐位一致** `[1,1,1,1,2,2,2,2]` |
+  | **波形 maxdiff** | **0.000000e+00**（余弦 1.0000007153） | **0.000000e+00**（余弦 1.0000019073） |
+  | **mel 频谱 maxdiff** | **0.000000e+00** | **0.000000e+00** |
+  | 判定 | **PASS** | **PASS** |
+- **⇒ kokoro 四条全部 PASS**（①权重 ②逐层前向 ③梯度通路 ④端到端波形/频谱），**英文 + 中文双版均通过**，
+  且**端到端波形逐位一致（0.000e+00）**。
+- **④ 的 TTS 口径（可复用）**：`pred_dur` 逐位一致 + 波形 `rel<1e-5` + 余弦 `>0.9999` + mel 频谱一致；
+  **含随机性的模型必须固定种子**（`torch.manual_seed`）。
+- 注：`official` 侧 `missing=140`（保留默认 `weight=1/bias=0`）而 `torchkiln` 为 `0`，
+  但**端到端仍逐位一致** ⇒ 再次实证 **`affine=False` 替换与官方前向完全等价**。
