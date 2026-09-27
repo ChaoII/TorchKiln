@@ -72,21 +72,25 @@ def e2e_train_collate(batch):
 
 
 def e2e_eval_collate(batch):
-    """PGNet 评估批: ``[image, shape, polys, texts, ignore_tags, img_id]``。
+    """PGNet 评估批（逐图打包，不 stack）。
 
-    与 PaddleOCR 的 ``E2EMetric`` 期望的 ``batch`` 布局一致
-    （mode A 用 ``batch[2..4]``，mode B 用 ``batch[5]``）。
+    ``E2EResizeForTest`` 保比例缩放，同一 batch 内各图尺寸可能不同，无法 stack；
+    而官方 ``E2EMetric`` 本身就是**逐图**口径（只读 ``batch[2..5]`` 的第 0 项）。
+    因此这里把每张图单独放进列表，由 ``OcrTask.eval_step`` 逐图前向+后处理。
+
+    返回 ``[images(list[Tensor]), shapes(list), polys(list), texts(list),
+    ignore_tags(list), img_id(list)]``。
     """
     batch = [s for s in batch if s is not None and len(s) > 0]
     if len(batch) == 0:
         return []
-    image = torch.from_numpy(np.stack([s[0] for s in batch], axis=0)).float()
-    shape = torch.from_numpy(np.stack([s[1] for s in batch], axis=0)).float()
+    images = [torch.from_numpy(np.asarray(s[0])).float() for s in batch]
+    shapes = [np.asarray(s[1]) for s in batch]
     polys = [s[2] for s in batch]
     texts = [s[3] for s in batch]
     ignore_tags = [s[4] for s in batch]
-    img_id = [s[5] for s in batch] if len(batch[0]) > 5 else [0] * len(batch)
-    return [image, shape, polys, texts, ignore_tags, img_id]
+    img_id = [s[5] if len(s) > 5 else 0 for s in batch]
+    return [images, shapes, polys, texts, ignore_tags, img_id]
 
 
 class OcrTask(TaskAdapter):
@@ -135,6 +139,12 @@ class OcrTask(TaskAdapter):
             return e2e_eval_collate(batch)
         return rec_collate(batch)
 
+    def sample_count(self, batch):
+        # e2e 的 eval 批是逐图列表（尺寸不一，无法 stack），样本数 = 图片数
+        if self.name == "e2e" and batch and isinstance(batch[0], (list, tuple)):
+            return len(batch[0])
+        return super().sample_count(batch)
+
     # ----------------------------------------------------------------- forward
     def forward_train(self, model, images, batch):
         if self.name == "rec":
@@ -142,19 +152,33 @@ class OcrTask(TaskAdapter):
         return model(images)
 
     def eval_step(self, model, batch, post_process, metric, device):
+        if self.name == "e2e":
+            # 逐图前向 + 逐图后处理（E2EMetric 是逐图口径；各图尺寸不一无法 stack）
+            for k in range(len(batch[0])):
+                img = batch[0][k].unsqueeze(0).to(device, non_blocking=True)
+                pred_k = model(img)
+                preds_cpu = {
+                    kk: v.detach().cpu() if torch.is_tensor(v) else v
+                    for kk, v in pred_k.items()
+                }
+                shape_list = np.asarray([batch[1][k]])
+                post_result = post_process(preds_cpu, shape_list)
+                one = [
+                    img.cpu(),
+                    shape_list,
+                    [batch[2][k]],
+                    [batch[3][k]],
+                    [batch[4][k]],
+                    [batch[5][k]],
+                ]
+                metric(post_result, one)
+            return
+
         images = batch[0].to(device, non_blocking=True)
         preds = model(images)
         if self.name == "det":
             shape_list = batch[1].cpu().numpy()
             post_result = post_process(preds, shape_list)
-            metric(post_result, batch)
-        elif self.name == "e2e":
-            shape_list = batch[1].cpu().numpy()
-            preds_cpu = {
-                k: v.detach().cpu() if torch.is_tensor(v) else v
-                for k, v in preds.items()
-            }
-            post_result = post_process(preds_cpu, shape_list)
             metric(post_result, batch)
         else:
             preds_cpu = preds.detach().cpu()

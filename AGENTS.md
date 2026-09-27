@@ -998,3 +998,22 @@
 - 该现象**在 PaddleOCR 自己的 `tools/eval.py` 上也一样**（报 `f_score_e2e=0`），此前用官方函数手工复算得 `f_score 0.785 / e2e 0.536`
   （见 §6）——**说明是官方评估链路本身的问题**，本移植忠实复现了它。
 - 待办：① 核对 `shape_list`（应记录 `[src_h, src_w, ratio_h, ratio_w]`）；② 或改用「同一评估器评双方模型」的口径做验收。
+
+### 8. e2e 评估批必须「逐图」（smoke_all 发现，已修）
+- **现象**：`smoke_all` 里 `e2e_pgnet_lite_totaltext` FAIL：`all input arrays must have the same shape`
+  （`e2e_eval_collate` 里 `np.stack` 各图）。
+- **根因**：`E2EResizeForTest` 是**保比例**缩放，同 batch 内各图尺寸不同 → 不能 stack；
+  且官方 `E2EMetric` 本身就是**逐图**口径（只读 `batch[2..5]` 的第 0 项）。
+  `smoke_all` 强制 `batch=4`，所以暴露出来（配置里 Eval 默认 batch=1 时不暴露）。
+- **修复**：
+  - `e2e_eval_collate` 改为**不 stack**：返回 `[images(list[Tensor]), shapes(list), polys(list), texts(list), ignore_tags(list), img_id(list)]`。
+  - `OcrTask.eval_step` 的 e2e 分支**逐图前向 + 逐图 post_process + 逐图 metric**（原来 `batch[0].to(device)` 在分支之前，
+    对 list 会 `AttributeError`，已把该行移到 det/rec 分支内）。
+  - 新增 `OcrTask.sample_count`：e2e 且 `batch[0]` 是 list 时返回 `len(batch[0])`（父类实现走 `.shape[0]` 会返回 0）。
+- **验证**：`Eval.loader.batch_size_per_card=4` + `num_workers=0` 跑通（300 图评估，`Training finished`）。
+- ⚠️ 观察（待办）：`total_num_det` 在 eval batch=1 时是 **2474**、batch=4 时是 **8177**（同 300 图），
+  而 `f_score_e2e` 都是 0。怀疑 `shape_list`（`[src_h, src_w, ratio_h, ratio_w]`）与逐图 post_process 的口径
+  仍有出入，或 `E2EResizeForTest` 在多图时行为不同 —— 与 §7.7 的 `f_score_e2e≈0` 是同一待查项。
+- 回归：`smoke_all` 中另 5 个 FAIL（yolo11-det/lane-row/lane-seg/obb/pose）是**宿主内存耗尽**
+  （"Unable to allocate 4.69 MiB" / "LLVM ERROR: out of memory"），单进程连跑 42 个配置所致，**与本次改动无关**
+  （GPU 空闲、无残留进程，属已知的 smoke_all 资源问题）。
