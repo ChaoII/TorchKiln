@@ -1730,3 +1730,27 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
   （参考代码量：`model.py` 152 + `istftnet.py` 422 + `modules.py` 184 + `custom_stft.py` 198 ≈ **956 行**），
   再用已验证的 **fp64 判定法** 对拍；③④ 同前三个模型的流程。
   ⚠️ 注意固定随机 `ref_s`（1×512）与 `input_ids` 做可复现输入；`speed` 参数也要固定。
+
+###### ✅ kokoro 模型已移植进 	orchkiln/audio/kokoro/ + ① PASS（两版权重）
+- **搬运**（_downloads/kokoro_vendor.py，官方 **MIT 许可、保留原版权头**）：
+  | 文件 | 行 | 改写 |
+  |---|---|---|
+  | `model.py` | 149 | 去 `hf_hub_download` 回退（**HF 被墙**，改为必须显式传本地 config/`.pth`）；`loguru`→标准 `logging` |
+  | `istftnet.py` | 422 | `from kokoro.custom_stft import` → `from .custom_stft import`（**唯一 1 处跨包引用**） |
+  | `modules.py` | 184 | 原样（相对导入天然可移植） |
+  | `custom_stft.py` | 198 | 原样 |
+  | `__init__.py` | 34 | 新建（导出 `KModel/Decoder/CustomAlbert/ProsodyPredictor/TextEncoder/...`） |
+  - **`pipeline.py` 不搬**（推理/G2P 链，训练与对齐都用不到，且依赖 misaki）。
+  - **导入测试全通过** ✓
+- **⭐ 官方源码注释直接印证了 ffine=False 的修法**（`istftnet.py::AdaIN1d`）：
+  > "affine should be False, however there's a bug in the old torch.onnx.export ... When affine is true,
+  > there's additional learnably parameters. **This shouldn't really matter setting it to True, since we're in inference mode**"
+  ⇒ 这 2 个参数是 **ONNX workaround 的副产物**；产权重里**没有**它们 → 默认 `weight=1/bias=0` → `1*x+0 = x`
+  ⇒ **`affine=False` 与官方前向数学等价**，且能让 ① 达到 `missing=0`。已在移植代码里改并附注释。
+- **① PASS（两版权重，_downloads/kokoro_tk_load.py）**：
+  `
+  英文 v1.0      missing=0 unexpected=0   参数=81.763 M
+  中文 v1.1-zh   missing=0 unexpected=0   参数=81.763 M
+  `
+  **81.763 M 与最初盘点的权重总量完全一致** ✓
+- **下一步**：② 同输入（固定 `input_ids` + `ref_s(1×512)` + `speed=1`）逐层前向 vs **官方 kokoro 包**（+fp64 判定法）→ ③（注意 `forward_with_tokens` 带 `@torch.no_grad`，需另建可微路径）→ ④（`pred_dur` 对齐 + 波形/频谱一致性）。
