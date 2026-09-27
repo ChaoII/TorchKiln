@@ -1532,3 +1532,46 @@ um_batches_tracked），形状不符 0；
   - **建议 ④ 判据采用「logits + HIT/filler」**；特征差异不作为失败项，但**必须标注**。
 - **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 全过，④ 模型端 PASS / 特征端已定为已知差异**
   ⇒ **三个音频 SOTA 模型的移植与对齐全部完成**。
+
+## kokoro-82M 训练集成（进行中，2026-09-28）
+### 资源获取（生死门已过）
+- **权重托管：HuggingFace 与 hf-mirror 都超时（被墙）** → 改走 **ModelScope**，实测 **25.5 MB/s**（比 GitHub 0.03 MB/s 快 850×）。
+  - repo: `hexgrad/Kokoro-82M`（或 `AI-ModelScope/Kokoro-82M`），文件接口：
+    `https://www.modelscope.cn/api/v1/models/{ns}/{name}/repo?Revision=master&FilePath={path}`
+  - 文件列表接口：`.../repo/files?Revision=master&Root=`
+  - 已下：`_downloads/speech/kokoro/kokoro-v1_0.pth` **327.21 MB** + `config.json` 2.3KB + `voices/` `eval/` `samples/`
+- **源码**：PyPI `kokoro==0.9.4` + `misaki==0.9.4`（G2P），用 `pip install --no-deps` 装在 ptocr（**只要源码**）。
+- **config.json 键**：`dim_in, dropout, hidden_dim, istftnet, max_conv_dim, max_dur, multispeaker,
+  n_layer, n_mels, n_token, plbert, style_dim, text_encoder_kernel_size, vocab`
+  → **iSTFTNet 声码器 + PL-BERT(ALBERT) 文本编码器 + 多说话人 style 向量**。
+
+### 权重结构（548 键 / 81.763 M / 327.1 MB fp32，与文件大小吻合）
+| 子模块 | 键 | 参数 | 内容 |
+|---|---|---|---|
+| `bert` | 25 | 6.292 M | ALBERT/PL-BERT（`position_embeddings(512,128)` → hidden 128） |
+| `bert_encoder` | 2 | 0.394 M | `weight(512,768)` ALBERT 768→512 投影 |
+| `predictor` | 122 | 16.195 M | ProsodyPredictor + DurationEncoder（weight_norm ×16） |
+| `decoder` | 375 | 53.276 M | iSTFTNet（`F0_conv`/`N_conv`/`asr_res`/`decode.*`，weight_norm ×70） |
+| `text_encoder` | 24 | 5.606 M | style/text 编码（weight_norm ×3） |
+- **顶层是 nested dict**（`sd['bert']` 本身是 dict）—— 遍历时必须下钻一层（我第一版漏了这层，误报 0 个张量）。
+- **所有键带 `module.` 前缀**（`module.embeddings...`/`module.F0_conv...`）→ ① 需处理。
+- **89 个 `weight_g`/`weight_v`**（weight_norm 分解）——**已是 torch 格式**，直接兼容，无需转换。
+
+### 与前三个模型的本质差异（对齐口径要换）
+- PANNs/ECAPA/MDTC 都是 **Paddle → torch 跨框架转换**，用"四条对齐"对照 Paddle 参考。
+- **kokoro 是纯 torch**：官方 `pip` 包就是参考实现 → **对齐基准改为「与 kokoro 官方包逐层对拍」**：
+  ① 权重 `missing=0`（处理 `module.` 前缀）→ ② 同输入逐层前向 vs 官方 `kokoro` 包（+fp64 判定法）
+  → ③ 同输入 loss/梯度 → ④ 推理指标（TTS 口径，需另定，如波形/频谱一致性）。
+
+### 源码结构（`kokoro==0.9.4`，7 个 .py）
+| 文件 | 行/大小 | 关键类 |
+|---|---|---|
+| `model.py` | 6.6 KB | **主模型（5 部分组装）——尚未细读** |
+| `istftnet.py` | 19.5 KB | `SineGen / SourceModuleHnNSF / Generator / UpSample1d / AdainResBlk1d / Decoder` |
+| `modules.py` | 7.8 KB | `LinearNorm / LayerNorm / TextEncoder / AdaLayerNorm / ProsodyPredictor / DurationEncoder / CustomAlbert(AlbertModel)` |
+| `custom_stft.py` | 7.7 KB | 自定义 STFT |
+| `pipeline.py` | 17.6 KB | 文本→音素→模型 推理链 |
+- ⚠️ **`modules.py` 依赖 `transformers`**（`CustomAlbert(AlbertModel)` = PL-BERT）—— **ptocr 里没装**，是下一个依赖门槛
+  （`transformers` 在镜像里有 5.x 全系列；装时注意别拖入超大依赖）。
+- **脚本**：`_downloads/kokoro_precheck.py`(可行性) `kokoro_ms_search.py`(搜权重)
+  `kokoro_ms_files.py`(文件列表) `kokoro_fetch.py`(下载, 支持 `--big`) `kokoro_scan.py`(结构)。
