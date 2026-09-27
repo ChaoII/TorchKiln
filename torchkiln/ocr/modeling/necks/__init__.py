@@ -20,11 +20,12 @@ def build_neck(config):
     from .sast_fpn import SASTFPN
     from .rnn import SequenceEncoder
     from .pg_fpn import PGFPN
+    from ..e2e_pgnet_lite import PGFPNLCNet
     from .fpn import FPN
     from .fce_fpn import FCEFPN
     from .table_fpn import TableFPN
     support_dict = ['FPN', 'DBFPN', 'EASTFPN', 'SASTFPN', 'SequenceEncoder', 'PGFPN', 'TableFPN',
-                    'RSEFPN', 'LKPAN', 'FCEFPN', 'RepLKFPN', 'RepLKPAN']
+                    'RSEFPN', 'LKPAN', 'FCEFPN', 'RepLKFPN', 'RepLKPAN', 'PGFPNLCNet']
 
     module_name = config.pop('name')
     assert module_name in support_dict, Exception('neck only support {}'.format(

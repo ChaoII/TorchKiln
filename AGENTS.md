@@ -880,3 +880,46 @@
 - 冒烟 1 epoch = **79s**（~21 samples/s，显存 5.8GB）→ 150 epoch ≈ **2.3h**
 - 冒烟 loss：`304→221`、`ctc_loss 60.6→43.8`、`border 0.927→0.68`（全面下降）
 - 评估命令：`python tools/eval.py -c configs/e2e/e2e_tiny_pgnet.yml`（E2EMetric 口径，官方基准 r50 = **Hmean 84.69**）
+
+### 4. ⚠️ 踩坑：先做成 Paddle 原型，后补进仓库框架（教训）
+- 最初**走错技术栈**：在 PaddleX 的 PaddleOCR 副本里写 `ppocr/modeling/e2e_pgnet_lite.py` + 改 3 处 registry + 用其 `train.py`/`eval.py`。
+  **而仓库 `torchkiln/ocr/` 本身就是一套完整的 PaddleOCR torch 移植栈**（`PGHead`/`PGFPN`/`PGNet_PostProcess`/
+  `E2EResizeForTest`/`PPLCNetV4` 全都有），**应该在 torch 侧做**。
+- **教训**：动手前先 grep 仓库里有没有现成实现（此前只搜了 `PGNet` 关键词，**没搜 `torchkiln/ocr/` 子目录**，漏了整套栈）。
+
+### 5. 仓库框架（torch）实现（2026-09-27 补完）
+- **新增 `torchkiln/ocr/modeling/e2e_pgnet_lite.py`**：`PPLCNetV4E2E` / `PGFPNLCNet` / `PGHeadLite`（torch 版，
+  **与 Paddle 侧逐属性同名**，便于权重转换）。
+  - `PPLCNetV4E2E`：包装 `backbones/rec_lcnetv4.py::PPLCNetV4(det=True, model_size='tiny')`，返回 `[RGB, f1..f4]`
+    （与原 `e2e_resnet_vd_pg` 的 `[image, f1..f6]` 同构），并暴露 `out_channels=160`（框架读它作 neck 的 in_channels）。
+  - `PGFPNLCNet`：复用 `necks/pg_fpn.py` 的 `ConvBNLayer`/`DeConvBNLayer`。
+    ⚠️ torch 版 `ConvBNLayer(in,out,k,stride=1,groups=1,is_vd_mode=False,act=None,name=None)` **第5个位置参数是 groups**，必须传关键字。
+  - `PGHeadLite`：复用 `heads/e2e_pg_head.py` 的 `ConvBNLayer(in,out,k,stride,padding,groups,if_act,act,name)`；
+    torch 版 `PGHead` 把 `character_length` **硬编码为 37**（无 `character_dict_path`）。
+  - torch 侧**没有** Paddle 那个 `bn_name = "bn"+name[3:]` 命名坑（属性名即 state_dict 键）。
+- **三处 registry 注册**（与 PaddleOCR 同结构）：
+  1. `backbones/__init__.py`：**`model_type=='e2e'` 分支**（line 54，`support_dict=['ResNet']` 会被其**覆盖**）加 `PPLCNetV4E2E`
+  2. `necks/__init__.py::build_neck`：加 import + `'PGFPNLCNet'` 进 support_dict
+  3. `heads/__init__.py::build_head`：加 import + `'PGHeadLite'` 进 support_dict
+- **验证（框架侧）**：`build_model({model_type:'e2e', Backbone:{PPLCNetV4E2E}, Neck:{PGFPNLCNet,w:64}, Head:{PGHeadLite,w_char:[64,64,128,128,128]}})`
+  → **1.221M / 4.66MB**，输出 `f_score(1,1,192,160)/f_border(1,4,...)/f_char(1,37,...)/f_direction(1,2,...)` ✓
+- **权重转换（Paddle→torch）**：**Paddle 的 450 个键全部命中**（torch 多出的 86 个是 BN `num_batches_tracked`），
+  规则只有 BN 键名 `_mean/_variance -> running_mean/running_var`；`load_state_dict` 后 **真正缺 0 / unexpected 0**。
+  产出 **`weights/pgnet_lite_totaltext.pth`（4.9MB）**。
+- **前向对拍**：maxdiff **0.015950（rel 1.5e-3）**；**逐级定位到差异源自 backbone**——
+  `PPLCNetV4` 的 4 级输出 rel 3.8e-4~7.6e-4（框架该骨干移植的**固有浮点差异**），经 neck/head 放大到 1.5e-3，
+  **非轻量组件的 bug**（BN eps 试 1e-3/1e-4 反而更差 0.48/0.048，确认 eps=1e-5 正确）。
+- **待办**：仓库侧仍缺 **`PGLoss`（PG-CTC）/ e2e 数据集 / e2e 任务适配器 + 配置**（`torchkiln/tasks/` 无 e2e 任务），
+  故目前框架能**构建+加载+推理**，但还不能在框架内端到端训练/评估。
+
+### 6. E2EMetric 评估排查结论（B/D/E3，重要，勿重蹈）
+- 官方 `tools/eval.py` 报 `f_score_e2e=0`，但**用官方自己的函数手工复算**（`get_socre_A` -> `combine_results(rec_flag=True)`）得
+  **f_score 0.785 / f_score_e2e 0.536**，差 383 倍 -> **是官方 eval 链路喂入数据的问题，不是模型/指标数学**。
+- 已排除：`score_thresh`(0.5->0.05)、`mode`(fast/slow)、输入分辨率(768/1024/1280)、文本大小写(GT 被 `.lower()`)、
+  字典 off-by-one（`peak` 编解码往返正确）、GT 坐标系（`E2EResizeForTest` 不动 `polys`）、GT 内容
+  （数据集 `polys` 是原图坐标、`texts` 索引正确、`ignore_tags` 正常）。
+- `Deteval` 硬门槛：`tr=0.7`(sigma=交/GT面积) + `tp=0.6`(tau=交/预测面积) + **"恰好一个候选"唯一性**；
+  用 `polygon_fast`(shapely `Polygon(...).buffer(0)`) 算面积。
+- 教训：**"官方指标为 0" 不等于 "模型废了"**，务必用官方函数手工复算交叉验证。
+- 模型真实能力（官方函数口径，可复现脚本 `_downloads/ocr/diag_combine.py`）：检测 **f_score 0.785**、
+  **e2e f_score 0.536**（150 epoch / 无预训练 / 结构改过；官方 r50 = 600 epoch / 184MB）。
