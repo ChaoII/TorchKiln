@@ -57,23 +57,33 @@ def _padding_for(k, d, s):
 
 
 class Conv1d(nn.Module):
-    """带 same-padding 的 1D 卷积（对齐 PaddleSpeech 的 Conv1d）。"""
+    """带 same-padding 的 1D 卷积（对齐 PaddleSpeech 的 Conv1d）。
+
+    ⚠️ **PaddleSpeech 默认 ``padding_mode="reflect"``（镜像填充，非零填充）** ——
+    这是与 ``nn.Conv1d`` 默认 ``padding_mode='zeros'`` 的关键差异，
+    漏掉会让第一层输出就差 ~13%（ECAPA ② 的 FAIL 根因）。
+    """
 
     def __init__(self, in_channels, out_channels, kernel_size,
-                 stride=1, dilation=1, padding="same", **kwargs):
+                 stride=1, dilation=1, padding="same", groups=1, bias=True,
+                 padding_mode="reflect", **kwargs):
         super().__init__()
         self.kernel_size = kernel_size
         self.dilation = dilation
         self.stride = stride
-        self.padding_mode = "zeros"
+        self.padding_mode = padding_mode
         if padding == "same":
             p = _padding_for(kernel_size, dilation, stride)
         elif isinstance(padding, int):
             p = padding
         else:
             raise ValueError(f"Padding must be 'same'. Got {padding}")
+        # 与 Paddle 一致: 手动 pad(mode=padding_mode) 后再 conv(padding=0)
+        # torch 的 nn.Conv1d(padding_mode=) 正是这个语义
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size,
-                              stride=stride, dilation=dilation, padding=p)
+                              stride=stride, dilation=dilation,
+                              padding=p, groups=groups, bias=bias,
+                              padding_mode=padding_mode)
 
     def forward(self, x):
         return self.conv(x)

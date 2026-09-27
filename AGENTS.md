@@ -1280,3 +1280,15 @@ fp32 对拍时 ②rel 只有 **6.8e-4**（我的 1e-4 阈值判 FAIL）。**把�
 - **KWS MDTC 已就位待做**：权重 `kws0_mdtc_heysnips_ckpt.tar.gz` 0.1MB + `conf/mdtc.yaml`；
   源码 `kws/models/mdtc.py` 235 行（`DSDilatedConv1d/TCNBlock/TCNStack/MDTC/KWSModel`）
   + **`kws/models/loss.py` 83 行（`padding_mask/fill_mask_elements/max_pooling_loss`，③ 必需）**。
+
+#### ⚠️ ECAPA ② 的 FAIL 根因：PaddleSpeech Conv1d 默认 **reflect 填充**
+- 症状：locks0（仅 conv→ReLU→BN）第一层就 **rel=1.34e-1**，逐层放大到 4.3e-1；embedding 余弦 0.999667。
+- 排查顺序（复用价值高）：① **先证权重加载无误** —— locks.0.conv.conv.weight maxdiff **0.00e+00**、键数 200 全匹配（sp11a_paddle_load_check.py，**只需 paddle，不必装 torch**）；
+  ② 输入 maxdiff=0.00e+00 → 差异只可能在算子 → 读回源码 Conv1d.__init__ 发现第 49 行 **padding_mode="reflect"**，
+  而 _manage_padding 用 F.pad(x, padding, mode=self.padding_mode) ⇒ **是镜像填充，不是零填充**。
+- **修复**：torch 
+n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + conv(padding=0)」语义等价）。
+  修后：locks0 1.34e-1 → **2.57e-4**（↓500×）、mfa 4.29e-1 → 9.99e-4、输出 3.90e-2 → **1.08e-3**、余弦 **0.99999988**。
+- **残余 ~1e-3 疑似 fp32 舍入**（与 PANNs ② 的 fp32 6.8e-4 同量级）→ **下一步用 fp64 判定法确证**（阈值 1e-10）。
+- 另：paddle 3.1.1 的 set_state_dict() **无 eturn_missing=** 参数；PaddleSpeech 的 TDNNBlock.forward(x) **不接受 lengths**（EcapaTdnn.forward 的 try/except 就是为此）。
+- 脚本：sp10a/sp10b_ecapa_fwd.py（②对拍）、sp11a_paddle_load_check.py（①的加载验证，仅需 paddle）。
