@@ -1491,3 +1491,22 @@ um_batches_tracked），形状不符 0；
   特征端 **1.09% 已知差异**，根因已定位到 spectrogram 的低能量端 ——
   **建议 ④ 判据采用「logits + HIT/filler」**，特征差异**如实标注为已知实现差异**（两版 kaldi 移植的数值细节不同）。
 - **进度**：PANNs ①②③④ 全过 | ECAPA ①②③④ 全过 | **MDTC ①②③ 全过，④ 模型端 PASS / 特征端已定位为实现差异**。
+
+###### MDTC ④ 特征差异的第二层定位：**不是**每帧常数偏移，指向 FFT fp32 舍入在 log 域被放大
+- **判别实验**（`sp25b_mdtc_spec.py` 末尾，纯 numpy）：算 `d = paddle_spec - torch_spec`，
+  看它是否沿 bin 维恒定（即"每帧一个加性常数"）：
+  | 量 | 值 | 含义 |
+  |---|---|---|
+  | **每帧内 diff 的 std** | max **0.0407** / mean 0.00074 | **不接近 0** ⇒ **不是**每帧加性常数 |
+  | 每 bin 内 diff 的 std | max 0.0418 | 两方向都有 spread ⇒ **逐 (frame, bin) 分布** |
+  ⇒ **排除"log 能量项统一偏移"假设**，差异在 STFT 内部。
+- **与已有证据合起来的结论**：`spectrogram` 的 `max` 两侧**逐位相同(4.74978)**、只在**低幅值 bin** 差
+  （`rel 1.09e-02` 且集中在能量为负/极小的 bin）⇒ 符合
+  **`log(x)` 对小 x 的 `1/x` 放大 × FFT 的 fp32 舍入**：FFT 在低幅值 bin 的绝对误差 ~1e-7，
+  经 `1/x`（x≈1e-5 时 ×1e5）→ 0.1 量级，与实测 `maxdiff 0.175711` 量级吻合。
+- **一锤定音的实验（尚未做）**：**用 fp64 重跑两侧 `spectrogram`** —— 若差异塌到 ~1e-10
+  ⇒ 确证是 fp32 舍入（同 §PANNs/ECAPA/MDTC 模型侧用过的 fp64 判定法）；若仍是 1e-2 ⇒ 才是真实现差异。
+  （注意：两环境隔离 `paddlex` 只有 paddle/numpy/scipy1.15.3、`ptocr` 只有 torch/torchaudio/scipy1.18.1，
+  **都必须拆两个脚本**；顺带证实两个环境的 scipy 都正常，paddlespeech 的 "scipy broken" 确是其自身检查。）
+- **④ 判据建议（未改判，等 fp64 结论）**：模型端 `logits maxdiff 4.043443e-09` + HIT/filler 一致**已成立**；
+  特征端 1.09% **先记为"待 fp64 确证"**，若 fp64 仍 1e-2 则**如实标为两版 kaldi 移植的已知实现差异**。
