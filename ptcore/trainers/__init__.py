@@ -27,6 +27,7 @@ from ptcore.trainers.semantic import SemanticTrainer
 from ptcore.trainers.video_cls import VideoClsTrainer
 from ptcore.trainers.ts_forecast import TsForecastTrainer
 from ptcore.trainers.kokoro_tts import KokoroTtsTrainer
+from ptcore.trainers.panns_cls import PannsClsTrainer
 
 #: ``Architecture.task`` -> trainer class
 TRAINER_REGISTRY = {
@@ -49,6 +50,7 @@ TRAINER_REGISTRY = {
     "video_cls": VideoClsTrainer,
     "ts_forecast": TsForecastTrainer,
     "kokoro_tts": KokoroTtsTrainer,
+    "panns_cls": PannsClsTrainer,
     # OCR family: text det / rec share one adapter (OcrTask dispatches on algorithm)
     "det": OcrTrainer,
     "rec": OcrTrainer,

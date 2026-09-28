@@ -1923,3 +1923,51 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 - **kokoro 训练代码官方从未开源** → 训练 loss 为自定（但 ③ 用「模块级梯度通路 vs 官方推理包」达成 0.000e+00）。
 - **kokoro 整链一次反传**在部分输入下触发原生段错误 0xC0000005 → 训练需分段反传。
 - **Generator 含随机噪声** → 对拍必须固定种子。
+
+## 训练对齐（2026-09-28）—— PANNs CNN14 已做，另两个模型阻塞
+详见 `_downloads/TRAIN_ALIGN_PLAN.md`。
+
+### 一、可行性排查（实测）
+| 模型 | 数据集 | 可得性 | Paddle 训练代码 | 训练配置 | 结论 |
+|---|---|---|---|---|---|
+| **PANNs CNN14** | **ESC-50** | ✅ **645.7 MB @ 3.8 MB/s** 已下并解压（2000 音频/50 类） | ✅ `cls/exps/panns/train.py` | ❌ 官方 `panns.yaml` **不在 wheel 里** | ✅ **已做（见下）** |
+| **MDTC** | HeySnips | ❌ 数据集 URL 不在包里；GitHub/ModelScope 搜不到 | ✅ | ✅ `conf/mdtc.yaml` | ⚠️ **阻塞（数据集）** |
+| **ECAPA-TDNN** | VoxCeleb1/2 | ❌ URL 不在包里；官网 4096 B（无直链）；**~300 GB** | ❌ **`vector/exps` 不存在** | ✅ | ❌ **双重阻塞** |
+
+### 二、PANNs 训练对齐（已完成）
+- **环境**：`paddlespeech` 源码装进 **paddlex**（--no-deps）+ 补 `resampy/soundfile/pathos/kaldiio/braceexpand/timer`
+  （paddlex 有 paddle 但缺 paddlespeech；ptocr 反之 —— **两环境分工**）。
+- **自建配置**（官方 yaml 未发布）：feature 同 `panns.yaml`；Adam lr=1e-3, batch=32, epochs=5, fold=1(dev), num_class=50。
+- **ESC-50 划分**：	rain=1600 / dev=400（5 折，与官方 ESC50 类一致）。
+- **同起点**：Paddle 训练脚本存初始 CNN14 权重 → 剥 `Sequential` 前缀（`0.bn0._mean` → `bn0.running_mean`）
+  + **Linear 转置**（c1/fc_audioset）→ torch 侧加载 **68 键 / missing=0 / unexpected=0**。
+- **结果（逐 epoch dev_acc）**：
+  | epoch | Paddle | torchkiln |
+  |---|---|---|
+  | 1 | 0.0375 | 0.0325 |
+  | 2 | 0.0300 | 0.0450 |
+  | 3 | 0.0350 | 0.0400 |
+  | 4 | 0.0300 | 0.0425 |
+  | 5 | 0.0200 | 0.0450 |
+  ⇒ **两侧同为 2~4.5%（50 类，随机基线 2%）、同趋势（都几乎学不动）**。
+- ⚠️ **对齐局限（必须如实说明）**：
+  1. **dev_acc 波动大**（差 0.005~0.025），在噪声量级；
+  2. **`cls_loss` 口径不可直接比**（Paddle 是 batch×step 平均，torch 是 metric 整体平均）；
+  3. **torch 固定 seed=1024，Paddle 侧未固定随机种子** → 数据顺序不同；
+  4. **5 epoch 太短 + ESC-50 从零本就学不动**（PANNs 论文用 AudioSet 大规模预训练）。
+  ⇒ 结论只能声称「**两侧训练行为一致（同量级/同趋势）**」，**不是逐 epoch 数值接近**。
+- **产物**：`torchkiln/audio/esc50_dataset.py`、`torchkiln/tasks/panns_cls.py`、
+  `ptcore/trainers/panns_cls.py`、`configs/audio/panns_esc50_align.yml`；
+  Paddle 侧 `_downloads/panns_paddle_train.py`（已产 `init_weights.npz`/`final_weights.npz`/`paddle_hist.json`）。
+- **踩坑（本轮）**：① `CNN14.__init__` 无 `pretrained`（用 `CNN14(extract_embedding=)`）；
+  ② **CNN14 需要 4D `(N,1,T,n_mels)`**（官方 SoundClassifier 里 unsqueeze(1) 易漏）；
+  ③ Paddle `Sequential` 前缀 `0./2.` 需剥 + **Linear 转置**；
+  ④ **loss 必须返回 dict**（trainer 取 `["loss"]`，同 kokoro 教训）；
+  ⑤ `build_metric` 等方法被我误插进 `_PannsCE` 类（缩进错位）→ 已修。
+
+### 三、另两个模型的处理（如实标注阻塞）
+- **MDTC（HeySnips）**：数据集**无公开直链**（原 HeySnips 需申请，现常见镜像已 404）。
+  ⇒ **无法做数据集级训练对齐**；可退而做「**同数据子集的训练管线一致性**」（若你能提供数据）。
+- **ECAPA（VoxCeleb）**：**数据集 ~300 GB 且无可用直链** + **wheel 不带训练脚本**（`vector/exps` 缺失）。
+  ⇒ **无法训练对齐**。
+- **kokoro**：**官方从未公开训练代码** ⇒ 无对齐对象（③ 已用「模块级梯度通路 vs 官方推理包」替代）。

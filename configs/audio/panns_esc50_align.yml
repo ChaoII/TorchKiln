@@ -1,0 +1,86 @@
+# PANNs CNN14 + ESC-50 训练对齐配置（torchkiln 侧）
+# ⚠️ 官方 `panns.yaml` 未随 PaddleSpeech wheel 发布 → 本配置的超参为**本项目自定**，
+#    取值与 Paddle 侧脚本 `_downloads/panns_paddle_train.py` 完全一致，以便对齐：
+#      batch=32, epochs=5, Adam lr=1e-3, fold=1(dev), num_class=50
+Global:
+  model_name: panns_esc50_align
+  debug: false
+  use_gpu: true
+  device: null
+  epoch_num: 5
+  log_smooth_window: 20
+  print_batch_step: 5
+  save_model_dir: ./output/panns_esc50_align
+  save_epoch_step: 1
+  eval_batch_step:
+  - 0
+  - 1000
+  cal_metric_during_train: false
+  pretrained_model: null
+  checkpoints: null
+  save_inference_dir: null
+  output: null
+  use_visualdl: false
+  infer_img: null
+  distributed: false
+  seed: 1024          # 与 Paddle 侧同种子（Paddle 默认 seed 未固定，见 AGENTS 说明）
+  use_ema: false
+  ema_decay: 0.9998
+  ema_decay_type: threshold
+  show_eval_progress: true
+  amp: false
+Architecture:
+  task: panns_cls
+  algorithm: panns
+  num_class: 50
+  # 与 Paddle 侧**同起点**：Paddle 训练脚本存的初始 CNN14 权重（已剥 Sequential 前缀）
+  weights_path: _downloads/speech/panns_train/init_cnn14.npz
+  feature:
+    sr: 32000
+    n_fft: 1024
+    hop_length: 320
+    win_length: 1024
+    window: hann
+    f_min: 50.0
+    f_max: 14000.0
+    n_mels: 64
+Loss:
+  name: CrossEntropyLoss
+Optimizer:
+  name: Adam
+  beta1: 0.9
+  beta2: 0.999
+  lr:
+    name: Const
+    learning_rate: 0.001
+    warmup_epoch: 0
+  regularizer:
+    name: L2
+    factor: 0.0
+Metric:
+  name: PannsClsMetric
+Train:
+  dataset:
+    name: ESC50Dataset
+    data_dir: datasets/esc50
+    split: 1
+    sample_rate: 32000
+  loader:
+    shuffle: true
+    drop_last: false
+    batch_size_per_card: 32
+    num_workers: 0
+    prefetch_factor: 2
+Eval:
+  dataset:
+    name: ESC50Dataset
+    data_dir: datasets/esc50
+    split: 1
+    sample_rate: 32000
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 32
+    num_workers: 0
+    prefetch_factor: 2
+profiler_options: null

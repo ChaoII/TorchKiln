@@ -20,6 +20,7 @@ from torchkiln.tasks.pose_action import PoseActionTask
 from torchkiln.tasks.video_cls import VideoClsTask
 from torchkiln.tasks.ts_forecast import TsForecastTask
 from torchkiln.tasks.kokoro_tts import KokoroTtsTask
+from torchkiln.tasks.panns_cls import PannsClsTask
 
 TASK_REGISTRY = {
     "classify": YoloClsTask,
@@ -41,6 +42,7 @@ TASK_REGISTRY = {
     "video_cls": VideoClsTask,
     "ts_forecast": TsForecastTask,
     "kokoro_tts": KokoroTtsTask,
+    "panns_cls": PannsClsTask,
 }
 
 AVAILABLE = tuple(sorted(TASK_REGISTRY))
