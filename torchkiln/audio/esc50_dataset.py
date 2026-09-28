@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import csv
 import os
-import wave
 
 import numpy as np
 import torch
@@ -20,29 +19,38 @@ __all__ = ["ESC50Dataset", "esc50_collate"]
 
 
 def _read_wav(path, target_sr):
-    with wave.open(path, "rb") as w:
-        nch, sw, sr, nfr = (w.getnchannels(), w.getsampwidth(),
-                            w.getframerate(), w.getnframes())
-        raw = w.readframes(nfr)
-    if sw == 2:
-        a = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-    elif sw == 4:
-        a = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648.0
-    else:
-        a = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128) / 128.0
-    if nch > 1:
-        a = a.reshape(-1, nch).mean(axis=1)
+    """严格复刻 PaddleSpeech `soundfile_backend.soundfile_load` 的读取口径。
+
+    PaddleSpeech ESC50 用 `load_audio(file, sr=32000)`，其实现是：
+      1. `soundfile` 以 **float32** 读取（int16 -> /32768.0，与原样一致）
+      2. `resampy.resample(y, src_sr, target_sr, filter='kaiser_fast')` 重采样
+      3. `normalize(y, 'linear', 1.0)`：`y / (max(|y|) + 1e-8)`
+
+    ⚠️ 之前用 `wave` + `np.interp` 线性插值重采样，与 PaddleSpeech **不同**
+    （线性插值 vs kaiser 窗 sinc），会导致特征有系统差异。已改为同款口径。
+    """
+    import resampy
+    import soundfile as sf
+
+    y, sr = sf.read(path, dtype="float32", always_2d=False)
+    if y.ndim > 1:                      # 多声道 -> 取平均
+        y = y.mean(axis=1)
     if sr != target_sr:
-        n = int(len(a) * target_sr / sr)
-        a = np.interp(np.linspace(0, len(a) - 1, n),
-                      np.arange(len(a)), a).astype(np.float32)
-    return a.astype(np.float32)
+        y = resampy.resample(y, sr, target_sr, filter="kaiser_fast")
+    y = y / (float(np.max(np.abs(y))) + 1e-8)
+    return np.ascontiguousarray(y, dtype=np.float32)
 
 
 class ESC50Dataset(Dataset):
-    """ESC-50 单折（与 PaddleSpeech ESC50 相同的划分口径）。"""
+    """ESC-50 单折（与 PaddleSpeech ESC50 相同的划分口径）。
 
-    def __init__(self, data_dir, mode="train", split=1, sample_rate=32000):
+    ``order_seed``：给定时把样本顺序**按该种子的置换**重排。
+    用于与 Paddle 侧做**共享同一随机顺序**的严格对照（PaddleSpeech 的 ESC50 是
+    class-clustered CSV 顺序，直接 `shuffle=false` 只能得到 class-clustered 的退化训练）。
+    """
+
+    def __init__(self, data_dir, mode="train", split=1, sample_rate=32000,
+                 order_seed=None):
         self.data_dir = data_dir
         self.sample_rate = sample_rate
         self.mode = mode
@@ -55,6 +63,9 @@ class ESC50Dataset(Dataset):
                     self.items.append((row["filename"], int(row["target"])))
                 elif mode != "train" and fold == split:
                     self.items.append((row["filename"], int(row["target"])))
+        if order_seed is not None:
+            perm = np.random.RandomState(int(order_seed)).permutation(len(self.items))
+            self.items = [self.items[i] for i in perm]
 
     def __len__(self):
         return len(self.items)

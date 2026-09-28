@@ -1290,7 +1290,8 @@ fp32 对拍时 ②rel 只有 **6.8e-4**（我的 1e-4 阈值判 FAIL）。**把�
 n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + conv(padding=0)」语义等价）。
   修后：locks0 1.34e-1 → **2.57e-4**（↓500×）、mfa 4.29e-1 → 9.99e-4、输出 3.90e-2 → **1.08e-3**、余弦 **0.99999988**。
 - **残余 ~1e-3 疑似 fp32 舍入**（与 PANNs ② 的 fp32 6.8e-4 同量级）→ **下一步用 fp64 判定法确证**（阈值 1e-10）。
-- 另：paddle 3.1.1 的 set_state_dict() **无 eturn_missing=** 参数；PaddleSpeech 的 TDNNBlock.forward(x) **不接受 lengths**（EcapaTdnn.forward 的 try/except 就是为此）。
+- 另：paddle 3.1.1 的 set_state_dict() **无 
+eturn_missing=** 参数；PaddleSpeech 的 TDNNBlock.forward(x) **不接受 lengths**（EcapaTdnn.forward 的 try/except 就是为此）。
 - 脚本：sp10a/sp10b_ecapa_fwd.py（②对拍）、sp11a_paddle_load_check.py（①的加载验证，仅需 paddle）。
 
 #### ECAPA ①②③ 结果（④ 待做）
@@ -1301,7 +1302,8 @@ n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + co
 - **③ PASS（fp64）**：loss rel **1.67e-08**（阈值 1e-7）、embedding rel 1.43e-08、**可比梯度 138/138**、**非零梯度最差 rel 1.34e-07**（mfa.norm.norm.weight）。
   - ⚠️ **判定方法必须跳过零梯度参数**：sp.conv.conv.bias 的 |grad|max 在 fp64 是 **8.88e-16**（fp32 是 4.77e-6），
     **数学上恒为 0** —— 因为 ASP.conv 的输出进 softmax，**bias 的加性常数被 softmax 平移不变性抵消**。
-    用 el = maxdiff/max|pg| 会因分母过小**虚高到 8.5 / 1.41**（我第一版就误判 FAIL）。
+    用 
+el = maxdiff/max|pg| 会因分母过小**虚高到 8.5 / 1.41**（我第一版就误判 FAIL）。
     **正确做法**：denom < 1e-10 时改用**绝对误差判据**。
 - **脚本**：sp10a/b_ecapa_fwd.py(②) sp12a/b_ecapa_loss.py(③，loss 用 MSE(emb, 固定 target)，
   因为说话人模型输出是 embedding 而非分类 logits) sp13_grad_abs.py(看梯度绝对量级，定位"分母过小虚高")。
@@ -1356,7 +1358,8 @@ n.Conv1d(..., padding_mode="reflect")（与 Paddle 的「手动 reflect-pad + co
 
 #### KWS MDTC 的 2 个待解问题已解（_downloads/sp20_mdtc_probe.py，只需 paddle）
 - **Q1 键结构**：236 键 = **ackbone.* 234 + linear.* 2**；linear.weight = **(32,1)**（Paddle Linear [in,out] → **torch 需 .T** 得 (1,32)）；
-  preprocessor.conv1.conv.weight = **(80,1,5)** ← depthwise 与 torch **同形状，不需转**；eceptive_fields = 184。
+  preprocessor.conv1.conv.weight = **(80,1,5)** ← depthwise 与 torch **同形状，不需转**；
+eceptive_fields = 184。
 - **Q2 输入布局（关键）**：**输入是 (N, T, 80)（帧在前），不是 (N, 80, T)** ——
   | 输入 | 结果 |
   |---|---|
@@ -1643,7 +1646,8 @@ amed_modules 实测）：
 orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 同理）⇒ **两处 missing 同源**。
 - **根因**：AdaIN1d 内的 InstanceNorm1d —— **当前代码 ffine=True（有 weight/bias）**，而**产 kokoro-v1_0.pth 的旧版 ffine=False（无参数）**。
 - **修法（改模型，不改权重 —— 与 Paddle 侧相反）**：移植到 	orchkiln 时把该 InstanceNorm1d 构造成 **ffine=False** → missing=0。
-  （⚠️ 若 	rack_running_stats 也有差异，missing 里会多出 unning_mean/var；实测 missing 只有 weight/bias ⇒ 只差 ffine。）
+  （⚠️ 若 	rack_running_stats 也有差异，missing 里会多出 
+unning_mean/var；实测 missing 只有 weight/bias ⇒ 只差 ffine。）
 - **验证口径**：修后 predictor/decoder 应达 missing=0 / unexpected=0，① 即 PASS（ert/bert_encoder/text_encoder 已 PASS）。
 - **对齐基准**（与前三个模型不同）：kokoro 是纯 torch ⇒ **②③④ 与官方 kokoro 包逐层对拍**（+fp64 判定法）。
 
@@ -1662,9 +1666,13 @@ orm1/norm2 × weight/bias = **24 = predictor 的 missing=24**（decoder 的 116 
 - **踩过的桩包坑**：load_kokoro() 第二次调用时 importlib.find_spec 抛 **ValueError: kokoro.__spec__ is None**
   （桩包把 __spec__ 置 None 后，ind_spec **抛异常而非返回 None**）→ 用 **	ry/except ValueError + 模块级 _ROOT 缓存** 解决。
 - **下一步（kokoro ②③④）**：对齐基准是**官方 kokoro 包**（纯 torch，无跨框架）：
-  ② 同 input_ids+ef_s 逐层前向 vs 官方（+**fp64 判定法**）→ ③ 同输入 loss/梯度 →
+  ② 同 input_ids+
+ef_s 逐层前向 vs 官方（+**fp64 判定法**）→ ③ 同输入 loss/梯度 →
   ④ 推理指标（TTS 口径：波形/频谱一致性 或 pred_dur 对齐）。
-  ⚠️ ef_s 是 1×512 的 style 向量（s = ref_s[:,128:] 给 predictor、ef_s[:,:128] 给 decoder）—— 需固定随机 ef_s 对拍。
+  ⚠️ 
+ef_s 是 1×512 的 style 向量（s = ref_s[:,128:] 给 predictor、
+ef_s[:,:128] 给 decoder）—— 需固定随机 
+ef_s 对拍。
 
 ###### ⚠️ 方案 A（拉官方训练脚本）**不可行**：hexgrad 从未开源 kokoro 训练代码
 - **hexgrad/kokoro 仓库 108 文件全清单**（kokoro_repo_probe.py / 	ree.json，	runcated=False）：
@@ -1924,7 +1932,7 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 - **kokoro 整链一次反传**在部分输入下触发原生段错误 0xC0000005 → 训练需分段反传。
 - **Generator 含随机噪声** → 对拍必须固定种子。
 
-## 训练对齐（2026-09-28）—— PANNs CNN14 已做，另两个模型阻塞
+## 训练对齐（2026-09-28）—— PANNs CNN14 已做"扎实"对齐；另两个模型阻塞
 详见 `_downloads/TRAIN_ALIGN_PLAN.md`。
 
 ### 一、可行性排查（实测）
@@ -1934,36 +1942,92 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 | **MDTC** | HeySnips | ❌ 数据集 URL 不在包里；GitHub/ModelScope 搜不到 | ✅ | ✅ `conf/mdtc.yaml` | ⚠️ **阻塞（数据集）** |
 | **ECAPA-TDNN** | VoxCeleb1/2 | ❌ URL 不在包里；官网 4096 B（无直链）；**~300 GB** | ❌ **`vector/exps` 不存在** | ✅ | ❌ **双重阻塞** |
 
-### 二、PANNs 训练对齐（已完成）
-- **环境**：`paddlespeech` 源码装进 **paddlex**（--no-deps）+ 补 `resampy/soundfile/pathos/kaldiio/braceexpand/timer`
-  （paddlex 有 paddle 但缺 paddlespeech；ptocr 反之 —— **两环境分工**）。
-- **自建配置**（官方 yaml 未发布）：feature 同 `panns.yaml`；Adam lr=1e-3, batch=32, epochs=5, fold=1(dev), num_class=50。
-- **ESC-50 划分**：	rain=1600 / dev=400（5 折，与官方 ESC50 类一致）。
-- **同起点**：Paddle 训练脚本存初始 CNN14 权重 → 剥 `Sequential` 前缀（`0.bn0._mean` → `bn0.running_mean`）
-  + **Linear 转置**（c1/fc_audioset）→ torch 侧加载 **68 键 / missing=0 / unexpected=0**。
-- **结果（逐 epoch dev_acc）**：
-  | epoch | Paddle | torchkiln |
+### 二、PANNs 训练对齐（已完成，"扎实"版）
+
+#### 2.1 环境与配置
+- **`paddlex`**：装 `paddlespeech`（`--no-deps`，只要源码）+ `resampy/soundfile/pathos/kaldiio/braceexpand/timer`。
+- **`ptocr`**：另补 `soundfile/resampy`（为了在 torch 侧**逐位复刻** PaddleSpeech 的音频读取口径）。
+- **自建配置**（官方 yaml 未发布）：feature 同 `panns.yaml`；`Adam lr=1e-3, batch=32, fold=1(dev), num_class=50`。
+- **ESC-50 划分**：`train=1600 / dev=400`（5 折，与官方 `ESC50` 类一致）。
+
+#### 2.2 ⭐ 本轮发现并修掉的**两处真实差异**
+1. **波形读取口径修正**（`torchkiln/audio/esc50_dataset.py::_read_wav`）
+   - 原实现：`wave` 读 + `np.interp` **线性插值重采样**；
+   - PaddleSpeech：`soundfile(float32)` + **`resampy(kaiser_fast)`** + `normalize(linear, 1e-8)`；
+   - 改后同文件波形 **maxdiff = 5.96e-08**（= float32 机器精度）⇒ **逐位对齐**。
+2. **梯度裁剪差异（`ptcore/trainers/base.py`）—— 最关键的系统性差异**
+   - 框架训练器**硬编码** `clip_grad_norm_(max_norm=10.0)`（对齐 ultralytics）；
+   - **PaddleSpeech 的 PANNs 训练循环完全不裁剪**；
+   - 实测 PANNs **全局梯度 L2 范数 81~94**（batch=32）⇒ 框架的裁剪**实际生效**，每步被缩到
+     10/88 ≈ **1/9**，训练显著更慢；
+   - **修法**：阈值改为**可配置** `Optimizer.clip_grad_norm`（**默认仍 10.0，行为不变**），
+     设 `null` 可关闭；PANNs 对齐配置里设为 `null`。
+
+#### 2.3 实现级对齐证据（全部可复现）
+| 项目 | 结果 |
+|---|---|
+| ① 权重加载 | Paddle→torch **70 键 / missing=0 / unexpected=0（含 50 类头）** ✅ |
+| ① 数据（波形） | 同文件 **maxdiff 5.96e-08**（float32 机器精度）✅ |
+| ① 数据（次序） | `order_seed` 共享置换下，首个 batch 标签与 perm **逐位相同** ✅ |
+| ② 特征 | `PannsFEATURE`(torchaudio) vs `LogMelSpectrogram`(paddle)：rel **6.76e-05**；且 log 公式一致
+（Paddle `power_to_db(ref=1.0, amin=1e-10, top_db=None)` ≡ 我方 `10*log10(clamp(x,1e-10))`）|
+| ② 前向（eval） | 同权重 + 同批 32 样本 logits：maxdiff 0.1647 / rel **7.48e-04** ✅ |
+| ② BN 语义 | Paddle `BatchNorm2D(momentum=0.9)` vs torch `(momentum=0.1)`：同输入下 `moving_mean` **逐位相同** ✅ |
+| ② 优化器 | `build_optimizer` 的 Adam（betas 0.9/0.999、eps 1e-8、wd 0）与 Paddle 默认**一致** ✅ |
+
+#### 2.4 ⭐ 训练动力学：**早期一致，之后混沌放大**
+- **共享随机顺序 + 共享权重**的 `order30` 对照（`configs/audio/panns_esc50_order30.yml` ↔
+  `_downloads/panns_paddle_order30.py`，两侧同一 `np.random.RandomState(1024).permutation(1600)`）：
+  | epoch | Paddle dev_loss | torch dev_loss |
   |---|---|---|
-  | 1 | 0.0375 | 0.0325 |
-  | 2 | 0.0300 | 0.0450 |
-  | 3 | 0.0350 | 0.0400 |
-  | 4 | 0.0300 | 0.0425 |
-  | 5 | 0.0200 | 0.0450 |
-  ⇒ **两侧同为 2~4.5%（50 类，随机基线 2%）、同趋势（都几乎学不动）**。
-- ⚠️ **对齐局限（必须如实说明）**：
-  1. **dev_acc 波动大**（差 0.005~0.025），在噪声量级；
-  2. **`cls_loss` 口径不可直接比**（Paddle 是 batch×step 平均，torch 是 metric 整体平均）；
-  3. **torch 固定 seed=1024，Paddle 侧未固定随机种子** → 数据顺序不同；
-  4. **5 epoch 太短 + ESC-50 从零本就学不动**（PANNs 论文用 AudioSet 大规模预训练）。
-  ⇒ 结论只能声称「**两侧训练行为一致（同量级/同趋势）**」，**不是逐 epoch 数值接近**。
-- **产物**：`torchkiln/audio/esc50_dataset.py`、`torchkiln/tasks/panns_cls.py`、
-  `ptcore/trainers/panns_cls.py`、`configs/audio/panns_esc50_align.yml`；
-  Paddle 侧 `_downloads/panns_paddle_train.py`（已产 `init_weights.npz`/`final_weights.npz`/`paddle_hist.json`）。
-- **踩坑（本轮）**：① `CNN14.__init__` 无 `pretrained`（用 `CNN14(extract_embedding=)`）；
-  ② **CNN14 需要 4D `(N,1,T,n_mels)`**（官方 SoundClassifier 里 unsqueeze(1) 易漏）；
-  ③ Paddle `Sequential` 前缀 `0./2.` 需剥 + **Linear 转置**；
-  ④ **loss 必须返回 dict**（trainer 取 `["loss"]`，同 kokoro 教训）；
-  ⑤ `build_metric` 等方法被我误插进 `_PannsCE` 类（缩进错位）→ 已修。
+  | 1 | 14.814 | 6.873 |
+  | **2** | **3.815** | **3.842** ← 几乎一致 |
+  | 3 | 3.666 | 3.800 |
+  | 5 | 3.432 | 3.790 |
+  | 30 | **2.199** | **2.764** |
+  - dev_acc 终值 Paddle **0.3500** / torch **0.2000**；**逐 epoch 相关系数 0.8978**。
+> ⚠️ **未完全解释的残差（如实标注）**：`order30` 下 Paddle 终值 **0.3500**（均值 0.1769）仍**明显高于** torch 两次（0.1900 / 0.1625，均值 0.0927 / 0.0903），而 torch 自身 seed 极差仅 0.0275 ⇒ **该差距未被 torch 自身随机性完全解释**。可能来源：① 内置 dropout 的混沌放大在此 regime 下具有方向性；② 仍存在一处 ~1e-4 量级的系统性差异（mel fp32 FFT 是唯一非逐位对齐的输入环节）被学习动力学放大。**在 `ctrl30`（慢学习）下该差异不显现（轨迹重合）**。后续若要继续收敛，应优先排查 mel 特征。
+
+- **在慢学习配置**（CSV 原序，`ctrl30`）下 30 epoch 轨迹**几乎重合**：
+  dev_acc 均值 Paddle **0.0459** / torch **0.0467（差 0.0008）**，dev_loss 末值 3.468 / 3.418。
+- ⇒ **两侧实现一致（早期/慢学习 regime 逐点吻合），但一旦模型"学起来"就分道扬镳** —— 这是
+  **混沌放大**：CNN14 **内置 dropout（`p=0.2`×6 + `p=0.5`×2）的 mask 无法跨框架同步**，
+  再叠加 fp32 的 FFT/卷积噪声（~1e-4）。**逐 epoch 数值接近在本模型上原理上不可达**
+  （同框架换 seed 亦有差异：torch `order30` 两次仅换 seed 得 **0.1900 / 0.1625**，均值 0.0927 / 0.0903）。
+
+#### 2.5 方差量化（shuffle=True 主对比，两侧**初始化不同** ⇒ 不可直接比绝对值）
+| run（30ep） | dev_acc 末值 | dev_acc 均值 |
+|---|---|---|
+| Paddle seed1024 | 0.1150 | 0.0830 |
+| Paddle seed7 | 0.0875 | 0.0597 |
+| torch seed1024 | 0.3050 | 0.1751 |
+| torch seed7 | 0.2400 | 0.1330 |
+| torch seed2026 | 0.2425 | 0.1092 |
+- Paddle 自身跨 seed 末值极差 **0.0275**；torch 自身 **0.0650**（std 0.0301）。差距主要来自
+  **各自随机的骨干/头初始化**（两侧用的不是同一份 init），**不是实现差异**。
+
+#### 2.6 产物
+- **框架侧**：`torchkiln/audio/esc50_dataset.py`（修正读取口径 + `order_seed`）、`torchkiln/tasks/panns_cls.py`、
+  `ptcore/trainers/panns_cls.py`、`ptcore/trainers/base.py`（`Optimizer.clip_grad_norm` 可配置）、
+  `configs/audio/panns_esc50_align.yml`（主对比）、`panns_esc50_ctrl30.yml`（共享 CSV 序对照）、
+  `panns_esc50_order30.yml`（共享随机序对照）。
+- **Paddle 侧脚本**（`_downloads/`）：`panns_paddle_train.py` / `panns_paddle_train2.py`(30ep, 支持 seed) /
+  `panns_paddle_ctrl30.py` / `panns_paddle_order30.py`；权重交接 `*_init_full.npz` → `*_init_torch.npz`
+  （`ctrl_init_convert.py`）；分析 `panns_align_compare.py` / `panns_seed_variance.py` /
+  `panns_optstep_a|b.py`（单步优化器对拍）/ `esc50_wav_a|b.py` / `check_order_a|b.py`。
+- **回归**：`tools/check_graph_build.py` **55 OK / 0 FAIL**。
+
+#### 2.7 踩坑（本轮）
+- ① `CNN14.__init__` 无 `pretrained`（用 `CNN14(extract_embedding=)`）；
+- ② **CNN14 需要 4D `(N,1,T,n_mels)`**（官方 `SoundClassifier` 里 `unsqueeze(1)` 易漏）；
+- ③ Paddle `Sequential(CNN14, Linear)` 键为 `0.*` / `1.*` ⇒ **剥前缀 + Linear 转置 + `_mean/_variance→running_*`**；
+- ④ **loss 必须返回 dict**（trainer 取 `["loss"]`，同 kokoro）；`labels` 是 `[wav,label]` **list**；
+- ⑤ `build_metric` 等方法被误插进 `_PannsCE` 类（缩进错位）→ 已修；
+- ⑥ **PowerShell `>` 重定向默认 UTF-16**（带 BOM）⇒ 读训练日志必须按 `utf-16` 解码，否则正则全不匹配；
+- ⑦ Windows 上 **torch eval 的 DataLoader `num_workers>0` 会 "worker exited unexpectedly"** ⇒ 评估用 0；
+- ⑧ 异常退出会**留下孤儿 DataLoader worker**（占数 GB 宿主内存）⇒ 后续进程可能报
+  `OSError: [WinError 1114] ... shm.dll` 或 Paddle `CUDNN_STATUS_INTERNAL_ERROR_HOST_ALLOCATION_FAILED`；
+  **对策：`Stop-Process -Name python -Force` 后重跑**。
 
 ### 三、另两个模型的处理（如实标注阻塞）
 - **MDTC（HeySnips）**：数据集**无公开直链**（原 HeySnips 需申请，现常见镜像已 404）。

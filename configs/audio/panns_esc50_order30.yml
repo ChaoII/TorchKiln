@@ -1,17 +1,20 @@
-# PANNs CNN14 + ESC-50 训练对齐配置（torchkiln 侧）
-# ⚠️ 官方 `panns.yaml` 未随 PaddleSpeech wheel 发布 → 本配置的超参为**本项目自定**，
-#    取值与 Paddle 侧脚本 `_downloads/panns_paddle_train.py` 完全一致，以便对齐：
-#      batch=32, epochs=5, Adam lr=1e-3, fold=1(dev), num_class=50
+# PANNs CNN14 + ESC-50 **共享随机顺序**对照（30 epoch，torchkiln 侧）
+# 与 `_downloads/panns_paddle_order30.py` 严格同条件：
+#   * order_seed: 1024 -> 两侧用**同一 numpy 置换**打乱训练集顺序（可复现的"随机 shuffle"）
+#                        这样训练处于"能学得动"的真实 regime（ESC-50 CSV 是 class-clustered）
+#   * dropout: 0.0      -> 关闭**外层** dropout（CNN14 内置 dropout 无法关，见 AGENTS 说明）
+#   * weights_path      -> Paddle 存的完整初始权重（含 50 类头）-> 严格同起点
+#   * clip_grad_norm: null -> 与 PaddleSpeech 一致（不裁剪）
 Global:
-  model_name: panns_esc50_align
+  model_name: panns_esc50_order30
   debug: false
   use_gpu: true
   device: null
   epoch_num: 30
   log_smooth_window: 20
-  print_batch_step: 5
-  save_model_dir: ./output/panns_esc50_align
-  save_epoch_step: 5
+  print_batch_step: 10
+  save_model_dir: ./output/panns_esc50_order30
+  save_epoch_step: 10
   eval_batch_step:
   - 0
   - 1000
@@ -23,7 +26,7 @@ Global:
   use_visualdl: false
   infer_img: null
   distributed: false
-  seed: 1024          # 与 Paddle 侧同种子（Paddle 默认 seed 未固定，见 AGENTS 说明）
+  seed: 1024
   use_ema: false
   ema_decay: 0.9998
   ema_decay_type: threshold
@@ -33,8 +36,8 @@ Architecture:
   task: panns_cls
   algorithm: panns
   num_class: 50
-  # 与 Paddle 侧**同起点**：Paddle 训练脚本存的初始 CNN14 权重（已剥 Sequential 前缀）
-  weights_path: _downloads/speech/panns_train/init_cnn14.npz
+  dropout: 0.0
+  weights_path: _downloads/speech/panns_train/order30_init_torch.npz
   feature:
     sr: 32000
     n_fft: 1024
@@ -50,8 +53,6 @@ Optimizer:
   name: Adam
   beta1: 0.9
   beta2: 0.999
-  # ⚠️ PaddleSpeech 的 PANNs 训练循环**不做梯度裁剪**（实测梯度范数 81~94），
-  #    而框架默认 clip_grad_norm=10.0（对齐 ultralytics）-> 这里设 null 关闭以对齐。
   clip_grad_norm: null
   lr:
     name: Const
@@ -68,8 +69,9 @@ Train:
     data_dir: datasets/esc50
     split: 1
     sample_rate: 32000
+    order_seed: 1024
   loader:
-    shuffle: true
+    shuffle: false
     drop_last: false
     batch_size_per_card: 32
     num_workers: 4
@@ -84,7 +86,6 @@ Eval:
     shuffle: false
     drop_last: false
     batch_size_per_card: 32
-    # ⚠️ Windows 上 eval 多进程 worker 会 "exited unexpectedly" -> 用 0
     num_workers: 0
     prefetch_factor: 2
 profiler_options: null

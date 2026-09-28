@@ -306,6 +306,12 @@ class BaseTrainer:
             )
         self.ema_model = None
 
+        # 梯度裁剪阈值（框架默认 10.0，对齐 ultralytics）。
+        # ⚠️ 个别上游实现（如 PaddleSpeech 的 PANNs 训练脚本）**不做裁剪**；
+        #    做训练对齐时可用 `Optimizer.clip_grad_norm: null` 关闭。
+        self.clip_grad_norm = (config.get("Optimizer", {}) or {}).get(
+            "clip_grad_norm", 10.0)
+
         # mixed precision (opt-in; keeps fp32 master weights)
         self.use_amp = bool(gcfg.get("amp", False)) and self.device.type == "cuda"
         self.scaler = None
@@ -686,15 +692,18 @@ class BaseTrainer:
 
             micro = self.accumulate
             do_step = ((idx + 1) % micro == 0) or (idx + 1 >= max_iter)
-            # 对齐 ultralytics:梯度**累积求和**(不除以 accumulate);每步做梯度裁剪(unscale+clip=10)。
+            # 对齐 ultralytics:梯度**累积求和**(不除以 accumulate);每步做梯度裁剪(unscale+clip)。
+            # 裁剪阈值 `self.clip_grad_norm`（默认 10.0；设为 null 可关闭，用于对齐不裁剪的上游实现）。
             scaled = loss
             if self.scaler is not None:
                 self.scaler.scale(scaled).backward()
                 if do_step:
                     self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(
-                        self._raw_model().parameters(), max_norm=10.0, foreach=False
-                    )
+                    if self.clip_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            self._raw_model().parameters(),
+                            max_norm=float(self.clip_grad_norm), foreach=False
+                        )
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                     self.optimizer.zero_grad()
@@ -702,9 +711,11 @@ class BaseTrainer:
             else:
                 scaled.backward()
                 if do_step:
-                    torch.nn.utils.clip_grad_norm_(
-                        self._raw_model().parameters(), max_norm=10.0, foreach=False
-                    )
+                    if self.clip_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            self._raw_model().parameters(),
+                            max_norm=float(self.clip_grad_norm), foreach=False
+                        )
                     self.optimizer.step()
                     self.optimizer.zero_grad()
                     self.lr_scheduler.step()

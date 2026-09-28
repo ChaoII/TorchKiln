@@ -1,16 +1,18 @@
-# PANNs CNN14 + ESC-50 训练对齐配置（torchkiln 侧）
-# ⚠️ 官方 `panns.yaml` 未随 PaddleSpeech wheel 发布 → 本配置的超参为**本项目自定**，
-#    取值与 Paddle 侧脚本 `_downloads/panns_paddle_train.py` 完全一致，以便对齐：
-#      batch=32, epochs=5, Adam lr=1e-3, fold=1(dev), num_class=50
+# PANNs CNN14 + ESC-50 **确定性对照**配置（torchkiln 侧）
+# 目的：消除随机性后检验两侧逐 epoch 轨迹是否几乎重合。
+#   * shuffle: false     -> 与 Paddle 侧同序（CSV 顺序），mini-batch 完全相同
+#   * dropout: 0.0       -> 无 RNG mask 差异
+#   * weights_path 指向 Paddle 侧存的**完整**初始权重（含 50 类分类头 fc）-> 严格同起点
+# 其余同 `panns_esc50_align.yml`：Adam lr=1e-3, batch=32, fold=1(dev), num_class=50。
 Global:
-  model_name: panns_esc50_align
+  model_name: panns_esc50_ctrl
   debug: false
   use_gpu: true
   device: null
-  epoch_num: 30
+  epoch_num: 10
   log_smooth_window: 20
   print_batch_step: 5
-  save_model_dir: ./output/panns_esc50_align
+  save_model_dir: ./output/panns_esc50_ctrl
   save_epoch_step: 5
   eval_batch_step:
   - 0
@@ -23,7 +25,7 @@ Global:
   use_visualdl: false
   infer_img: null
   distributed: false
-  seed: 1024          # 与 Paddle 侧同种子（Paddle 默认 seed 未固定，见 AGENTS 说明）
+  seed: 1024
   use_ema: false
   ema_decay: 0.9998
   ema_decay_type: threshold
@@ -33,8 +35,9 @@ Architecture:
   task: panns_cls
   algorithm: panns
   num_class: 50
-  # 与 Paddle 侧**同起点**：Paddle 训练脚本存的初始 CNN14 权重（已剥 Sequential 前缀）
-  weights_path: _downloads/speech/panns_train/init_cnn14.npz
+  dropout: 0.0
+  # Paddle 侧 ctrl 脚本存的「完整初始权重」，含分类头 -> 严格同起点
+  weights_path: _downloads/speech/panns_train/ctrl_init_torch.npz
   feature:
     sr: 32000
     n_fft: 1024
@@ -50,9 +53,6 @@ Optimizer:
   name: Adam
   beta1: 0.9
   beta2: 0.999
-  # ⚠️ PaddleSpeech 的 PANNs 训练循环**不做梯度裁剪**（实测梯度范数 81~94），
-  #    而框架默认 clip_grad_norm=10.0（对齐 ultralytics）-> 这里设 null 关闭以对齐。
-  clip_grad_norm: null
   lr:
     name: Const
     learning_rate: 0.001
@@ -69,11 +69,11 @@ Train:
     split: 1
     sample_rate: 32000
   loader:
-    shuffle: true
+    shuffle: false
     drop_last: false
     batch_size_per_card: 32
-    num_workers: 4
-    prefetch_factor: 4
+    num_workers: 0
+    prefetch_factor: 2
 Eval:
   dataset:
     name: ESC50Dataset
@@ -84,7 +84,6 @@ Eval:
     shuffle: false
     drop_last: false
     batch_size_per_card: 32
-    # ⚠️ Windows 上 eval 多进程 worker 会 "exited unexpectedly" -> 用 0
     num_workers: 0
     prefetch_factor: 2
 profiler_options: null

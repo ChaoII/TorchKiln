@@ -79,25 +79,36 @@ class PannsClsTask(TaskAdapter):
         arch = config["Architecture"]
         from torchkiln.audio.panns import CNN14
         bb = CNN14(extract_embedding=True)
+        m = PannsClassifier(bb, arch.get("num_class", 50),
+                            dropout=arch.get("dropout", 0.1),
+                            feat_conf=arch.get("feature"))
         w = arch.get("weights_path")
         if w:
             import os
             import numpy as np
             if w.endswith(".npz") and os.path.isfile(w):     # 与 Paddle 同起点
                 sd = dict(np.load(w))
-                # 只取 backbone 用得到的键（含 fc1；fc_audioset 是 527 类，本任务 50 类不用）
-                sub = {k: torch.as_tensor(v) for k, v in sd.items()
-                       if k in bb.state_dict()}
-                r = bb.load_state_dict(sub, strict=False)
+                # 载入**整个模型**（backbone + 可选分类头 fc）：
+                #   * `init_cnn14.npz`  只有 backbone -> fc 保持随机（微调场景）
+                #   * `ctrl_init_torch.npz` 含 fc -> 严格同起点（确定性对照场景）
+                # 键名前缀兼容：npz 里可能是裸 `bn0.*`（需补 `backbone.`）或已带前缀。
+                msd = m.state_dict()
+                sub = {}
+                for k, v in sd.items():
+                    if k in msd:
+                        sub[k] = torch.as_tensor(v)
+                    elif ("backbone." + k) in msd:
+                        sub["backbone." + k] = torch.as_tensor(v)
+                r = m.load_state_dict(sub, strict=False)
                 miss = [k for k in r.missing_keys
-                        if "num_batches_tracked" not in k]
-                print("[panns_cls] 同起点加载: 用 %d 键, missing=%d, unexpected=%d"
-                      % (len(sub), len(miss), len(r.unexpected_keys)))
+                        if "num_batches_tracked" not in k
+                        and not k.endswith((".window", ".fb"))]  # 非训练 buffer
+                print("[panns_cls] 同起点加载: 用 %d 键 (含头=%s), missing=%d, unexpected=%d"
+                      % (len(sub), any(k.startswith("fc.") for k in sub),
+                         len(miss), len(r.unexpected_keys)))
             elif os.path.isfile(w):
                 ck = torch.load(w, map_location="cpu", weights_only=False)
-                bb.load_state_dict(ck.get("state_dict", ck), strict=False)
-        m = PannsClassifier(bb, arch.get("num_class", 50),
-                            feat_conf=arch.get("feature"))
+                m.load_state_dict(ck.get("state_dict", ck), strict=False)
         return m
 
     def build_loss(self, config, model):
@@ -111,12 +122,14 @@ class PannsClsTask(TaskAdapter):
         e = config.get("Eval", {}).get("dataset", {}) or {}
         tr = ESC50Dataset(d["data_dir"], mode="train",
                           split=d.get("split", 1),
-                          sample_rate=d.get("sample_rate", 32000))
+                          sample_rate=d.get("sample_rate", 32000),
+                          order_seed=d.get("order_seed"))
         ev = None
         if e.get("data_dir"):
             ev = ESC50Dataset(e["data_dir"], mode="dev",
                               split=e.get("split", 1),
-                              sample_rate=e.get("sample_rate", 32000))
+                              sample_rate=e.get("sample_rate", 32000),
+                              order_seed=e.get("order_seed"))
         return tr, ev
 
     # ---- data ----
