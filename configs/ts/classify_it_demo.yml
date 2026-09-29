@@ -1,0 +1,71 @@
+# 时序分类 demo（inception_time）—— 合成 3 类工况 datasets/ts_classify_demo/data.csv
+Global:
+  model_name: ts-classify-inception_time-demo
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 15
+  print_batch_step: 20
+  save_model_dir: ./output/ts_classify_inception_time_demo
+  save_epoch_step: 15
+  eval_batch_step: null      # 只按 epoch 评估
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: false
+Architecture:
+  model_family: ts_classify
+  task: ts_classify
+  train: true
+  algorithm: inception_time
+  in_chunk_len: 96
+  num_features: 3
+  num_classes: 3
+  kernel_size: 41
+  block_out_size: 32
+  block_depth: 6
+  use_residual: true
+  use_bottleneck: true
+Loss:
+  name: CrossEntropyLoss
+Metric:
+  main_indicator: accuracy
+Optimizer:
+  name: Adam
+  lr:
+    name: Const
+    learning_rate: 0.001
+    warmup_epoch: 0
+  regularizer:
+    name: L2
+    factor: 0.0
+Train:
+  dataset:
+    name: TSClassifyDataset
+    csv_path: datasets/ts_classify_demo/data.csv
+    label_col: label
+    in_chunk_len: 96
+    stride: 8
+    split_ratio: [0.6, 0.2, 0.2]
+    label_mode: majority
+  loader:
+    shuffle: true
+    drop_last: false
+    batch_size_per_card: 32
+    num_workers: 0
+Eval:
+  dataset:
+    name: TSClassifyDataset
+    csv_path: datasets/ts_classify_demo/data.csv
+    label_col: label
+    in_chunk_len: 96
+    stride: 8
+    split_ratio: [0.6, 0.2, 0.2]
+    label_mode: majority
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 32
+    num_workers: 0

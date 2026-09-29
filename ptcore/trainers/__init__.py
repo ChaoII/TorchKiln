@@ -27,6 +27,7 @@ from ptcore.trainers.semantic import SemanticTrainer
 from ptcore.trainers.video_cls import VideoClsTrainer
 from ptcore.trainers.ts_forecast import TsForecastTrainer
 from ptcore.trainers.ts_anomaly import TsAnomalyTrainer
+from ptcore.trainers.ts_classify import TsClassifyTrainer
 from ptcore.trainers.kokoro_tts import KokoroTtsTrainer
 from ptcore.trainers.panns_cls import PannsClsTrainer
 
@@ -51,6 +52,7 @@ TRAINER_REGISTRY = {
     "video_cls": VideoClsTrainer,
     "ts_forecast": TsForecastTrainer,
     "ts_anomaly": TsAnomalyTrainer,
+    "ts_classify": TsClassifyTrainer,
     "kokoro_tts": KokoroTtsTrainer,
     "panns_cls": PannsClsTrainer,
     # OCR family: text det / rec share one adapter (OcrTask dispatches on algorithm)

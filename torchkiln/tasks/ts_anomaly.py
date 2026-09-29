@@ -34,7 +34,14 @@ class TsAnomalyTask(TaskAdapter):
     def build_post_process(self, config):
         return None
 
+    def _kind(self, config):
+        """⚠️ BaseTrainer 用**无 config** 的 `get_task(name)` 构造任务，
+        故 `__init__` 里的 kind 是默认值；这里每次都从 config 重新取。"""
+        k = str((config.get("Architecture") or {}).get("algorithm", "ae")).lower()
+        return "anomaly_transformer" if k in ("at", "anomalytransformer") else k
+
     def build_model(self, config, post_process):
+        self.kind = self._kind(config)
         arch = config["Architecture"]
         L = int(arch.get("in_chunk_len", 100))
         C = int(arch.get("num_features", 1))
@@ -85,6 +92,7 @@ class TsAnomalyTask(TaskAdapter):
         return net
 
     def build_loss(self, config, model):
+        self.kind = self._kind(config)
         arch = config["Architecture"]
         loss_cfg = config.get("Loss", {}) or {}
         post = config.get("PostProcess", {}) or {}
