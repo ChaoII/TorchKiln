@@ -192,7 +192,6 @@ tkiln check -c configs/plate/plate_det.yml
 |---|---|
 | **参数量** | **≈0.35 M** |
 | **权重大小** | **1.08 MB**（`plate_detect.pth`） |
-| FLOPs | ⚠️ 本框架未集成 FLOPs 统计 |
 | 本机推理 | 毫秒级（1 MB 模型，远快于 yolo11n） |
 | 训练显存 | batch16@640 < 2 GB |
 | 对比 yolo11n | 参数 **1/7.4**、体积 **1/5** |
@@ -202,21 +201,30 @@ tkiln check -c configs/plate/plate_det.yml
 
 ---
 
-## 6. 公开指标
-
-| 项 | 说明 |
-|---|---|
-| 数据集 | 车牌数据集（业务私有，`datasets/` 不入库） |
-| 指标 | mAP50 / mAP50-95 / mAP75 |
-| 口径纪律 | ⚠️ **必须用同一评估器评双方权重**（ultra 自报 mAP 默认 `rect=True` 会抬高数值） |
-
-> ℹ️ 本框架**未对 plate_det 做与 ultralytics 的逐位对齐**（业务定制模型），
-> 故不列「框架 vs 官方」对比数字 —— **不编造未验证的数据**。
-> 结构层面的对齐已由 v5 家族整体验证（v5nu n/s/m/l/x 全 missing=0，
-> 单步 loss 15.830602 ↔ 15.830601）。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **1.47 GFLOPs** |
+| **MACs** | **0.73 GMACs** |
+| 参数量 | **0.447 M** |
+| 输入规格 | `nc=1, 640x640` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 推荐 | 理由 |

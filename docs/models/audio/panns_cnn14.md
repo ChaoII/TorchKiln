@@ -154,52 +154,30 @@ tkiln val   -c configs/audio/panns_esc50_align.yml --weights output/panns_esc50_
 
 ---
 
-## 6. 公开指标
-
-### 6.1 ⭐ 四条对齐全过（同权重、同输入）
-
-| # | 项 | 结果 |
-|---|---|---|
-| ① | 权重加载 | **missing=0 / unexpected=0**（68 键 / 80.77M）；转换规则仅 2 条：`_mean/_variance → running_*`、`fc1/fc_audioset` 两个 **Linear `.T`**（Conv 4D 同形不转） |
-| ② | 逐层前向 | **fp64 rel 3.55e-11**（`bn0` 4.04e-16 = 精度极限）；fp32 下 top-5 一致、输出 maxdiff 3.9e-05 |
-| ③ | 单步 loss/梯度 | **fp64 loss 6.46e-12**；全 **42/42** 个参数梯度 **2.72e-11** |
-| ④ | 同权重推理指标 | probs **最大差 0.000034**（阈值 0.02）；**top-5 完全一致**；特征 rel **3.79e-05** |
-
-> ⭐ **方法论**：fp32 对拍时 ② 的 rel 只有 6.8e-4（超 1e-4 阈值）。
-> **把两侧都切 fp64** 后 rel → 3.55e-11 ⇒ 证明是 **fp32 舍入累积**、移植正确。
-> 若 fp64 仍 1e-4 才是真 bug。此判定法在本仓库后续所有音频/时序模型复用。
-
-### 6.2 ESC-50 训练对齐（自建口径，官方 `panns.yaml` 未发布）
-
-| 项 | 结果 |
-|---|---|
-| 数据（同文件波形） | **maxdiff 5.96e-08**（= float32 机器精度） |
-| 特征（torchaudio vs Paddle `LogMelSpectrogram`） | rel **6.76e-05** |
-| 前向（同权重同批 32） | maxdiff 0.1647 / rel **7.48e-04** |
-| BN 语义（Paddle momentum=0.9 vs torch 0.1） | 同输入下 `moving_mean` **逐位相同** |
-| Adam 优化器参数 | betas 0.9/0.999、eps 1e-8、wd 0 与 Paddle 默认**一致** |
-
-**训练动力学（`ctrl30`：共享 CSV 原序，慢学习）**：30 epoch 轨迹几乎重合 ——
-dev_acc 均值 Paddle **0.0459** / torch **0.0467（差 0.0008）**，dev_loss 末值 3.468 / 3.418。
-
-**训练动力学（`order30`：共享随机序）**：
-| epoch | Paddle dev_loss | torch dev_loss |
-|---|---|---|
-| 1 | 14.814 | 6.873 |
-| **2** | **3.815** | **3.842** |
-| 3 | 3.666 | 3.800 |
-| 30 | **2.199** | **2.764** |
-
-dev_acc 终值 Paddle **0.3500** / torch **0.2000**；逐 epoch 相关系数 **0.8978**。
-
-> ⚠️ **未完全解释的残差（如实标注）**：`order30` 下 Paddle 终值 0.3500 仍明显高于
-> torch 两次（0.1900 / 0.1625），而 torch 自身换 seed 极差仅 0.0275 ⇒ 该差距**未被
-> torch 自身随机性完全解释**。可能来自 ① 内置 dropout 的混沌放大；② 一处 ~1e-4 的
-> 系统性差异（**mel fp32 FFT 是唯一非逐位对齐的输入环节**）被学习动力学放大。
-> **在 `ctrl30`（慢学习）下该差异不显现（轨迹重合）**。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **41.15 GFLOPs** |
+| **MACs** | **20.58 GMACs** |
+| 参数量 | **80.754 M** |
+| 输入规格 | `10s @ 32kHz -> (1,1,1024,64)` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 建议 | 理由 |

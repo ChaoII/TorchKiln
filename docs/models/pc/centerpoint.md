@@ -197,37 +197,30 @@ tkiln predict -c configs/pc/centerpoint-det3d.yml --weights ... --input clouds/
 
 ---
 
-## 6. 公开指标
-
-### 6.1 同权重前向数值对齐（决定性证据）
-
-同一 voxel 输入分别跑 Paddle3D(1.0.0) 与本框架：
-
-| 中间量 | maxdiff |
-|---|---|
-| `voxel_features` / `bev` | **5e-6** |
-| `fpn` | **3e-4** |
-| `head`（hm/reg/height/dim/rot） | **~1e-4**（float32 级） |
-
-⇒ **模型本身无数值问题**。权重加载：**missing=0 / unexpected=0（191 张量）**。
-（注意：Paddle `Linear.weight` 是 `[in,out]`，加载需 `.t()`；BN 用 `_mean/_variance`。）
-
-### 6.2 KITTI val（3769 帧）BEV mAP
-
-用 **Paddle3D 自带官方评估器**（难度/DontCare/R40，`z_axis=2`，`metric_types=('bev',)`），
-IoU 用本地 shapely 精确 BEV IoU。**GT 当预测自检 = 100**。
-
-| 类别 | 本框架 Easy/Mod/Hard | Paddle3D 参考 Easy/Mod/Hard |
-|---|---|---|
-| Car | **90.2 / 84.4 / 79.4** | 93.0 / 87.3 / 86.2 |
-| Ped | **60.3 / 57.1 / 53.1** | 66.5 / 62.7 / 58.5 |
-| Cyc | **81.7 / 61.9 / 58.0** | 86.6 / 65.6 / 61.6 |
-| **均值（Mod）** | **67.8** | **71.87**（差 **4**） |
-
-> 残差来自 **NMS / shapely-IoU / 点过滤** 的算子级差异（非算法差异）。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **310.11 GFLOPs** |
+| **MACs** | **155.05 GMACs** |
+| 参数量 | **4.996 M** |
+| 输入规格 | `2000 点 KITTI 体素` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 建议 | 理由 |

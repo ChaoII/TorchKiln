@@ -193,31 +193,30 @@ tkiln val   -c configs/pc/squeezesegv3-pcseg.yml --weights output/squeezesegv3-p
 
 ---
 
-## 6. 公开指标
-
-### 6.1 权重加载与前向对齐（决定性证据）
-
-| 项 | 结果 |
-|---|---|
-| 权重加载 | **missing=0 / unexpected=0**（524 张量） |
-| 前向 vs Paddle3D（同输入） | **5 个尺度 maxdiff ~1e-5** |
-| 单步 loss vs Paddle3D `SSGLossComputation` | **17.265526 ↔ 17.265524（差 1.9e-6）** |
-| 5 尺度逐尺度损失 | 逐尺度一致 |
-
-> ⇒ **模型/损失/各尺度解码均与 Paddle3D 数值对齐**。
-
-### 6.2 SemanticKITTI mIoU
-
-| 数据集 | 指标 | 官方（论文） | 本框架实测 |
-|---|---|---|---|
-| SemanticKITTI test | mIoU | **~55.9**（SqueezeSegV3-53） | **未统计**（数据集未下载） |
-
-> ⚠️ 要复现 mIoU 需要 `data_odometry_velodyne.zip`（80.9GB）+
-> `data_odometry_calib.zip` + `data_odometry_labels.zip`（171MB）。当前**未做**。
-> 现有验收以「权重 + 前向 + 单步 loss」三项对齐为准。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **130.51 GFLOPs** |
+| **MACs** | **65.25 GMACs** |
+| 参数量 | **25.960 M** |
+| 输入规格 | `range-view 64x256` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 建议 | 理由 |

@@ -202,39 +202,30 @@ tkiln val   -c configs/lane/bev_lanedet.yml --weights output/bev-lanedet/best_ac
 
 ---
 
-## 6. 公开指标
-
-### 6.1 权重加载与前向对齐
-
-| 项 | 结果 |
-|---|---|
-| 权重加载 | **missing=0 / unexpected=0**（372 张量） |
-| 前向 vs Paddle3D（同输入） | 各层 **maxdiff ~1e-5 ~ 8e-5** |
-| 单步 loss vs Paddle3D（BCE+IoU+push-pull+MSE 之和） | **59.529789 ↔ 59.529793（差 3.8e-6）** |
-| `resnet34-remapped` 预训练加载 | `load_paddle_resnet34_pretrained`，键映射 `conv1→bb.0`、`bn1→bb.1`、`layerN→bb.(4+N-1)` |
-
-### 6.2 端到端（Apollo 3D Lane，2 epoch，**同一官方评估器 `ApolloLaneMetric`**）
-
-做法：框架模型跑 val 导出 Paddle3D 兼容 np，喂同一个 `ApolloLaneMetric`。
-
-| 指标 | 框架（官方评估器） | Paddle3D（batch=4，已修） | Paddle3D（batch=1，驱动脚本 bug） |
-|---|---|---|---|
-| **f1_score** | **0.8378** | **0.7776** | 0.3946 |
-| precision | 0.8911 | 0.8150 | 0.7547 |
-| recall | 0.7905 | 0.7435 | 0.2671 |
-| x_error_close | **0.0680** | 0.1361 | 0.2954 |
-| z_error_close | **0.0582** | 0.0937 | 0.1097 |
-
-- 数据：7488 图（train 5992 / val 1496），GT 由 Paddle3D 离线生成。
-- ⚠️ **Paddle3D batch=1 是我方驱动脚本漏接参数**（`apis/trainer.py` 的
-  `batch_size = args.pop('batch_size', 1)`，而官方 `main.py` 负责接线、1.0.0 恰好没有 `main.py`）。
-  一个 bug 引两个症状：① batch=1；② **LR 不衰减**（`CosineAnnealingDecay(T_max=2996)`，
-  而 2 epoch 实际 11984 iter = 余弦第 4 周期 → 回到峰值）。修后 f1 **0.3946 → 0.7776**。
-- 与框架差 0.06，属 **2 epoch 随机初始化 + 增广/信道顺序** 的合理噪声量级
-  （两者均随机初始化、同一批 1496 val 图）。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **109.04 GFLOPs** |
+| **MACs** | **54.52 GMACs** |
+| 参数量 | **43.159 M** |
+| 输入规格 | `576x1024` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 建议 | 理由 |

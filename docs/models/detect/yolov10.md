@@ -235,37 +235,30 @@ tkiln export  -c configs/yolo/yolov10n-det.yml -o Architecture.Head.reg_max=16 \
 
 ---
 
-## 6. 公开指标
-
-| 数据集/口径 | 指标 | ultralytics 官方 | **本框架实测** | 差异原因 |
-|---|---|---|---|---|
-| COCO val2017 | AP `n/s/m/b/l/x` | 38.5 / 46.3 / 51.1 / 52.5 / 53.2 / 54.4 | 权重加载 **missing=0 / unexpected=1** | 仅函数式 `model.23.dfl.conv.weight` |
-| `dx_ocr` 车牌（nc=1，6ep） | mAP50-95 | 0.811 | **0.785** | 差 0.026，属 E2E 训练波动 + 数据顺序 |
-
-**对齐验证（单步，同权重同输入同 GT，`reg_max=16`，双头 `E2EDetectLoss` 口径）**：
-
-| 档位 | 本框架 total | ultralytics total | 梯度 maxdiff |
-|---|---|---|---|
-| **n** | **23.91382** | **23.91383** | 0.0002~0.0013（worst `model.0.conv.weight`） |
-| **s** | **26.213394** | **26.213394** | 同上量级 |
-| **m** | **25.325804** | **25.325804** | 同上 |
-| **l** | **21.74652** | **21.74652** | 同上 |
-| **x** | **22.523449** | **22.523449** | 同上 |
-
-（loss 走 `E2EDetectLoss`：one2many `tal_topk=10` + one2one `tal_topk=1`，与 yolo26 同一套代码路径。）
-
-**端到端训练（`dx_ocr`，nc=1，6 epoch，SGD/batch=8，关增广，EMA 0.9999）**：
-
-| epoch | 1 | 2 | 3 | 4 | 5 | 6（终值） |
-|---|---|---|---|---|---|---|
-| 本框架 mAP50-95 | 0.608 | 0.668 | 0.731 | 0.762 | 0.734 | **0.785** |
-| ultralytics | 0.316 | 0.711 | 0.756 | 0.775 | 0.791 | **0.811** |
-
-> 终值差 **0.026**，是本次对比中**最大**的一个。原因：E2E 双头训练本身更不稳（ultra 第 1 轮只有 0.316），
-> 且两侧数据顺序不同（shuffle）。**单步 loss/梯度已逐位对齐（上表）**，故属训练随机性而非算法差异。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **8.63 GFLOPs** |
+| **MACs** | **4.31 GMACs** |
+| 参数量 | **2.776 M** |
+| 输入规格 | `nc=80, 640x640（n 档）` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 推荐档位 | 理由 |

@@ -225,34 +225,30 @@ tkiln export  -c configs/yolo/yolov3-det.yml --weights ... --save-dir output/onn
 
 ---
 
-## 6. 公开指标
-
-**官方值**：ultralytics 文档**未发布** v3u / v3-sppu / v3-tinyu 的 COCO mAP 表（只列任务与模式支持），
-因此**本框架不引用 v3u 的公开 mAP**（原版 v3 的论文数值不适用于换了头的 `u` 变体）。
-
-**本框架实测（对齐验证）**：
-
-| 项 | 本框架 | ultralytics | 差异 |
-|---|---|---|---|
-| 权重加载（u / spp / tiny） | **missing=0 / unexpected=1** | — | 仅函数式 `model.{28,28,20}.dfl.conv.weight` |
-| 单步 total loss（u） | **19.047052** | **19.047056** | 4e-6（仅函数式 `model.28.dfl.conv.weight`） |
-| 单步 total loss（spp） | **18.116039** | **18.116039** | 0 |
-| 单步 total loss（tiny） | **14.158577** | **14.158577** | 0 |
-| 三分量（u） | box/cls/dfl 全对齐 | 同 | — |
-| 梯度 maxdiff（u/spp/tiny） | **0.00016 / 0.00020 / 0.00007** | — | cuDNN 卷积反向的算子级微差 |
-
-**端到端训练（`dx_ocr` 单类车牌，nc=1，6 epoch，SGD/batch=8/关增广/EMA exponential 0.9999）**：
-
-| epoch | 1 | 2 | 3 | 4 | 5 | 6（终值） |
-|---|---|---|---|---|---|---|
-| 本框架 mAP50-95 | 0.562 | 0.612 | 0.712 | 0.757 | 0.749 | **0.786** |
-| ultralytics mAP50-95 | 0.348 | 0.663 | 0.679 | 0.749 | 0.772 | **0.800** |
-
-> 终值差 **0.014**，属训练数据顺序（框架 `shuffle=false` vs ultra `shuffle=true`）+ 随机性；
-> 与 v11/v8 的端到端结论同源（见 `yolo11.md` §6）。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **282.55 GFLOPs** |
+| **MACs** | **141.27 GMACs** |
+| 参数量 | **103.754 M** |
+| 输入规格 | `nc=80, 640x640（u 档）` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 推荐 | 理由 |

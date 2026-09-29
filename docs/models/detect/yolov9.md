@@ -191,36 +191,30 @@ tkiln export  -c configs/yolo/yolov9c-det.yml -o Architecture.scale=c --weights 
 
 ---
 
-## 6. 公开指标
-
-| 数据集/口径 | 指标 | ultralytics 官方 | **本框架实测** | 差异原因 |
-|---|---|---|---|---|
-| COCO val2017 | mAP50-95 t/s/m/c | 38.3 / 46.8 / 51.4 / 53.0 | 权重加载全 **missing=0 / unexpected=1** | 仅函数式 `model.22.dfl.conv.weight` |
-| COCO val2017 | mAP50-95 e | 55.6 | 需补 `scale_params` 后 **missing=0 / unexpected=6** | 6 = 5 个 `CBLinear.conv.bias` + 函数式 dfl（见 §9） |
-| `dx_ocr` 车牌（nc=1，6ep） | mAP50-95 | 0.794 | **0.789** | 数据顺序/随机性 |
-
-**对齐验证（单步，同权重同输入同 GT，`reg_max=16`，单 assigner）**：
-
-| 档位 | 本框架 total | ultralytics total | 三分量（box / cls / dfl） | 梯度 maxdiff |
-|---|---|---|---|---|
-| **c** | **14.742226** | **14.742228** | 0.3681 / 16.4717 / 2.4970（全对齐） | **0.000231**（worst `model.2.cv3.1.conv.weight`） |
-| **t** | **19.053757** | **19.053761** | 0.5065 / 22.2459 / 2.7545 | 0.00044 |
-| **s** | **18.813862** | **18.813862** | 0.7017 / 12.8065 / 4.7653 | 0.00029 |
-| **m** | **18.858110** | **18.858112** | 0.4338 / 22.9186 / 2.7635 | 0.00024 |
-
-> **v9c 的梯度 maxdiff 0.0786 不是 bug**：该层（`model.2.cv4.conv.weight`）梯度**绝对值本身约 67.4**，
-> 相对误差仅 **~0.1%**，属 cuDNN 卷积反向的算子级微差（前向 o1/o2 已 diff=0）。
-> t/s/m 的梯度 maxdiff 小（2e-4 量级）是因为对应层梯度幅度本就小。
-
-**端到端训练（`dx_ocr`，nc=1，6 epoch，SGD/batch=8，关增广，EMA 0.9999）**：
-
-| epoch | 1 | 2 | 3 | 4 | 5 | 6（终值） |
-|---|---|---|---|---|---|---|
-| 本框架 mAP50-95 | 0.566 | 0.698 | 0.722 | 0.724 | 0.744 | **0.789** |
-| ultralytics | 0.001 | 0.655 | 0.657 | 0.719 | 0.779 | **0.794** |
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **103.33 GFLOPs** |
+| **MACs** | **51.67 GMACs** |
+| 参数量 | **25.591 M** |
+| 输入规格 | `nc=80, 640x640（c 档）` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 推荐档位 | 理由 |

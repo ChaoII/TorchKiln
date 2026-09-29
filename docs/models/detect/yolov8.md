@@ -213,39 +213,30 @@ tkiln train -c configs/yolo/yolov8-seg.yml -o Architecture.Head.reg_max=16
 
 ---
 
-## 6. 公开指标
-
-| 数据集/口径 | 指标 | ultralytics 官方 | **本框架实测** | 差异原因 |
-|---|---|---|---|---|
-| COCO val2017 | mAP50-95 `n/s/m/l/x` | **37.3 / 44.9 / 50.2 / 52.9 / 53.9** | 权重加载 **missing=0 / unexpected=1** | 仅函数式 `model.22.dfl.conv.weight` |
-| DOTA128（OBB，同权重推理 `yolov8n-obb`） | mAP50-95 | 0.8021（官方自评） | **0.790** | 差 0.012，NMS/probiou 算子级 |
-| `dx_ocr` 车牌（nc=1，6ep 训练） | mAP50-95 | 0.783 | **0.788** | 数据顺序/随机性 |
-
-**对齐验证（单步，同权重同输入同 GT，yolov8n，`reg_max=16`）**：
-
-| 项 | 本框架 | ultralytics | 差异 |
-|---|---|---|---|
-| 权重加载 | missing=0 / unexpected=1 | — | 仅函数式 `model.22.dfl.conv.weight` |
-| assigner | **n_fg=10 / t_scores.sum=1.0403** | 同 | **一致** |
-| box（raw） | **0.6425** | 同 | 一致 |
-| cls（raw） | **20.5645** | 同 | 一致 |
-| dfl（raw） | **3.0281** | 同 | 一致 |
-| total | **19.642714** | **19.642702** | 1.2e-5 |
-| 梯度 maxdiff | — | — | **0.00186**（worst `model.0.conv.weight`，cuDNN 算子级） |
-
-**端到端训练（`dx_ocr`，nc=1，6 epoch，SGD/batch=8，关增广，EMA exponential 0.9999）**：
-
-| epoch | 1 | 2 | 3 | 4 | 5 | 6（终值） |
-|---|---|---|---|---|---|---|
-| 本框架 mAP50-95 | 0.604 | 0.718 | 0.732 | 0.738 | 0.749 | **0.788** |
-| ultralytics | 0.530 | 0.690 | 0.736 | 0.755 | 0.777 | **0.783** |
-
-**同权重同评估器**（用 ultra 训练出的 `best.pt` 交给框架 `tkiln val`）：框架 **0.7860** vs ultra 自评 **0.7831**（差 0.003）。
-
-> 复测记录（确认 `REPEAT_MODULES` 移除 `Bottleneck` 后无回归）：yolov8n **19.642714 ↔ 19.642702**，梯度 **0.00186**。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **8.74 GFLOPs** |
+| **MACs** | **4.37 GMACs** |
+| 参数量 | **3.157 M** |
+| 输入规格 | `nc=80, 640x640（n 档）` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 推荐档位 | 理由 |

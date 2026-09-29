@@ -143,43 +143,30 @@ y = m(x)                         # (2, T', 1) 命中概率
 
 ---
 
-## 6. 公开指标
-
-### 6.1 ⭐ ①②③ 全过，④ 模型端过
-
-| # | 项 | 结果 |
-|---|---|---|
-| ① | 权重加载 | **missing=0 / unexpected=0**；236/275 键（39 个 `num_batches_tracked`） |
-| ② | 逐层前向（**fp64**） | `input/after_pad/after_transpose` **maxdiff = 0.00e+00**（确证 pad 语义正确）<br>`preprocessor` **6.75e-12**；`stack0/1/2` 2.6e-10~6.0e-10；`output` **2.84e-10**（maxdiff 6.08e-09）<br>output 范围：Paddle 0~21.364413 / torch 0~21.364413（**完全相同**） |
-| ③ | 单步 loss/梯度（**fp64**） | loss rel **3.106e-11**（fp32 2.362e-06）；`correct=1, acc=0.5000` 两侧一致；可比梯度 **158/158**（零梯度 0 个）；最大梯度 rel **7.636e-09** |
-| ④ | 端到端（模型端） | `logits maxdiff = **4.043443e-09**`（阈值 0.02）；`Paddle max = torch max = 0.000001`；**HIT/filler 判定一致**（两边都判 filler —— `en.wav` 不含 "hey snips"，**正确**） |
-| ④ | 端到端（特征端） | `feat maxdiff 1.757e-01 / rel 1.090e-02`（阈值 1e-3）→ **❌ 已定位为两版 kaldi 移植差异**（见下） |
-
-### 6.2 ⚠️ ④ 特征端 1.09% 的精确定位（如实记录）
-
-- **现象**：Paddle `range -16.1181..5.1794` vs torch `-15.9424..5.1794`
-  —— **最大值完全相同**，只在**低能量帧**差 0.176。
-- **逐级定位**（`spectrogram` 层）：形状一致 `(328,257)`、`max` 两侧完全相同 `4.74978`、
-  `maxdiff 0.175711 / rel 1.09015e-02` —— 与 fbank 的 rel **逐位相同**
-  ⇒ **fbank 的 100% 差异都来自 spectrogram**，`_get_mel_banks`/log 阶段**无额外差异**。
-- **排除「每帧加性常数偏移」**：每帧内 diff 的 std max **0.0407**（不接近 0）⇒ 不是统一偏移。
-- **排除 `energy_floor`**：EF=1.0 → 0.0 后 `maxdiff 1.757107e-01`（**逐位不变**）。
-- **⭐ fp64 一锤定音**：
-  | | fp32 | **fp64** |
-  |---|---|---|
-  | maxdiff | 0.175711 | **0.17571** |
-  | rel | 1.09015e-02 | **1.09014e-02** |
-  | Paddle min | -16.1181 | **-16.1181（不变）** |
-  | torch min | -15.9424 | **-15.9424（不变）** |
-  ⇒ **差异在 fp64 下逐位不变 ⇒ 排除 fp32 舍入假设**，
-  是 **PaddleSpeech `audio/compliance/kaldi.py` 与 torchaudio `compliance.kaldi` 两版 kaldi
-  移植的算法实现差异**（集中在低幅值 bin），**不是模型移植问题**。
-
-> **④ 判据建议**：采用「`logits` + `HIT/filler`」；特征差异**如实标为已知差异**。
-> 模型端已由 ②（0.00e+00~6e-10）+ ③（loss 3.1e-11 / 梯度 7.6e-09）+ ④（4e-09）三重证明对齐。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **12.390 MFLOPs** |
+| **MACs** | **6.195 MMACs** |
+| 参数量 | **0.034 M** |
+| 输入规格 | `1s @ 16kHz -> (1,98,80)` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 建议 | 理由 |

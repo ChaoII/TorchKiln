@@ -237,21 +237,30 @@ tkiln predict -c configs/ocr/e2e/e2e_pgnet_lite_totaltext.yml --input imgs/
 | GPU 利用率 | **98.5%**（最低 93%） | 显存 3582 MiB |
 | FLOPs | ⚠️ 本框架未集成 FLOPs 统计 | |
 
-### batch size 的实测选择（**别再走弯路**）
-
-| batch | 显存 | step 时长 | GPU 利用率 | 结论 |
-|---|---|---|---|---|
-| 14 | 3.47 GB | 0.57 s | 99% | 可用 |
-| **16** | 5.9 GB | 2.4 s | **均值 98.6%，最低 95%** | ✅ **当前配置** |
-| 32 | 7.32 GB | 1.5 s | — | 内存中等 |
-| **48** | 11.14 GB | **16.1 s** | **均值 ~8%，掉 0% 共 4 次** | ❌ **数据管线跟不上** |
-| 64 | 15.75 GB | — | — | 逼近 16 GiB 上限，评估易 OOM |
-
-**根因**：`PGProcessTrain`（TCL 点采集 + 几何计算）是**纯 CPU 单样本**开销，
-batch 越大单步等数据的时间占比越高 → **GPU 反而空转**。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **20.08 GFLOPs** |
+| **MACs** | **10.04 GMACs** |
+| 参数量 | **1.221 M** |
+| 输入规格 | `512x512` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 6. 公开指标
 
 ### 6.1 官方基线

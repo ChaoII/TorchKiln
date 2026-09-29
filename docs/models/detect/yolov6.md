@@ -182,23 +182,30 @@ tkiln export  -c configs/yolo/yolov6-det.yml --weights ... --save-dir output/onn
 
 ---
 
-## 6. 公开指标
-
-| 数据集 | 指标 | 官方值（美团/文档） | **本框架实测** | 差异原因 |
-|---|---|---|---|---|
-| COCO val2017 | mAP50-95 (N) | 37.5 | **未验证** | 无官方权重、结构为 ultralytics 精简复现、未做对齐 |
-| COCO val2017 | mAP50-95 (S/M/L) | 45.0 / 50.0 / 52.8 | **未验证** | 同上 |
-| — | 权重加载 missing/unexpected | — | **无权重可测** | ultralytics 不发布 v6 `.pt` |
-| — | 单步 loss / 梯度对比 | — | **未做** | 无参考实现可对（官方头/损失与本框架不同） |
-| — | 端到端训练对比 | — | **未做** | 同上 |
-
-**本框架已具备的能力**：YAML→网络构建、dummy 前向、`DetLoss`/`DetMetric`/`DetPostProcess` 接入、
-CLI 训练/评估/导出链路（`check_graph_build` 的 55 OK 覆盖）。
-
-**明确缺失的能力**：BiC、AAT、SimCSPSPPF、RepBlock、自蒸馏；anchors/obj 分支；官方权重；任何数值对齐证据。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **12.41 GFLOPs** |
+| **MACs** | **6.21 GMACs** |
+| 参数量 | **4.408 M** |
+| 输入规格 | `nc=80, 640x640（n 档）` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 建议 |

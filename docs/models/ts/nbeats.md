@@ -110,20 +110,30 @@ tkiln predict -c configs/ts/rnn_demo.yml --input data.csv
 
 ---
 
-## 6. 公开指标
-
-**对齐验证**（同权重同输入，PaddleTS vs 本框架）：
-
-| 项 | 结果 |
-|---|---|
-| 权重加载 | **missing=0 / unexpected=0** |
-| 逐层前向 | **maxdiff=0（**逐位一致**）** |
-
-> ℹ️ PaddleTS **不发布官方预训练权重**，故无"公开指标"可对比；
-> 本框架的验收标准是**与 PaddleTS 参考实现数值一致**。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **1.315 MFLOPs** |
+| **MACs** | **0.657 MMACs** |
+| 参数量 | **0.663 M** |
+| 输入规格 | `L=96, H=24, D=1` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 建议 |

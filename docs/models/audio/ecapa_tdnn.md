@@ -146,40 +146,30 @@ emb = m(x)                            # (N, 192)
 
 ---
 
-## 6. 公开指标
-
-### 6.1 ⭐ 四条对齐全过
-
-| # | 项 | 结果 |
-|---|---|---|
-| ① | 权重加载 | **missing=0 / unexpected=0**；200/201 键（第 201 个是 wrapper 分类头 `weight(192,7205)`，**预期不加载**） |
-| ② | 逐层前向（**fp64**） | `blocks0` **1.47e-15**（精度极限）；`blocks1~3` 8e-12~1.8e-11；`mfa` **1.38e-11**；`asp` 5.5e-9；`fc` 1.43e-8；**embedding 余弦 = 1.0000000000** |
-| ③ | 单步 loss/梯度（**fp64**） | loss rel **1.67e-08**；embedding rel 1.43e-08；可比梯度 **138/138**；非零梯度最差 rel **1.34e-07**（`mfa.norm.norm.weight`） |
-| ④ | 端到端（同音频 → fbank → embedding） | 相对 maxdiff **0.001010**；**余弦 0.9999996424**；norm 123.0696 vs 123.0715 → **PASS** |
-
-### 6.2 ⚠️ ② 的 FAIL 根因：**PaddleSpeech Conv1d 默认 reflect 填充**
-
-- **症状**：`blocks0`（仅 conv→ReLU→BN）第一层就 **rel = 1.34e-1**，逐层放大到 4.3e-1；
-  embedding 余弦 0.999667。
-- **排查顺序（可复用）**：① 先证权重加载无误（`blocks.0.conv.conv.weight` maxdiff **0.00e+00**、
-  键数 200 全匹配，脚本只需 paddle 不必装 torch）；② 输入 maxdiff=0.00e+00
-  ⇒ 差异只可能在算子 → 读回源码发现第 49 行 **`padding_mode="reflect"`**，
-  而 `_manage_padding` 用 `F.pad(x, padding, mode=self.padding_mode)` ⇒ **是镜像填充，不是零填充**。
-- **修复**：torch 侧 `nn.Conv1d(..., padding_mode="reflect")`。修后：
-  `blocks0` 1.34e-1 → **2.57e-4（↓500×）**、`mfa` 4.29e-1 → 9.99e-4、
-  输出 3.90e-2 → **1.08e-3**、余弦 **0.99999988**。
-- 残余 ~1e-3 由 **fp64 判定法**确认是 fp32 舍入（② fp64 = 1.47e-15）。
-
-### 6.3 ⚠️ ③ 的判定陷阱：**ASP 的 bias 梯度恒为 0**
-
-`asp.conv.conv.bias` 的 `|grad|max` 在 fp64 是 **8.88e-16**（fp32 是 4.77e-6）
-—— **数学上恒为 0**：ASP.conv 的输出进 softmax，**bias 的加性常数被 softmax 平移不变性抵消**。
-
-> 用 `rel = maxdiff / max|pg|` 会因分母过小**虚高到 8.5 / 1.41**（会误判 FAIL）。
-> **正确做法**：`denom < 1e-10` 时改用**绝对误差判据**。
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **11.25 GFLOPs** |
+| **MACs** | **5.62 GMACs** |
+| 参数量 | **20.768 M** |
+| 输入规格 | `3s @ 16kHz -> (1,80,300)` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 建议 | 理由 |

@@ -185,36 +185,30 @@ tkiln check -c configs/yolo/yolo12-obb.yml
 
 ---
 
-## 6. 公开指标
-
-| 数据集/口径 | 指标 | ultralytics 官方 | **本框架实测** | 差异原因 |
-|---|---|---|---|---|
-| COCO val2017 | mAP50-95 `n/s/m/l/x` | 40.6 / 48.0 / 52.5 / 53.7 / 55.2 | 权重加载 **missing=0**；**unexpected = 旧版权重的 `attn.pe.conv.bias`**（n 9 个 / x 17 个） | 见 §9（AAttn.pe 的 bias 历史） |
-| nc=1 重建权重（8.4.154 源码口径） | 加载 | — | **missing=0 / unexpected=1** | 仅函数式 `model.21.dfl.conv.weight` |
-| `dx_ocr` 车牌（nc=1，6ep） | mAP50-95 | 0.800 | **0.794** | 差 0.006，数据顺序/随机性 |
-
-**对齐验证（单步，同权重同输入同 GT，yolo12n，`reg_max=16`，单 assigner）**：
-
-| 项 | 本框架 | ultralytics | 差异 |
-|---|---|---|---|
-| 权重加载（nc1 重建） | missing=0 / unexpected=1 | — | 仅函数式 dfl |
-| box（raw） | **0.5237** | 同 | 一致 |
-| cls（raw） | **11.6909** | 同 | 一致 |
-| dfl（raw） | **2.5324** | 同 | 一致 |
-| total | **13.5719** | **13.5719** | ~0 |
-| 梯度 maxdiff（n/s/m/l/x） | — | — | **0.006 ~ 0.026**（算子级，worst 多在 `model.0.conv.weight`） |
-
-> 复测记录：**yolo12n 13.571861 ↔ 13.571886**，梯度 **0.013**（在移除 `REPEAT_MODULES` 里的 `Bottleneck` 之后复测，无回归）。
-
-**端到端训练（`dx_ocr`，nc=1，6 epoch，SGD/batch=8，关增广，EMA 0.9999）**：
-
-| epoch | 1 | 2 | 3 | 4 | 5 | 6（终值） |
-|---|---|---|---|---|---|---|
-| 本框架 mAP50-95 | 0.478 | 0.698 | 0.744 | 0.751 | 0.743 | **0.794** |
-| ultralytics | 0.369 | 0.538 | 0.755 | 0.754 | 0.776 | **0.800** |
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **7.47 GFLOPs** |
+| **MACs** | **3.73 GMACs** |
+| 参数量 | **2.602 M** |
+| 输入规格 | `nc=80, 640x640（n 档）` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 推荐档位 | 理由 |

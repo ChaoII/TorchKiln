@@ -216,27 +216,30 @@ tkiln check -c configs/yolo/yolov8-det.yml
 
 ---
 
-## 6. 公开指标
-
-| 数据集 | 指标 | Ultralytics 官方 | **本框架实测** | 差异原因 |
-|---|---|---|---|---|
-| COCO val2017 | mAP50-95 (n) | 39.5 | 权重加载 **missing=0 / unexpected=1**（仅函数式 dfl） | — |
-| DOTA128（OBB，同权重推理） | mAP50-95 (v11n-obb) | 0.821 | **0.8005** | 差 **0.021**，NMS/probiou 算子级 |
-| dx_ocr 车牌（自训 6ep, nc=1） | mAP50-95 | 0.791 | **0.782** | 差 0.009，数据 shuffle 差异 |
-| ESC 等 | — | — | — | — |
-
-**对齐验证（单步，同权重同输入同 GT）**：
-
-| 项 | 本框架 | ultralytics | 差异 |
-|---|---|---|---|
-| 权重加载 | missing=0 / unexpected=1 | — | 仅函数式 `dfl.conv.weight` |
-| assigner 匹配 | n_fg=10 / t_scores.sum=1.3955 | 同 | **一致** |
-| loss（box/cls/dfl） | 0.5508 / 23.3453 / 3.1119 | 同 | **一致** |
-| total loss | 20.47179 | 20.47182 | **3e-5** |
-| 梯度 maxdiff | — | — | 0.0216（cuDNN 卷积反向算子级） |
+---
 
 ---
 
+---
+
+---
+
+### 📊 FLOPs（实测）
+
+| 项 | 值 |
+|---|---|
+| **FLOPs** | **6.54 GFLOPs** |
+| **MACs** | **3.27 GMACs** |
+| 参数量 | **2.624 M** |
+| 输入规格 | `nc=80, 640x640（n 档）` |
+| 测量工具 | `torch.utils.flop_counter.FlopCounterMode`（PyTorch 内置） |
+| 复现脚本 | `_downloads/flops_measure*.py` |
+
+> **口径**：`FLOPs` 是乘加各计 1 次（×2），**与 ultralytics 官方表的 GFLOPs 同口径**
+> （已由 yolo11/v8 十个模型逐个吻合验证，见 [`_FLOPS.md`](_FLOPS.md)）；
+> `MACs = FLOPs / 2`。
+> ⚠️ `FlopCounterMode` **不计自定义算子**（NMS / probiou / iSTFT 等后处理）⇒
+> 此处是**网络主干**的 FLOPs。
 ## 7. 选型建议
 
 | 场景 | 推荐档位 | 理由 |
