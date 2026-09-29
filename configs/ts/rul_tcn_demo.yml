@@ -60,6 +60,8 @@ Train:
     max_rul: 125                # 分段线性截断（业界标准）
     train_last_frac: 0.5        # 训练只用每条轨迹后 50% 窗口（贴合 test 只取末尾的口径）
     auto_select: true           # 自动筛掉常量/无信息传感器（24 -> 17）
+    feat_eng: [roll_mean]       # 特征工程：滚动均值（实测 RMSE 28.0 -> 26.7）
+    roll_window: 10
     standardize: true
     split_ratio: [0.7, 0.15, 0.15]
   loader:
@@ -80,6 +82,8 @@ Eval:
     max_rul: 125
     train_last_frac: 0.5
     auto_select: true
+    feat_eng: [roll_mean]
+    roll_window: 10
     standardize: true
     split_ratio: [0.7, 0.15, 0.15]
   loader:

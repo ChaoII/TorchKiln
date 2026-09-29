@@ -1,16 +1,15 @@
-# RUL demo —— NASA C-MAPSS FD004（6 种工况 · 2 种故障）
-# 模型复用 ts_forecast 的模型族（这里用 tcn）
+# RUL 特征工程消融 —— FD001, feat_eng=[diff, roll_mean, roll_std, slope, delta0]
 Global:
-  model_name: ts-rul-fd004-tcn
+  model_name: ts-rul-fe-full
   use_gpu: true
   device: cuda:0
-  epoch_num: 60
+  epoch_num: 80
   main_indicator_mode: min
-  print_batch_step: 100
-  save_model_dir: ./output/ts_rul_fd004_tcn
-  save_epoch_step: 60
+  print_batch_step: 200
+  save_model_dir: ./output/ts_rul_fe_full
+  save_epoch_step: 80
   eval_batch_step: null
-  eval_epoch_step: 2
+  eval_epoch_step: 5
   pretrained_model: null
   checkpoints: null
   distributed: false
@@ -31,7 +30,6 @@ Architecture:
     dropout: 0.1
 Loss:
   type: mse
-  asymmetric_weight: 0.0
   reduce: mean
 Metric:
   main_indicator: RMSE
@@ -51,21 +49,17 @@ Train:
     name: RULDataset
     format: cmapss
     data_dir: datasets/cmapss
-    train_file: train_FD004.txt
-    test_file: test_FD004.txt
-    rul_file: RUL_FD004.txt
+    train_file: train_FD001.txt
+    test_file: test_FD001.txt
+    rul_file: RUL_FD001.txt
     window: 30
     stride: 1
     max_rul: 125
     train_last_frac: 0.5
     auto_select: true
-    feat_eng: [roll_mean]
-    roll_window: 10
     standardize: true
-    # ⭐ 多工况（FD002/004）：按操作条件聚类后**分组归一化**
-    n_op_cols: 3
-    op_round: 2
-    min_op_frac: 0.02
+    feat_eng: [diff, roll_mean, roll_std, slope, delta0]
+    roll_window: 10
     split_ratio: [0.7, 0.15, 0.15]
   loader:
     shuffle: true
@@ -77,20 +71,17 @@ Eval:
     name: RULDataset
     format: cmapss
     data_dir: datasets/cmapss
-    train_file: train_FD004.txt
-    test_file: test_FD004.txt
-    rul_file: RUL_FD004.txt
+    train_file: train_FD001.txt
+    test_file: test_FD001.txt
+    rul_file: RUL_FD001.txt
     window: 30
     stride: 1
     max_rul: 125
     train_last_frac: 0.5
     auto_select: true
-    feat_eng: [roll_mean]
-    roll_window: 10
     standardize: true
-    n_op_cols: 3
-    op_round: 2
-    min_op_frac: 0.02
+    feat_eng: [diff, roll_mean, roll_std, slope, delta0]
+    roll_window: 10
     split_ratio: [0.7, 0.15, 0.15]
   loader:
     shuffle: false

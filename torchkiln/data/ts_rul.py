@@ -106,6 +106,54 @@ class RULDataset(Dataset):
                             len(keep), feats.shape[1] + (feats.shape[1] - len(keep)),
                             ds.get("min_std", 1e-6))
 
+        # ⭐ **特征工程**（业界提精度的关键；默认关闭以保持与 paddlets 口径一致）
+        #    feat_eng 可选:
+        #      * `diff`     : 一阶差分（退化速率）
+        #      * `roll_mean`: 滚动均值（平滑噪声，窗口 = roll_window）
+        #      * `roll_std` : 滚动标准差（波动增大常预示故障）
+        #      * `slope`    : 窗口线性斜率（退化趋势强度）
+        #      * `delta0`   : 相对**轨迹起点**的偏离（累积退化量）
+        #    ⚠️ 全部**逐 unit** 计算，避免跨设备串扰。
+        fe = ds.get("feat_eng") or []
+        if fe:
+            rw = int(ds.get("roll_window", 10))
+            parts = [feats]
+            # ⚠️ 循环变量**不能叫 kind** —— 外层 `kind` 是数据格式（cmapss/csv），
+            #    遮蔽后导致后面 `kind == "cmapss"` 恒假（曾把 test 的 100 台变成 1428 样本）
+            for fk in fe:
+                extra = np.zeros_like(feats)
+                for uu in sorted(set(unit.tolist())):
+                    m = unit == uu
+                    sub = feats[m]
+                    if fk == "diff":
+                        d = np.diff(sub, axis=0)
+                        extra[m] = np.vstack([np.zeros((1, sub.shape[1])), d])
+                    elif fk == "roll_mean":
+                        cs = np.cumsum(np.vstack([np.zeros((1, sub.shape[1])), sub]), axis=0)
+                        for i in range(len(sub)):
+                            a = max(0, i - rw + 1)
+                            extra[m][i] = (cs[i + 1] - cs[a]) / (i + 1 - a)
+                    elif fk == "roll_std":
+                        for i in range(len(sub)):
+                            a = max(0, i - rw + 1)
+                            extra[m][i] = np.std(sub[a:i + 1], axis=0)
+                    elif fk == "slope":
+                        for i in range(len(sub)):
+                            a = max(0, i - rw + 1)
+                            seg = sub[a:i + 1]
+                            if len(seg) < 2:
+                                continue
+                            ys = seg[-rw:] if len(seg) >= rw else seg
+                            xx = np.arange(len(ys), dtype=np.float64)
+                            extra[m][i] = ((xx - xx.mean())[:, None] * (ys - ys.mean())).sum(0) / (
+                                ((xx - xx.mean()) ** 2).sum() or 1.0)
+                    elif fk == "delta0":
+                        extra[m] = sub - sub[:1]
+                parts.append(extra)
+            feats = np.concatenate(parts, axis=1)
+            if logger is not None:
+                logger.info("RUL feat_eng=%s: 特征维 %d -> %d", fe, parts[0].shape[1], feats.shape[1])
+
         self.mu, self.sd = None, None
         self.op_centroids = None
         if ds.get("standardize", True):
@@ -189,13 +237,21 @@ class RULDataset(Dataset):
                 self.feat.append(np.nan_to_num(f[-self.window:], nan=0.0).astype(np.float32))
                 self.target.append(np.float32(min(y, self.max_rul)))
                 continue
-            rul_u = (rul[m][o] if rul is not None else (c[-1] - c))
+            # ⚠️ `rul` 在 C-MPASS test 上是**每台一个值**（长度 = unit 数），
+            #    train 上为 None（用 cycle 推算）；通用 CSV 则是逐行长度。
+            #    `rul_per_unit`: 长度等于 unit 数 -> test 的每台真值
+            rul_per_unit = (rul is not None and len(rul) == len(np.unique(unit)))
+            if rul_per_unit or rul is None:
+                rul_u = None                              # 用 cycle 差推算
+            else:
+                rul_u = rul[m][o]                         # 逐行真值（通用 CSV）
             start = self.window - 1
             if mode == "Train" and 0 < last_frac < 1.0:
                 n_keep = max(1, int(len(f) * last_frac))
                 start = max(start, len(f) - n_keep)
             for i in range(start, len(f), self.stride):
-                y = rul_u[i]
+                # ⚠️ rul_u 可能是 None（C-MAPSS test：每台一个值）-> 用 cycle 差推算
+                y = (c[-1] - c[i]) if rul_u is None else rul_u[i]
                 self.feat.append(np.nan_to_num(f[i - self.window + 1:i + 1], nan=0.0).astype(np.float32))
                 self.target.append(np.float32(min(float(y), self.max_rul)))
         self.dim = feats.shape[1]

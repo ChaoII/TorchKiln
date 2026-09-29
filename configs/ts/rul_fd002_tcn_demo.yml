@@ -59,6 +59,8 @@ Train:
     max_rul: 125
     train_last_frac: 0.5
     auto_select: true
+    feat_eng: [roll_mean]
+    roll_window: 10
     standardize: true
     # ⭐ 多工况（FD002/004）：按操作条件聚类后**分组归一化**
     n_op_cols: 3
@@ -83,6 +85,8 @@ Eval:
     max_rul: 125
     train_last_frac: 0.5
     auto_select: true
+    feat_eng: [roll_mean]
+    roll_window: 10
     standardize: true
     n_op_cols: 3
     op_round: 2
