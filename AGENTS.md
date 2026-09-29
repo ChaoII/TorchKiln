@@ -426,10 +426,28 @@
 - 注意：**两个训练不能同时占用 GPU**（16GB 会 OOM），需串行。
 
 ## git 约定
-- 仓库已在 `E:\TorchKiln` 初始化。
+- 仓库已在 `E:\TorchKiln` 初始化；远程 `https://github.com/ChaoII/TorchKiln.git`，分支 `main`。
 - `.gitignore` 会忽略：`__pycache__`、`output/`、`weights/`、`*.log`、权重(`*.pt/*.pth`)、**`datasets/` 整目录**、
   缓存目录、`_downloads/`、`_ref/`、`configs/local/`、`configs/_parity/`（后两者已 `git rm --cached`）。
 - 提交信息使用中文、简洁说明改动即可。
+- ⭐ **`git push` 到 GitHub 直连即可，但必须「隔几秒重试」**（2026-09-29 实测）：
+  - 现象：`Test-NetConnection github.com 443` **通**，但 `git push` 常报
+    `Failed to connect to github.com port 443 after 21053 ms`；
+    `Invoke-WebRequest https://github.com` 也**超时** ⇒ **TCP 通但 HTTPS 层间歇性不可用**；
+  - **解法：循环重试即可**（实测第 1 次失败、**第 2 次成功**）：
+    ```powershell
+    for ($i=1; $i -le 12; $i++) {
+      $out = git push origin main 2>&1
+      if ($LASTEXITCODE -eq 0) { break }
+      Start-Sleep -Seconds 5
+    }
+    ```
+  - ❌ **不要走 `gh-proxy.com` 代理**（虽然 `git ls-remote` 能通，但用户明确要求直连）；
+  - 其它通道对比（2026-09-29 实测）：`modelscope.cn` HTTP 200 / **360 ms**、
+    `gh-proxy.com` HTTP 200 / 745 ms、`hub.fastgit.org` 与 `github.moeyy.xyz` **TCP 不通**；
+  - ⚠️ 设了 `http.lowSpeedLimit 1000` / `http.lowSpeedTime 60`（防慢速断流）。
+- ⚠️ PowerShell 用 `>` / `>>` 重定向会写成 **UTF-16**（带 BOM）⇒ 读日志必须按 `utf-16` 解码，
+  或改用 Python 的 `io.open(..., encoding="utf-8", newline="\n")` 直接落 md（**推荐**）。
 
 ## 端到端训练对比（dx_ocr 车牌数据集，yolo11n，已验证逐 epoch mAP 对齐）
 - **数据**：`datasets/dx_det`（= `E:/dx_ocr/ultralytics`，同一单类车牌 plate 数据集，nc=1，745 train + 186 val，
