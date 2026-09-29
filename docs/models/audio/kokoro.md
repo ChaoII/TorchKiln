@@ -135,12 +135,57 @@ tkiln val   -c configs/audio/kokoro_demo.yml --weights output/kokoro_demo/best_a
 
 ## 5. 规模与速度
 
-| 子模块 | 参数 |
-|---|---|
-| `bert` 6.2925 M / `bert_encoder` 0.3937 M / `predictor` 16.1946 M / `text_encoder` 5.6064 M / `decoder` 53.2762 M | **合计 81.7634 M** |
+| 子模块 | 参数 | 张量数 |
+|---|---|---|
+| `bert`（PL-BERT/ALBERT） | 6.2925 M | 25 |
+| `bert_encoder` | 0.3937 M | 2 |
+| `predictor`（ProsodyPredictor） | 16.1946 M | 122 |
+| `text_encoder` | 5.6064 M | 24 |
+| `decoder`（iSTFTNet） | 53.2762 M | 376 |
+| **合计** | **81.7634 M** | **549** |
 
-- 权重体积 **327.21 MB**（v1.0）/ **327.25 MB**（v1.1-zh）；采样率 **24 kHz**。
-- CLI 冒烟速度 **13.9 fps**（demo，1 epoch，batch 2）；正式推理耗时**未统计**。
+- 采样率 **24 kHz**（iSTFTNet 声码器）；CLI 冒烟速度 **13.9 fps**（demo，batch 2）；正式推理耗时**未统计**。
+
+### 5.1 ⭐ 框架侧权重（已转换，2026-09-29）
+
+| 文件 | 大小 | 用途 |
+|---|---|---|
+| `weights/kokoro_v1_0.pth` | 312.1 MB | 英文 / 多语言，**扁平 state_dict** |
+| `weights/kokoro_v1_1_zh.pth` | 312.1 MB | 中文 |
+
+**转换验证**（`_downloads/kokoro_convert.py`）：
+
+| 子模块 | 张量 | missing | unexpected |
+|---|---|---|---|
+| `bert` | 25 | **0** | **0** |
+| `bert_encoder` | 2 | **0** | **0** |
+| `predictor` | 122 | **0** | **0** |
+| `text_encoder` | 24 | **0** | **0** |
+| `decoder` | 376 | **0** | **0** |
+| **合计** | **549** | **0** | **0** |
+
+**转换要点**（两条，缺一不可）：
+
+1. **键处理**：官方权重是 HF 嵌套 dict，所有键带 **`module.` 前缀**
+   ⇒ 逐子模块剥前缀（**不需要** `.fc.` → `.norm.` 改名，那是误判）；
+2. **模型构造**：`AdaIN1d` 内的 `InstanceNorm1d` 必须 **`affine=False`**
+   （框架 `torchkiln/audio/kokoro/istftnet.py` 已内置，共 **70 个**）。
+   官方源码注释自认：那是 ONNX 导出的 workaround，**推理模式下不应有影响**；
+   本框架实测**端到端波形逐位一致（maxdiff = 0.000e+00）** ⇒ 两种口径数学等价。
+
+> ⚠️ 加载需配套 `config.json`（`HF` 被墙，不回退下载）：
+
+```yaml
+Global:
+  pretrained_model: kokoro_v1_0        # 裸名 -> ModelScope 自动下载
+Architecture:
+  task: kokoro_tts
+  Head:
+    model: kokoro
+    config: torchkiln/audio/kokoro/configs/kokoro-v1_0.json   # 必需
+```
+
+> ⚠️ **两个权重尚未上传 ModelScope**（见 [`WEIGHTS_INVENTORY.md`](../../WEIGHTS_INVENTORY.md)）。
 
 ---
 

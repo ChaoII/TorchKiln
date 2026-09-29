@@ -27,15 +27,15 @@
 
 ### 2D 检测家族（9）
 
-- [x] [`yolov3.md`](detect/yolov3.md) — YOLOv3（u/u-spp/u-tiny） <sub>`16.2 KB`</sub>
-- [x] [`yolov5.md`](detect/yolov5.md) — YOLOv5（nu/n6u 等 u 系列） <sub>`14.6 KB`</sub>
-- [x] [`yolov6.md`](detect/yolov6.md) — YOLOv6（仅 YAML，未对齐） <sub>`12.4 KB`</sub>
-- [x] [`yolov8.md`](detect/yolov8.md) — YOLOv8 <sub>`15.3 KB`</sub>
-- [x] [`yolov9.md`](detect/yolov9.md) — YOLOv9（t/s/m/c/e） <sub>`15.8 KB`</sub>
-- [x] [`yolov10.md`](detect/yolov10.md) — YOLOv10（NMS-free） <sub>`17.5 KB`</sub>
-- [x] [`yolo11.md`](detect/yolo11.md) — YOLO11 ★ 主力 <sub>`11.9 KB`</sub>
-- [x] [`yolo12.md`](detect/yolo12.md) — YOLO12（区域注意力） <sub>`15.5 KB`</sub>
-- [x] [`yolo26.md`](detect/yolo26.md) — YOLO26（端到端 E2E） <sub>`16.8 KB`</sub>
+- [x] [`yolov3.md`](detect/yolov3.md) — YOLOv3（u/u-spp/u-tiny） <sub>`15.5 KB`</sub>
+- [x] [`yolov5.md`](detect/yolov5.md) — YOLOv5（nu/n6u 等 u 系列） <sub>`13.7 KB`</sub>
+- [x] [`yolov6.md`](detect/yolov6.md) — YOLOv6（仅 YAML，未对齐） <sub>`12.1 KB`</sub>
+- [x] [`yolov8.md`](detect/yolov8.md) — YOLOv8 <sub>`14.3 KB`</sub>
+- [x] [`yolov9.md`](detect/yolov9.md) — YOLOv9（t/s/m/c/e） <sub>`14.7 KB`</sub>
+- [x] [`yolov10.md`](detect/yolov10.md) — YOLOv10（NMS-free） <sub>`16.6 KB`</sub>
+- [x] [`yolo11.md`](detect/yolo11.md) — YOLO11 ★ 主力 <sub>`11.6 KB`</sub>
+- [x] [`yolo12.md`](detect/yolo12.md) — YOLO12（区域注意力） <sub>`14.6 KB`</sub>
+- [x] [`yolo26.md`](detect/yolo26.md) — YOLO26（端到端 E2E） <sub>`15.6 KB`</sub>
 
 ### 任务头（9）
 
@@ -58,33 +58,33 @@
 
 ### 3D / 点云 / 车道（4）
 
-- [x] [`centerpoint.md`](pc/centerpoint.md) — CenterPoint-Pillars <sub>`12.6 KB`</sub>
-- [x] [`squeezesegv3.md`](pc/squeezesegv3.md) — SqueezeSegV3 <sub>`11.1 KB`</sub>
-- [x] [`bev_lanedet.md`](pc/bev_lanedet.md) — BEV-LaneDet <sub>`13.1 KB`</sub>
+- [x] [`centerpoint.md`](pc/centerpoint.md) — CenterPoint-Pillars <sub>`12.1 KB`</sub>
+- [x] [`squeezesegv3.md`](pc/squeezesegv3.md) — SqueezeSegV3 <sub>`10.9 KB`</sub>
+- [x] [`bev_lanedet.md`](pc/bev_lanedet.md) — BEV-LaneDet <sub>`12.1 KB`</sub>
 - [x] [`lane_row_seg.md`](pc/lane_row_seg.md) — 车道线 row/seg <sub>`11.9 KB`</sub>
 
 ### 音频 SOTA（4）
 
-- [x] [`panns_cnn14.md`](audio/panns_cnn14.md) — PANNs CNN14（语音分类） <sub>`12.3 KB`</sub>
-- [x] [`ecapa_tdnn.md`](audio/ecapa_tdnn.md) — ECAPA-TDNN（说话人） <sub>`11.7 KB`</sub>
-- [x] [`mdtc.md`](audio/mdtc.md) — MDTC（关键词） <sub>`12.5 KB`</sub>
-- [x] [`kokoro.md`](audio/kokoro.md) — kokoro-82M（TTS） <sub>`13.0 KB`</sub>
+- [x] [`panns_cnn14.md`](audio/panns_cnn14.md) — PANNs CNN14（语音分类） <sub>`10.5 KB`</sub>
+- [x] [`ecapa_tdnn.md`](audio/ecapa_tdnn.md) — ECAPA-TDNN（说话人） <sub>`10.2 KB`</sub>
+- [x] [`mdtc.md`](audio/mdtc.md) — MDTC（关键词） <sub>`10.6 KB`</sub>
+- [x] [`kokoro.md`](audio/kokoro.md) — kokoro-82M（TTS） <sub>`14.7 KB`</sub>
 
 ### 时间序列（22）
 
 - [x] [`ts_overview.md`](ts/ts_overview.md) — ★ 总览与选型（先读这篇） <sub>`4.6 KB`</sub>
-- [x] [`nbeats.md`](ts/nbeats.md) — NBEATS <sub>`4.4 KB`</sub>
-- [x] [`nhits.md`](ts/nhits.md) — NHiTS <sub>`4.0 KB`</sub>
-- [x] [`mlp.md`](ts/mlp.md) — MLP <sub>`3.2 KB`</sub>
-- [x] [`dlinear.md`](ts/dlinear.md) — DLinear <sub>`4.0 KB`</sub>
-- [x] [`tcn.md`](ts/tcn.md) — TCN <sub>`3.9 KB`</sub>
-- [x] [`rnn.md`](ts/rnn.md) — RNN(LSTM/GRU) <sub>`3.5 KB`</sub>
-- [x] [`lstnet.md`](ts/lstnet.md) — LSTNet <sub>`3.7 KB`</sub>
-- [x] [`transformer.md`](ts/transformer.md) — Transformer <sub>`3.6 KB`</sub>
-- [x] [`scinet.md`](ts/scinet.md) — SCINet <sub>`4.0 KB`</sub>
-- [x] [`informer.md`](ts/informer.md) — Informer <sub>`4.0 KB`</sub>
-- [x] [`deepar.md`](ts/deepar.md) — DeepAR（概率） <sub>`3.6 KB`</sub>
-- [x] [`tft.md`](ts/tft.md) — TFT（功率预测首选） <sub>`5.0 KB`</sub>
+- [x] [`nbeats.md`](ts/nbeats.md) — NBEATS <sub>`4.7 KB`</sub>
+- [x] [`nhits.md`](ts/nhits.md) — NHiTS <sub>`4.3 KB`</sub>
+- [x] [`mlp.md`](ts/mlp.md) — MLP <sub>`3.5 KB`</sub>
+- [x] [`dlinear.md`](ts/dlinear.md) — DLinear <sub>`4.2 KB`</sub>
+- [x] [`tcn.md`](ts/tcn.md) — TCN <sub>`4.2 KB`</sub>
+- [x] [`rnn.md`](ts/rnn.md) — RNN(LSTM/GRU) <sub>`3.8 KB`</sub>
+- [x] [`lstnet.md`](ts/lstnet.md) — LSTNet <sub>`4.0 KB`</sub>
+- [x] [`transformer.md`](ts/transformer.md) — Transformer <sub>`3.9 KB`</sub>
+- [x] [`scinet.md`](ts/scinet.md) — SCINet <sub>`4.3 KB`</sub>
+- [x] [`informer.md`](ts/informer.md) — Informer <sub>`4.2 KB`</sub>
+- [x] [`deepar.md`](ts/deepar.md) — DeepAR（概率） <sub>`3.9 KB`</sub>
+- [x] [`tft.md`](ts/tft.md) — TFT（功率预测首选） <sub>`5.2 KB`</sub>
 - [x] [`anomaly_ae.md`](ts/anomaly_ae.md) — 异常检测：AutoEncoder <sub>`3.7 KB`</sub>
 - [x] [`anomaly_vae.md`](ts/anomaly_vae.md) — 异常检测：VAE <sub>`3.2 KB`</sub>
 - [x] [`anomaly_usad.md`](ts/anomaly_usad.md) — 异常检测：USAD <sub>`3.5 KB`</sub>
@@ -109,7 +109,7 @@
 |---|---|
 | 已完成 | **55 篇** |
 | 缺失 | **0 篇** |
-| 总体积 | **472 KB**（约 212 页 A4） |
+| 总体积 | **463 KB**（约 208 页 A4） |
 | 覆盖 | 7 大类 / 26 个任务 |
 
 ---
