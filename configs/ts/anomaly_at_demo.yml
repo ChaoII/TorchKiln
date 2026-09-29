@@ -1,0 +1,78 @@
+# 时序异常检测 demo（anomaly_transformer）—— 合成数据 datasets/ts_anomaly_demo/data.csv
+Global:
+  model_name: ts-anomaly-anomaly_transformer-demo
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 15
+  print_batch_step: 20
+  save_model_dir: ./output/ts_anomaly_anomaly_transformer_demo
+  save_epoch_step: 15
+  eval_batch_step: null    # 只按 epoch 评估（batch 触发用 null 关闭）
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: false
+Architecture:
+  model_family: ts_anomaly
+  task: ts_anomaly
+  train: true
+  algorithm: anomaly_transformer
+  in_chunk_len: 64
+  num_features: 3
+  d_model: 32
+  n_heads: 4
+  e_layers: 2
+  d_ff: 32
+  dropout: 0.0
+Loss:
+  name: TSAnomalyLoss
+  k: 3
+Metric:
+  main_indicator: f1
+  # ⚠️ 阈值分位应按**异常占比**设：分数 top (100-q)% 判为异常。
+  #    demo 数据异常占比 ~23% ⇒ q=75（工业场景异常更少，可设 95~99）。
+  threshold_percentile: 75.0
+  point_adjust: true
+PostProcess:
+  at_temperature: 50
+  at_score_mode: paddlets
+Optimizer:
+  name: Adam
+  lr:
+    name: Const
+    learning_rate: 0.001
+    warmup_epoch: 0
+  regularizer:
+    name: L2
+    factor: 0.0
+Train:
+  dataset:
+    name: TSAnomalyDataset
+    csv_path: datasets/ts_anomaly_demo/data.csv
+    label_col: label
+    in_chunk_len: 64
+    stride: 1
+    split_ratio: [0.6, 0.2, 0.2]
+    standardize: true
+  loader:
+    shuffle: true
+    drop_last: false
+    batch_size_per_card: 32
+    num_workers: 0
+Eval:
+  dataset:
+    name: TSAnomalyDataset
+    csv_path: datasets/ts_anomaly_demo/data.csv
+    label_col: label
+    in_chunk_len: 64
+    stride: 1
+    split_ratio: [0.6, 0.2, 0.2]
+    standardize: true
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 32
+    num_workers: 0

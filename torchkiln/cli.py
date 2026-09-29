@@ -67,6 +67,13 @@ TASK_ALIASES = {
     "video_cls": "video_cls",
     "video-cls": "video_cls",
     "video": "video_cls",
+    "ts_forecast": "ts_forecast",
+    "ts-forecast": "ts_forecast",
+    "ts": "ts_forecast",
+    "ts_anomaly": "ts_anomaly",
+    "ts-anomaly": "ts_anomaly",
+    "anomaly": "ts_anomaly",
+    "ad": "ts_anomaly",
     "ocr": "ocr",
     "ocr_det": "ocr_det",
     "ocr-det": "ocr_det",
@@ -100,6 +107,8 @@ FAMILY_OF = {
     "attribute": "yolo",
     "pose_action": "yolo",
     "video_cls": "yolo",
+    "ts_forecast": "ts",
+    "ts_anomaly": "ts",
     "ocr": "ocr_det",
     "ocr_det": "ocr_det",
     "ocr_rec": "ocr_rec",
@@ -166,7 +175,7 @@ def _config_task(argv):
 
         arch = load_config(path).get("Architecture") or {}
         raw = str(arch.get("task") or arch.get("name") or "").lower()
-        for key in ("kokoro_tts", "panns_cls", "plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
+        for key in ("ts_anomaly", "ts_forecast", "kokoro_tts", "panns_cls", "plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
                     "lane_bev", "lane_seg", "lane_row", "pc_seg", "det3d", "detect", "segment", "obb", "pose",
                     "classify", "semantic", "depth", "e2e", "det", "rec", "cls"):
             if key in raw:

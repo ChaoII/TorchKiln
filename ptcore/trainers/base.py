@@ -694,8 +694,25 @@ class BaseTrainer:
             do_step = ((idx + 1) % micro == 0) or (idx + 1 >= max_iter)
             # 对齐 ultralytics:梯度**累积求和**(不除以 accumulate);每步做梯度裁剪(unscale+clip)。
             # 裁剪阈值 `self.clip_grad_norm`（默认 10.0；设为 null 可关闭，用于对齐不裁剪的上游实现）。
+            #
+            # ⚠️ 钩子：若 loss 提供了 `train_step`（两阶段算法，如 USAD / AnomalyTransformer
+            #    需要「每 batch 两次 backward+step」），则**完全交给它**，跳过下面的默认路径。
+            step_hook = getattr(self.loss, "train_step", None)
             scaled = loss
-            if self.scaler is not None:
+            if step_hook is not None:
+                if do_step:
+                    if hasattr(self.loss, "set_lr"):
+                        self.loss.set_lr(self.optimizer.param_groups[0]["lr"])
+                    new_logs = step_hook(model=self._raw_model(), loss_dict=loss_dict,
+                                         batch=labels, step_idx=idx + 1)
+                    if new_logs:
+                        loss_dict = new_logs
+                        loss = loss_dict["loss"]
+                        loss_hist[-1] = loss.detach()
+                    for _p in self._raw_model().parameters():
+                        _p.grad = None
+                    self.lr_scheduler.step()
+            elif self.scaler is not None:
                 self.scaler.scale(scaled).backward()
                 if do_step:
                     self.scaler.unscale_(self.optimizer)
@@ -791,6 +808,9 @@ class BaseTrainer:
 
     def _maybe_eval_and_save(self):
         evs = self.eval_batch_step
+        # ⚠️ `eval_batch_step: null` 表示**关闭按 batch 评估**（只按 epoch 评估）
+        if evs is None:
+            return
         step = self.global_step
         interval = int(evs[1]) if len(evs) > 1 else 1500
         start = int(evs[0]) if len(evs) > 0 else 0
