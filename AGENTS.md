@@ -2271,3 +2271,60 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 | `tkiln changepoint` | **CUSUM / Page-Hinkley / ADWIN / z-score（纯统计，无训练）** |
 
 - **回归**：`check_graph_build` **55 OK / 0 FAIL**；`configs/ts/` 共 **24** 个配置。
+
+## RUL 精度优化（穷尽尝试后的如实结论）+ 多工况功率预测（2026-09-29）
+
+### 1) RUL 精度：系统尝试后**未达文献水平**（如实记录）
+
+**起点**：FD001 RMSE 25.49（常数基线 41.56）。尝试了 6 类手段：
+
+| 手段 | 配置 | FD001 RMSE |
+|---|---|---|
+| 基线 | 60ep / win30 / 128×3 / dropout0.1 | **26.66**（加 roll_mean 后） |
+| 特征工程 | `feat_eng: [roll_mean]` | 28.02 → **26.66** ✅ |
+| 特征工程（更多） | `[roll_mean, roll_std]` / `+slope` | 26.63（几乎无增益） |
+| 特征工程（全量 102 维） | `[diff, roll_mean, roll_std, slope, delta0]` | **33.74** ❌（过拟合） |
+| 窗口 30→50 | — | 30.91 ❌ |
+| 模型 128×3→256×4 | — | ❌ |
+| 正则加强（dropout0.3 + wd1e-3） | — | 28.13 ❌ |
+| 训练更久（60→200/300ep） | — | 32.84 / 30.73 ❌ |
+| 训练口径对齐测试（`train_last_frac` 0.5→0.2/0.1/0.05） | — | 45.49 / 53.92 / 57.38 ❌（样本过少欠拟合） |
+| 缩小模型（32×2, dropout0.5） | — | 34.49 ❌ |
+
+**最终（FD001-004，`feat_eng: [roll_mean]`）**：
+| 子集 | 未加 FE | **加 FE** | 常数基线 |
+|---|---|---|---|
+| FD001 | 25.49 | 26.66 | 41.56 |
+| FD002 | 24.70 | **23.52** | 53.78 |
+| FD003 | 24.29 | **21.79** | 41.40 |
+| FD004 | 29.08 | 30.10 | 54.52 |
+
+**如实结论**：
+- 本框架在「**原始传感器 + 单模型（TCN）**」下的实际水平是 **~22~30**，
+  **显著优于常数基线 37~55%，但未达文献 12~18**。
+- 文献低 RMSE 的**必要条件**（本框架未做）：① **BiLSTM+Attention / Transformer** 等更强结构；
+  ② **精细特征工程**（分工况统计特征、退化指标构建、PCA/自动编码器降维）；
+  ③ **多 seed / 多模型集成**；④ 更长的调参预算。
+- **这不是功能缺失**（数据管线、NASA Score、4 个子集全覆盖均已具备），而是**精度调优**范畴。
+- ⚠️ **已修的 2 个真 bug**（本轮）：① `feat_eng` 循环用 `kind` 当特征类型名，
+  **遮蔽外层数据格式 `kind`** → `kind=="cmapss"` 恒假 → test 的 100 台被当成 1428 个滑窗（评估口径错）；
+  ② C-MAPSS test 的 `RUL_*.txt` 是**每台一个值**（长度=unit 数），通用 CSV 是逐行 → 按长度判别。
+
+### 2) 多工况功率预测（合成光伏，晴/多云两种工况）
+- 数据 `datasets/ts_power_multi/data.csv`：`power`(目标) + `irradiance/temp`(observed)
+  + `hour_sin/cos`(known) + `weather`(known, 晴0/多云1)；
+  **工况相关效率**（晴 0.92 / 多云 0.78 ⇒ 同辐照下功率不同）。
+- ⚠️ **关键发现**：`rnn`/`lstnet`/`transformer`/`scinet` 等按 PaddleTS 设计**只用 `past_target`**，
+  **完全忽略 known/observed 协变量** ⇒ 加不加 `weather` 结果**逐位相同**（0.4386）。
+  **要体现多工况必须用 TFT / DeepAR / NBEATS**（显式接收协变量）。
+- **实测对比（TFT，30 epoch）**：
+  | 配置 | nRMSE | 结论 |
+  |---|---|---|
+  | RNN（忽略协变量） | 0.4386 | 基线 |
+  | **TFT 单工况**（无 weather） | 0.2394 | TFT 本身强于 RNN |
+  | **TFT 多工况**（weather 作 known 协变量） | **0.2014** | ✅ **再提升 16%** |
+- **结论**：**显式建模工况（把工况作为协变量）能显著提升功率预测精度**；
+  用 RNN 类模型时该信息会被完全忽略（这是 PaddleTS 模型的设计，非 bug）。
+- 配置：`configs/ts/power_multi_{no_weather,with_weather}_demo.yml`（RNN 版）
+  / `configs/ts/power_multi_tft_{no_weather,with_weather}_demo.yml`（TFT 版，**推荐**）。
+- ⚠️ TFT 仍有**退出期原生崩溃**（`0xC0000409`），训练与指标正常（已知问题）。
