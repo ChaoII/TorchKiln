@@ -170,6 +170,59 @@ def create_app(settings=None):
         res = await app.state.jobs.cancel(job_id)
         return CancelResult(**res)
 
+    # ------------------------------------------------------------ 3b. 产物
+    @app.get("/api/v1/train/jobs/{job_id}/artifacts",
+             dependencies=[Depends(require_auth)])
+    async def list_artifacts(job_id: str):
+        """列出作业产物（权重/配置/指标等），供调用方取回。"""
+        job = _must_get(job_id)
+        out_dir = job.get("output_dir")
+        items = []
+        if out_dir and os.path.isdir(out_dir):
+            for name in sorted(os.listdir(out_dir)):
+                p = os.path.join(out_dir, name)
+                if os.path.isfile(p):
+                    items.append({"name": name, "size": os.path.getsize(p)})
+        return {"job_id": job_id, "output_dir": out_dir, "items": items}
+
+    @app.get("/api/v1/train/jobs/{job_id}/artifacts/{filename}",
+             dependencies=[Depends(require_auth)])
+    async def download_artifact(job_id: str, filename: str):
+        """下载单个产物文件（流式）。
+
+        ⚠️ **必须做路径逃逸校验**：``filename`` 来自 URL，直接拼进 output_dir
+        会被 ``../../etc/passwd`` 之类的输入穿越到任意路径。这里只允许**文件名**
+        （不含分隔符），且解析后必须仍落在作业目录内。
+        """
+        job = _must_get(job_id)
+        out_dir = job.get("output_dir")
+        if not out_dir:
+            raise HTTPException(status_code=404, detail="job has no output_dir")
+        # 只接受纯文件名，拒绝任何目录分隔符与 ..（防路径穿越）
+        if not filename or "/" in filename or "\\" in filename or filename in (".", ".."):
+            raise HTTPException(status_code=400, detail="invalid filename")
+        base = os.path.abspath(out_dir)
+        path = os.path.abspath(os.path.join(base, filename))
+        # 双保险：解析后必须仍在作业目录内
+        if os.path.commonpath([base, path]) != base:
+            raise HTTPException(status_code=400, detail="path traversal rejected")
+        if not os.path.isfile(path):
+            raise HTTPException(status_code=404, detail="artifact not found: " + filename)
+
+        def _iter():
+            with open(path, "rb") as f:
+                while True:
+                    chunk = f.read(1024 * 256)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        return StreamingResponse(
+            _iter(),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": 'attachment; filename="{}"'.format(filename)},
+        )
+
     # ------------------------------------------------------------ 3. 日志 / 指标
     @app.get("/api/v1/train/jobs/{job_id}/logs", dependencies=[Depends(require_auth)])
     async def get_logs(job_id: str, tail: int = Query(200, ge=0, le=10000)):
