@@ -1,0 +1,72 @@
+# 功率预测 demo（rnn）—— 合成光伏数据 datasets/ts_power_demo/data.csv
+# 示范：点预测 + 点预测 + 功率预测常用指标（nRMSE / MAPE / R² / MAE）
+Global:
+  model_name: ts-power-rnn-demo
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 10
+  print_batch_step: 20
+  save_model_dir: ./output/ts_power_rnn_demo
+  save_epoch_step: 10
+  eval_batch_step: null
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: false
+Architecture:
+  model_family: ts_forecast
+  task: ts_forecast
+  train: true
+  Head:
+    model: rnn
+    in_chunk_len: 96
+    out_chunk_len: 12
+    target_dim: 1
+    rnn_type: LSTM
+    hidden_dim: 32
+Loss:
+  type: mse
+Metric:
+  main_indicator: nRMSE
+  pred_mode: point
+
+Optimizer:
+  name: Adam
+  lr:
+    name: Const
+    learning_rate: 0.001
+    warmup_epoch: 0
+  regularizer:
+    name: L2
+    factor: 0.0
+Train:
+  dataset:
+    csv_path: datasets/ts_power_demo/data.csv
+    target_cols: [power]
+    known_cols: [hour_sin, hour_cos]
+    observed_cols: [irradiance, temp]
+    in_chunk_len: 96
+    out_chunk_len: 12
+    split_ratio: [0.7, 0.15, 0.15]
+  loader:
+    shuffle: true
+    drop_last: false
+    batch_size_per_card: 32
+    num_workers: 0
+Eval:
+  dataset:
+    csv_path: datasets/ts_power_demo/data.csv
+    target_cols: [power]
+    known_cols: [hour_sin, hour_cos]
+    observed_cols: [irradiance, temp]
+    in_chunk_len: 96
+    out_chunk_len: 12
+    split_ratio: [0.7, 0.15, 0.15]
+  loader:
+    shuffle: false
+    drop_last: false
+    batch_size_per_card: 32
+    num_workers: 0

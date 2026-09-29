@@ -1,6 +1,8 @@
 """Time-series forecasting task (``Architecture.task: ts_forecast``)."""
 from __future__ import absolute_import
 
+import torch
+
 from ptcore.task import TaskAdapter
 
 
@@ -20,7 +22,20 @@ class TsForecastTask(TaskAdapter):
     def build_model(self, config, post_process):
         from torchkiln.models.ts import build_ts_model
 
-        return build_ts_model(config["Architecture"])
+        # ⚠️ TFT/DeepAR 需要协变量维度：把数据集配置注入 Architecture 供其自动推断
+        arch = dict(config["Architecture"])
+        ds = ((config.get("Train") or {}).get("dataset")
+              or (config.get("Eval") or {}).get("dataset")
+              or config.get("dataset") or {})
+        arch["_dataset"] = ds
+        head = dict(arch.get("Head") or {})
+        # 显式缺省时用数据集列数兜底
+        if str(head.get("model", "")).lower() in ("tft", "deepar"):
+            head.setdefault("known_num_dim", len(ds.get("known_cols") or []))
+            head.setdefault("observed_num_dim", len(ds.get("observed_cols") or []))
+            head.setdefault("static_num_dim", len(ds.get("static_cols") or []))
+        arch["Head"] = head
+        return build_ts_model(arch)
 
     def build_loss(self, config, model):
         from torchkiln.ts import build_ts_loss
@@ -74,6 +89,14 @@ class TsForecastTask(TaskAdapter):
             inp["known_cov_numeric"] = batch[2]
             inp["observed_cov_numeric"] = batch[3]
             inp["static_cov_numeric"] = batch[4]
+            # ⚠️ TFT/DeepAR 需要 categorical 变体（paddlets 传的是 `empty` 张量）；
+            #    这里补同形状的空类别张量，避免模型内部 `None.shape` 崩溃
+            inp["known_cov_categorical"] = torch.zeros(
+                *batch[2].shape[:-1], 0, dtype=torch.long, device=batch[2].device)
+            inp["observed_cov_categorical"] = torch.zeros(
+                *batch[3].shape[:-1], 0, dtype=torch.long, device=batch[3].device)
+            inp["static_cov_categorical"] = torch.zeros(
+                *batch[4].shape[:-1], 0, dtype=torch.long, device=batch[4].device)
         return inp
 
     @staticmethod

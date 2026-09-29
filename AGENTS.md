@@ -2035,3 +2035,103 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 - **ECAPA（VoxCeleb）**：**数据集 ~300 GB 且无可用直链** + **wheel 不带训练脚本**（`vector/exps` 缺失）。
   ⇒ **无法训练对齐**。
 - **kokoro**：**官方从未公开训练代码** ⇒ 无对齐对象（③ 已用「模块级梯度通路 vs 官方推理包」替代）。
+
+## 时序任务扩展：异常检测 / 分类 / 表示学习 / 功率预测（2026-09-29，P0–P3 全部完成）
+
+**背景**：盘点发现框架 20 个任务里只有 `ts_forecast`（预测），
+"持续数据的故障分析（异常检测）"与"时序分类/表示学习"是空的。
+本轮按 paddlets 1.1.0 逐项补齐（**paddlets 无任何官方预训练权重** ⇒ 用
+「同起点 dump 权重 → torch 加载 → 逐层前向 → **fp64 判定**」，与 PANNs 同一套方法学）。
+
+### P0 `ts_anomaly`（时序异常检测）——5 个模型，端到端跑通
+| 文件 | 内容 |
+|---|---|
+| `torchkiln/nn/s_anomaly.py` | `AnomalyMLP/AnomalyCNN/AnomalyLSTM`（paddlets `_ed/ed.py`）、`AEBlock`（autoencoder）、`VAEStack/VAEBlock`（vae）、`USADBlock`（usad） |
+| `torchkiln/nn/s_anomaly_gat.py` | `ConvLayer/GRULayer/Reconstruction/Forecasting/FeatOrTempAttention/MTADGATBlock`（`_mtad_gat/`） |
+| `torchkiln/nn/s_anomaly_transformer.py` | `PositionalEmbedding/TokenEmbedding/DataEmbedding/EncoderLayer/Encoder/TriangularCausalMask/AnomalyAttention/AttentionLayer/AnomalyTransformerNet`（`_anomaly_transformer/`） |
+| `torchkiln/data/ts_anomaly.py` | `TSAnomalyDataset`（CSV→滑窗；点级 label；**标准化统计量只用 Train 段**） |
+| `torchkiln/ts_anomaly.py` | `my_kl_loss`/`series_prior_loss`/`series_prior_energy`/`smooth_l1_loss_vae`/`result_adjust`（point-adjust）+ `TSAnomalyLoss`（5 种）+ `TSAnomalyMetric` |
+| `torchkiln/tasks/ts_anomaly.py`、`ptcore/trainers/ts_anomaly.py` | 任务/训练器 |
+| `configs/ts/anomaly_{ae,vae,usad,mtad_gat,at}_demo.yml` + `datasets/ts_anomaly_demo/` | demo |
+
+- **对齐（fp64 rel）**：MLP 2.5e-13 | AE-MLP 1.3e-16 | AE-CNN 1.7e-16 | VAE 5.2e-16 |
+  USAD(flatten-MLP/MLP/CNN) 1e-16 级 | **MTAD-GAT** preds 1.2e-10 / recons 3.8e-11 |
+  **AnomalyTransformer** out 1.5e-13 / series 3.4e-16 / prior 2.1e-16 / sigma 3.0e-16；
+  权重一律 **missing=0 / unexpected=0**。
+- **指标**：点级 **P/R/F1（含 point-adjust）** + **AUC-ROC** + **AUC-PR(AP)** + `best_f1`(oracle 参考)
+  + `threshold_percentile`（**按异常占比设**：demo 异常约 26% ⇒ 用 75；工业场景异常少可用 95~99）。
+- **端到端（demo）**：AE 0.769 / VAE 0.776 / USAD 0.769 / MTAD-GAT 0.769 / AT 0.770（AUC-ROC），F1 ≈1.0。
+
+### P1 `ts_classify`（时序分类，工况/故障类型诊断）
+- `torchkiln/nn/ts_classify.py`：`CNNBlock`（paddlets `_CNNBlock`）、`InceptionModule/InceptionBlock/InceptionTime`。
+- `torchkiln/data/ts_classify.py`：`TSClassifyDataset`（长格式 CSV 滑窗 **窗内多数投票** / 清单格式；
+  `label_col` 不存在时**不报错**（供表示学习用））。
+- `torchkiln/tasks/ts_classify.py`：`TsClassifyTask` + `TSClassifyMetric`（accuracy / macro-F1 / **每类 F1**）。
+- **对齐**：CNNBlock **2.0e-14**、InceptionTime **6.7e-13**；missing=0。
+- **端到端（3 类合成工况，基线 0.333）**：InceptionTime **0.459**、CNN(ReLU) **0.431**。
+- ⚠️ paddlets `_CNNBlock` 默认逐层 **Sigmoid**（梯度消失，实测仅 0.367）⇒ `activation` 改为可配
+  （demo 用 ReLU），**不传时仍保持 paddlets 默认**。
+
+### P2 `ts_embed`（时序表示学习，自监督）
+- `torchkiln/nn/ts_ts2vec.py`：`SamePadConv/ConvLayer/DilatedConvLayer/TSEncoder/TS2VecModule`(SWA)
+  + `instance/temporal/hierarchical_contrastive_loss` + mask 工具。
+- `torchkiln/nn/ts_cost.py`：`TFDLayer`(多尺度趋势)/`SFDLayer`(频域 rfft 季节)/`CoSTEncoder`
+  + `time/frequency_contrastive_loss` + `convert_coefficient`（复用 ts_ts2vec 的卷积块）。
+- `torchkiln/tasks/ts_embed.py`：两视图自监督；`TSReprMetric` 报 `loss` + **`repr_std`**（发现表征塌缩）。
+- **对齐（fp64）**：TS2Vec encoder **1.5e-16**、loss_inst/loss_temp **逐位 0.0**、loss_hier 6.8e-8(累加序)；
+  CoST trend **5.4e-16** / season **4.0e-16** / loss_time **1.2e-16** / loss_freq **1.6e-16** / amp+phase 1.3e-16。
+- **端到端（无标签合成）**：TS2Vec loss 3.80→**3.33**、CoST 4.34→**3.68**，`repr_std` 非零（**无塌缩**）。
+
+### P3 功率预测：行业指标 + 滚动/在线预测接口
+- **`TSMetric` 扩展**（`torchkiln/ts.py`）：`RMSE` / **`nRMSE`**（默认除以 target RMS；也可用
+  `norm_value` 按装机容量归一）/ `MAPE` / `sMAPE` / `R²` / **`PICP`（区间覆盖率）/ `MPIW`（平均区间宽度）
+  / `pinball`**（分位数损失）；`nominal_coverage` 指定名义覆盖率。
+- **`torchkiln/ts_rolling.py::RollingPredictor`**（**新增，面向持续数据部署**）：
+  `warmup()` 灌历史 → `predict()` 预测 H 步 → `push_actual()` 回填真实值 → 滚动；
+  `run_stream()` 一次跑完整条流并返回逐点预测 + MSE/RMSE/**nRMSE**。
+  支持标准化/反标准化与协变量（known/observed/static）透传。
+- **功率预测 demo**：`configs/ts/power_{rnn,tft}_demo.yml` + `datasets/ts_power_demo/`
+  （合成光伏：power 目标 + 辐照度/温度 observed + 时刻 known）。
+  实测 **RNN nRMSE 0.432 / R² 0.888**；**TFT nRMSE 0.216 / PICP 0.869（目标 0.8）/ MPIW 0.193 / pinball 0.017**。
+
+### 阶段中修掉的**通用缺陷**（影响所有新任务）
+1. **`BaseTrainer` 用无 config 的 `get_task(name)` 构造任务** ⇒ `__init__` 里读 `Architecture.algorithm`
+   永远是默认值（`ts_anomaly` 一律当 `ae`、`ts_classify` 一律当 `cnn`）。
+   修法：任务侧新增 `_kind(config)`，`build_model`/`build_loss` **每次从 config 重新取**。
+2. **输出层已过 Softmax 再喂 CE**（"双重 softmax"）⇒ 梯度极小、卡随机水平。
+   修法：`_TsCE` 检测概率输出，改走 `log + NLL`（等价其 logits）。
+3. **`BaseTrainer` 新增 `train_step` 钩子**（loss 提供该属性则**完全接管**每 batch 更新）：
+   供 USAD / AnomalyTransformer 这类**需要两次 backward+step** 的两阶段算法；
+   `TSAnomalyLoss` 只对 `TWO_PHASE` **动态挂载**（单阶段模型不受影响）。
+4. **`eval_batch_step: null`** 表示**关闭按 batch 评估**（只按 epoch）。
+5. **TFT/DeepAR 的协变量维度**：`build_ts_model` 未给 `known_num_dim` 时从**数据集配置**
+   (`known_cols`/`observed_cols`/`static_cols`) 自动推断；`Task` 侧把数据集配置注入 `Architecture._dataset`；
+   并补 `known/observed/static_cov_categorical` 空张量避免 `None.shape` 崩溃。
+6. **日志 `{:.6f}` 对 tensor 崩**：`base.py` 的 loss 汇总强制 `float(...)`。
+
+### 踩坑清单（本轮）
+- **Paddle `nn.GRU/LSTM` 默认 `time_major=False`（batch-first）**，torch 默认 seq-first ⇒ 必须 `batch_first=True`
+  （否则 `matmul` 报 shape 不符，语义完全错）。
+- paddlets `_ed.MLP` 的 **`feature_dim` 是 dim1 通道**（`BatchNorm1D` 按 dim1），`input_dim` 才是最后一维。
+- **USAD `flatten=True` 时强制关掉 encoder 的 BN**。
+- **MTAD-GAT 的 `_bias` 在 Paddle 是 `Assign(paddle.empty(...))`（未初始化内存）** ⇒ 对拍必须以 dump 值为准。
+- **Paddle GPU fp32 matmul 走 TF32**（MLP 路径 fp32 差 4e-4，切 fp64 后塌到 1e-13）⇒ **fp64 判定法必用**。
+- **paddlets 整包 import 会拉 `pyod`**（`pip install --no-deps pyod`）。
+- **`TSEncoder.forward` 的 mask 只接受字符串**（传张量会 `AssertionError`）⇒ 对拍 monkeypatch `generate_true_mask`。
+- **CoST `SFDLayer`**：torch 的 `rfft` 输出需显式对齐 `(F,B,C)`，`bias` 要补 batch 维；Paddle `as_complex` 末维必须为 2。
+- **demo 数据要打乱顺序**：分类数据若按类别分块，切 split 后 Train/Eval/Test 类别不齐（实测 Train 只有 {0,1}、Test 只有 {2}）。
+- `torch.zeros([1])`（1D）会让日志 `{:.6f}` 崩 ⇒ 零损失返回 0 维标量。
+- **`-c` 参数在 PowerShell 里要传变量**（`$c="configs\x.yml"; ... -c $c`），直接带引号会被判为缺 config。
+
+### 现状（时序部分）
+| 任务 | 模型/能力 | 状态 |
+|---|---|---|
+| `ts_forecast` | 12 模型（NBEATS/NHiTS/MLP/DLinear/TCN/RNN/LSTNet/Transformer/SCINet/Informer/DeepAR/TFT）+ 点/分位数/概率 | ✅（P3 补 nRMSE/PICP/滚动接口） |
+| **`ts_anomaly`** | **AE/VAE/USAD/MTAD-GAT/AnomalyTransformer** | ✅ **新增** |
+| **`ts_classify`** | **CNN/InceptionTime** | ✅ **新增** |
+| **`ts_embed`** | **TS2Vec/CoST**（自监督） | ✅ **新增** |
+
+- **回归**：`tools/check_graph_build.py` **55 OK / 0 FAIL**；`configs/ts/` 共 **18** 个配置全部合法。
+- **仍未覆盖**（如实标注）：`paddlets` 的 `representation/task`（`repr_classifier`/`repr_cluster`/`repr_forecasting`）
+  本框架**用「导出表征 → ts_classify / ts_forecast」替代**，未单独实现该 task；
+  `anomaly/ml`（纯 sklearn 基线）与 `classify` 的 `ml` 亦未移植（非 DL，价值低）。

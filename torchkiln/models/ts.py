@@ -111,16 +111,30 @@ def build_ts_model(arch):
             output_mode=head.get("output_mode", "quantiles"))
     if model == "tft":
         from torchkiln.nn.s_tft import TemporalFusionTransformer
+        # ⚠️ TFT/DeepAR 需要各协变量维度；未显式给定时**从数据集配置推断**
+        #    （否则 future_ts_transform 不会被构造 -> 前向 None.shape 崩）
+        ds = (arch.get("dataset") or arch.get("_dataset") or {})
+        known_num = head.get("known_num_dim")
+        if known_num is None:
+            cols = ds.get("known_cols") or []
+            known_num = len(cols)
+        obs_num = head.get("observed_num_dim")
+        if obs_num is None:
+            cols = ds.get("observed_cols") or []
+            obs_num = len(cols)
+        static_num = head.get("static_num_dim")
+        if static_num is None:
+            static_num = len(ds.get("static_cols") or [])
         return TemporalFusionTransformer(
             in_len, out_len, {
                 "target_dim": dim,
-                "known_num_dim": head.get("known_num_dim", 0),
+                "known_num_dim": known_num,
                 "known_cat_dim": head.get("known_cat_dim", 0),
-                "observed_num_dim": head.get("observed_num_dim", 0),
+                "observed_num_dim": obs_num,
                 "observed_cat_dim": head.get("observed_cat_dim", 0),
                 "known_cat_size": head.get("known_cat_size", []),
                 "observed_cat_size": head.get("observed_cat_size", []),
-                "static_num_dim": head.get("static_num_dim", 0),
+                "static_num_dim": static_num,
                 "static_cat_dim": head.get("static_cat_dim", 0),
                 "static_cat_size": head.get("static_cat_size", []),
             },
