@@ -107,6 +107,7 @@ class RULDataset(Dataset):
                             ds.get("min_std", 1e-6))
 
         self.mu, self.sd = None, None
+        self.op_centroids = None
         if ds.get("standardize", True):
             # ⚠️ 统计量只用**训练段 unit**（避免测试信息泄漏）
             units_all = sorted(set(unit.tolist()))
@@ -116,10 +117,46 @@ class RULDataset(Dataset):
             mask = np.isin(unit, list(tr_units))
             if not mask.any():
                 mask = np.ones(len(unit), bool)
-            self.mu = np.nanmean(feats[mask], axis=0)
-            self.sd = np.nanstd(feats[mask], axis=0)
-            self.sd = np.where(self.sd < 1e-8, 1.0, self.sd)
-            feats = (feats - self.mu) / self.sd
+
+            # ⭐ **按工况（operating condition）分组归一化** —— FD002/004 有 6 种工况，
+            #    同一传感器在不同工况下均值可差数十倍；若全局 z-score，工况差异会被
+            #    当成"退化信号"污染 RUL 学习（实测全局归一化时 RMSE 明显更差）。
+            #    做法：对操作条件列（前 `n_op_cols` 列）做**取整聚类** -> 每组独立 z-score。
+            n_op = int(ds.get("n_op_cols", 3))
+            op_group = None
+            if n_op > 0 and feats.shape[1] >= n_op:
+                op = np.round(feats[:, :n_op], int(ds.get("op_round", 2)))
+                uniq, inv = np.unique(op[mask], axis=0, return_inverse=True)
+                # 只把出现频率 >= min_op_frac 的组合当独立工况，其余归到最近组
+                cnt = np.bincount(inv)
+                keep_g = np.where(cnt >= float(ds.get("min_op_frac", 0.02)) * len(inv))[0]
+                if len(keep_g) > 1:
+                    cent = uniq[keep_g]
+                    self.op_centroids = cent
+                    # 全部点按最近质心分组
+                    d2 = ((op[:, None, :] - cent[None, :, :]) ** 2).sum(axis=2)
+                    op_group = d2.argmin(axis=1)
+                    if logger is not None:
+                        logger.info("RUL 工况聚类: %d 种（op 列 %d）", len(cent), n_op)
+
+            if op_group is not None:
+                mu = np.zeros(feats.shape[1])
+                sd = np.ones(feats.shape[1])
+                for g in np.unique(op_group):
+                    gm = (op_group == g) & mask
+                    if gm.sum() < 2:
+                        gm = op_group == g
+                    mu_g = np.nanmean(feats[gm], axis=0)
+                    sd_g = np.nanstd(feats[gm], axis=0)
+                    sd_g = np.where(sd_g < 1e-8, 1.0, sd_g)
+                    sel = op_group == g
+                    feats[sel] = (feats[sel] - mu_g) / sd_g
+                self.mu, self.sd = mu, sd
+            else:
+                self.mu = np.nanmean(feats[mask], axis=0)
+                self.sd = np.nanstd(feats[mask], axis=0)
+                self.sd = np.where(self.sd < 1e-8, 1.0, self.sd)
+                feats = (feats - self.mu) / self.sd
 
         # 按 unit 划分（**禁止按时间切**，否则泄漏）
         units = sorted(set(unit.tolist()))

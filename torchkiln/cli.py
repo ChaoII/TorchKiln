@@ -23,6 +23,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # CLI 命名空间别名(显式写法与 predict 路由用)-> 规范任务名
+# 变点/漂移检测（纯统计工具，无训练/无权重 -> 不注册为 task）
+TOOL_SCRIPTS = {"changepoint": "tools/changepoint.py",
+                "cp": "tools/changepoint.py"}
+
 TASK_ALIASES = {
     "detect": "detect",
     "det": "detect",
@@ -235,6 +239,14 @@ def _check(argv):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    # 纯统计工具（无 task）：`tkiln changepoint ...`
+    if argv and argv[0].lower() in TOOL_SCRIPTS:
+        import runpy
+        script = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), TOOL_SCRIPTS[argv[0].lower()])
+        sys.argv = [script] + list(argv[1:])
+        runpy.run_path(script, run_name="__main__")
+        return 0
     if not argv or argv[0] in ("-h", "--help", "help"):
         print(USAGE)
         return 0

@@ -2206,3 +2206,68 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 | **`ts_rul`** | **复用 ts_forecast 模型族 + NASA Score/Score_avg（新增）** |
 
 - **回归**：`check_graph_build` **55 OK / 0 FAIL**；`configs/ts/` 共 **21** 个配置。
+
+## 变点/漂移检测 + 多工况 RUL（2026-09-29 补充）
+
+### 1) 变点 / 概念漂移检测（**纯统计算法，无模型、无训练**）
+`torchkiln/ts_changepoint.py` + CLI `tools/changepoint.py`：
+
+| 算法 | 用途 | 关键参数 |
+|---|---|---|
+| **`CUSUMDetector`** | 累积和（工业 SPC 标配，测**均值微小持续偏移**） | `delta`(松弛) `threshold` |
+| **`PageHinkleyDetector`** | Page-Hinkley（在线漂移，O(1) 流式友好） | `delta` `threshold` |
+| **`ADWINDetector`** | 自适应窗口 + Hoeffding 界（**概念漂移**常用） | `delta` `max_window` |
+| **`ZScoreDetector`** | 滚动 z-score（**突变/离群段**） | `window` `threshold` |
+
+- API：流式 `det.update(x) -> bool`（`det.last_change_index` 给变点位置）；
+  离线 `detect_changepoints(arr, method=..., **kw) -> {"indices", "scores", "method"}`
+- **CLI**：`tkiln changepoint <csv> --method cusum --threshold 8`（或 `-c` 传 YAML）；
+  输出 JSON（`n_changepoints` / `changepoints` / `score_max`）。
+  实现方式：`cli.py::TOOL_SCRIPTS` 注册**非 task 工具**，`main()` 开头用 `runpy` 直跑
+  （⚠️ 注意 `argv` 必须**在分支之前**归一化，否则 `argv is None` 判断失效）。
+- **自检（合成 1200 点：阶跃 + 缓漂移 + 回落；真实变点 400/700/900）**：
+  | 算法 | 检出数 | 命中 | 平均延迟 |
+  |---|---|---|---|
+  | cusum | 176 | **3/3** | **1 点** |
+  | page_hinkley | 57 | **3/3** | 7 点 |
+  | adwin | 6 | **3/3** | 8 点 |
+  | zscore | 4 | 2/3（漏缓漂移） | 0 点 |
+  ⇒ **CUSUM 综合最优**（延迟 1 点、全命中）；`zscore` 只适合突变，测不出缓漂移。
+
+### 2) 多工况 RUL：C-MAPSS **FD002/003/004** 全部跑通
+- **数据已下全**（jsDelivr 代理）：`datasets/cmapss/` 共 **8 文件 / 44.9 MB**
+  （FD001-004 各 `train/test/RUL`；FD004 train 61249 行最大）。
+- 子集特点：FD001(1 工况/1 故障) · FD002(**6 工况**/1 故障) · FD003(1 工况/**2 故障**) · FD004(**6 工况/2 故障**)。
+- ⭐ **按工况分组归一化（关键）**：FD002/004 的 op1..op3 有 **11 种组合**、传感器方差差异极大
+  （同一传感器 std 在不同工况下可差数十倍）。若用全局 z-score，**工况差异会被误当退化信号**。
+  实现：把 op 列**取整聚类**（`op_round`/`min_op_frac`）→ **每组独立 z-score**
+  （`n_op_cols: 3` 开启）。日志会打印 `RUL 工况聚类: N 种`。
+- **实测（TCN，window=30，max_rul=125，`train_last_frac=0.5`，60 epoch）**：
+  | 子集 | 特点 | 框架 RMSE | MAE | Score_avg | 常数基线 | 提升 |
+  |---|---|---|---|---|---|---|
+  | FD001 | 1 工况 / 1 故障 | 25.49 | 19.85 | 13.2 | 41.56 | **38.7%** |
+  | FD002 | 6 工况 / 1 故障 | 24.70 | 18.93 | 14.0 | 53.78 | **54.1%** |
+  | FD003 | 1 工况 / 2 故障 | 24.29 | 18.33 | 10.5 | 41.40 | **41.3%** |
+  | FD004 | 6 工况 / 2 故障 | 29.08 | 22.64 | 26.7 | 54.52 | **46.7%** |
+- **如实标注**：文献 C-MAPSS 常见 RMSE：LSTM/CNN 基线 ~16~20、BiLSTM+Attention ~12~16、
+  SOTA 集成 ~11~14。本框架（**单一 TCN + 原始特征，无平滑/无特征工程/无集成**）在 24~29，
+  **稳定优于常数基线 39~54%**，但**未及 SOTA**。差距来源明确：特征工程（未做平滑/趋势/统计窗特征）
+  与模型集成 —— 属"可继续优化"而非"功能缺失"。
+- **配置**：`configs/ts/rul_fd{002,003,004}_tcn_demo.yml`（+ 原 `rul_{tcn,rnn,rnn_asym}_demo.yml`）。
+
+### 3) 框架通用修复（本轮）
+- **`Global.main_indicator_mode: min|max`**（见 `ts_rul` 章节）：RMSE/MAE/loss 类指标
+  原先被 `value >= best` 判反；`best_metric` 初值按方向初始化（`min` → `+inf`）。
+- **CLI 非 task 工具注册**：`TOOL_SCRIPTS` + `runpy`（变点检测等纯统计工具不走 trainer）。
+
+### 时序能力现状（5 任务 / 21 模型 + 4 检测算法）
+| 任务/工具 | 覆盖 |
+|---|---|
+| `ts_forecast` | 12 模型 + 点/分位数/概率 + nRMSE/PICP + 滚动预测 |
+| `ts_anomaly` | AE/VAE/USAD/MTAD-GAT/AnomalyTransformer + point-adjust/AUC-PR |
+| `ts_classify` | CNN/InceptionTime + macro-F1/每类 F1 |
+| `ts_embed` | TS2Vec/CoST（自监督） |
+| `ts_rul` | 复用预测模型族 + NASA Score（**FD001-004 全覆盖**） |
+| `tkiln changepoint` | **CUSUM / Page-Hinkley / ADWIN / z-score（纯统计，无训练）** |
+
+- **回归**：`check_graph_build` **55 OK / 0 FAIL**；`configs/ts/` 共 **24** 个配置。
