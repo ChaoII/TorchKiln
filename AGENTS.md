@@ -2548,3 +2548,83 @@ FD001，Transformer，3 个 seed（1024/7/2026），win50，100ep：
 - **建议的规范报法**（本框架采用）：同时报 ①全量 RMSE ②近失效段(RUL≤30) RMSE ③NASA Score。
   实测 FD001：**25.44 / 7.63 / 13.9**；FD002：**21.74 / 9.00 / 8.2**。
 - 脚本：`_downloads/rul_metric_probe.py` / `rul_metric_probe2.py`。
+
+---
+
+## 服务化：metrics.jsonl 契约 + 训练服务（2026-09-29 落地）
+
+面向外部平台（AIStation）的两条产出，**都有实测支撑**。
+
+### 1. 结构化指标：`ptcore/metrics_sink.py`
+
+**为什么不用控制台日志**：日志格式随版本变（正则静默失效）、stdout 有 4KB 缓冲、
+无 step 对齐、容器一挂历史就没了。指标必须是**有 schema、可断点续读**的机器契约。
+
+产物（写 `Global.save_model_dir`，即容器共享卷）：
+- `metrics.jsonl` — append-only、一行一事件、**逐行 flush**、崩溃不坏、`seq` 可续传
+- `meta.json` — 启动即写（**原子替换**）：模型/任务/参数量/主指标及方向/运行环境/覆盖项
+
+事件：`step`（lr/loss/各分量/ips/显存/eta）/ `eval` / `best` / `end`
+- `NaN/Inf` 统一写 `null` —— 否则 JS `JSON.parse` 直接报错
+- 写盘异常**全吞**：指标失败绝不能拖垮训练
+- `TKILN_METRICS=0` 或 `Global.metrics_sink: false` 关闭；关闭时返回 `_NullSink`，调用点无需 `if`
+- **torch 懒加载** —— 使 `tkiln list/schema` 在无 torch 环境也能 ~1.4s 出结果
+
+**契约边界（消费方必须知道）**：
+`end` 只在 `train()` 收尾时写。**训练还没开始就失败**（配置错/权重下载失败/数据集
+路径不存在/模型构建报错，都在 `__init__` 里）**不会有任何指标文件**。
+故判定规则是 **「进程退出 且 无 end 事件」= setup 失败**；
+只等 `end` 会让任务永远卡在 running——这是最容易踩的坑。
+
+### 2. 配置自描述：`ptcore/config_schema.py` + `tkiln list/schema`
+
+让外部平台**不硬编码任何超参映射表**（以前接 ultralytics 要维护 `_ULTRALYTICS_HP`
+手写表，加参数要改前后端重新发布）。现在"加模型 = 丢一个 YAML"。
+
+- `tkiln list [--json] [--task] [--family] [--name] [子目录]`
+- `tkiln schema <模型名|配置路径> [--json] [-o k=v ...]`
+- 输出：类型/默认值/取值范围/控件类型(switch/slider/number/path/list)/分组/**中文字段名**
+- 中文 label 走「内置常见键表 + 配置内 `_ui` 段覆盖」，不必一次标完 3000 个键
+- 实测：123/123 配置可解析；`yolov8-det` → 64 参数 / 8 分组
+
+### 3. 顺带修的任务加载 bug（曾让全部任务起不来）
+
+`torchkiln/tasks/__init__.py` 原先**顶层 import 全部 24 个任务**，
+`panns_cls` 需 `torchaudio`、`kokoro_tts` 需 `kokoro` —— 缺任一个就连
+`tkiln train -c configs/yolo/yolov8n-det.yml` 都起不来（实测
+`ModuleNotFoundError: torchaudio`）。已改**按需加载**（`task -> (模块, 类名)` 登记表）。
+
+⚠️ 类名**不能放进 `__all__`**：`from ... import *` 会按 `__all__` 逐个取属性，
+等于强制 import 全部任务模块，懒加载白做。需要具体类用显式导入
+（`from torchkiln.tasks import YoloDetTask`，走 PEP 562 `__getattr__` 按需解析）。
+
+### 4. 依赖声明（按 AST 扫描真实 import 统计得出，非拍脑袋）
+
+原先 `pyproject.toml` 只声明 `torch/numpy/opencv-python/PyYAML`，
+OCR/3D/audio 的依赖**全没声明**，容器镜像必然漏装。已补：
+
+- core 补 `torchvision` / `tqdm` / `Pillow`
+- `[ocr]` pyclipper / shapely / albumentations==1.4.24 / scikit-image / editdistance /
+  six / PyMuPDF / scipy / packaging
+- `[audio]` torchaudio / transformers / resampy / soundfile
+- `[export]` onnx / onnxruntime / onnx-slim
+- `paddle` / `fasttext` / `lanms` / `Cython` 实测均为**函数内惰性导入**，非训练硬依赖
+
+#### ⚠️ albumentations 版本坑（实测踩过，别乱升）
+| 版本 | 问题 |
+|---|---|
+| 2.x | 依赖链 `albucore → simsimd → numkong`，越装越深 |
+| 0.4.x | 依赖 `imgaug`，会拖动/降级 **OpenCV**，危及已能跑的视觉通路 |
+| **1.4.24** | ✅ 只需补 `albucore==0.0.24` + `simsimd` + `stringzilla`（无冲突、无 C 扩展） |
+
+装依赖一律 `pip install --no-deps` + 手工补传递依赖，避免 resolver 顺手升级
+torch/numpy/opencv 把已跑通的通路搞坏。实测装完 torch 2.14.0+cu132 / numpy 2.2.6 /
+cv2 4.11.0 / scipy 1.15.3 **一版本未动**。
+
+### 5. 实测结果（torch 2.14.0+cu132 / RTX 4060 Ti）
+
+- 训练 2 epoch：metrics.jsonl 11 事件、seq 连续、严格 JSON 解析通过
+- 异常路径：模拟训练中抛异常，`end` 事件 `exit_reason=error` 正常落盘
+- `TKILN_METRICS=0` 可完全关闭；`check` 模式不写产物
+- **OCR det 训练实测通过**（PP-OCRv6_tiny_det，hmean=1.0，main_indicator=hmean max）
+- YOLO 通路未受影响（GraphModel/DetLoss/DetMetric）

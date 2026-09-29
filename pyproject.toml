@@ -28,10 +28,17 @@ dependencies = [
 # ---------------------------------------------------------------------------
 [project.optional-dependencies]
 # configs/ocr/**：PP-OCRv6 det / rec / e2e
+#
+# ⚠️ albumentations 钉 **1.4.24**（实测）：
+#    - 2.x 依赖链 albucore → simsimd → numkong，越装越深；
+#    - 0.4.x 依赖 imgaug，会拖动/降级 OpenCV，危及已能跑的视觉通路；
+#    - 1.4.24 只需补 albucore/simsimd/stringzilla 三个无冲突的小包，
+#      且满足 torchkiln/ocr/data/imaug/iaa_augment.py 所需的 API。
+#    配套（无冲突、不含 C 扩展）：albucore==0.0.24 simsimd stringzilla
 ocr = [
     "pyclipper",        # DB 后处理 + 收缩标签生成
     "shapely",          # 多边形/几何增强、iou 计算
-    "albumentations",   # IaaAugment
+    "albumentations==1.4.24",   # IaaAugment（见上方说明，勿随意升版）
     "scikit-image",     # 骨架化（pg / e2e 文本点提取）
     "editdistance",     # rec 编辑距离
     "six",              # 旧式兼容
