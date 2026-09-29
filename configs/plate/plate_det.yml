@@ -6,7 +6,7 @@
   save_model_dir: ./output/plate_det
   save_epoch_step: 10
   eval_batch_step: [0, 200]
-  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/master/pretrained/plate_detect.pth
+  pretrained_model: plate_detect
   checkpoints: null
   distributed: false
   seed: 1024

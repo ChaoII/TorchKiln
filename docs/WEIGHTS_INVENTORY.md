@@ -1,9 +1,32 @@
 # 预训练权重清单（本地 vs ModelScope 远程）
 
-> **盘点时间**：2026-09-29
+> **盘点时间**：2026-09-29（含**上传后复核**）
 > **远程仓库**：`ChaoII0987/TorchKiln` → `pretrained/`（**公开**，否则 resolve 404）
-> **远程 .pth 总数**：**151**
-> **本地 `weights/` .pth 总数**：**26**
+> **远程 .pth 总数**：**153**
+> **本地 `weights/` .pth 总数**：**28**（含新转换的 kokoro 2 个）
+
+---
+
+## 〇、上传后复核结论（2026-09-29）
+
+对 **46 个裸名**（含新上传的 `kokoro_v1_0` / `kokoro_v1_1_zh`）做了端到端实测：
+
+| 检查项 | 结果 |
+|---|---|
+| 仓库里所有 `pretrained_model` 引用能否解析到远程 | ✅ **全部命中**，0 个失败 |
+| 远程 HTTP 连通性（真实请求，框架 `model_url` 那条） | ✅ **12/12 HTTP 200**，0 失败 |
+| 裸名展开规则 | `_candidates('X') → ['X.pth', 'X']` ✅ |
+| ultralytics 风格名（`yolov5nu` / `yolov3u`） | ✅ **远程已有同名文件**，不会静默回落 |
+| `null` 走「从零训练」 | ✅ 设计如此 |
+| 路径含分隔符但文件不存在 | ✅ 抛 `FileNotFoundError`（**不静默回落**）|
+| 裸名拼错 / 远程没有 | ⚠️ 原本只有 `warning` ⇒ **静默从零训练**。**已修**：升级为 `error` + 明确说明后果 + 4 条排查方向 |
+
+**同步改动**：22 个配置里的**完整 URL** 已统一改为**裸名**
+（同一文件、同一解析结果；原写法冗长且把 `master` 分支写死）。
+
+> ⚠️ **仍需你决定**：11 个配置是 `pretrained_model: null`，但远程已有对应权重
+> （kokoro / centerpoint / squeezesegv3 / bev_lanedet / panns）。
+> **未擅自改** —— 那会把「从零训练」变成「微调」，是**行为变更**。
 
 ---
 
@@ -11,8 +34,7 @@
 
 | 判定 | 数量 | 说明 |
 |---|---|---|
-| ✅ **远程已有、可直接用** | **149** | YOLO 家族 + PP-OCR + 车牌 + 3D/点云/车道 + 音频 3 个 + PGNet_lite |
-| ⭐ **本地新生成、需上传** | **2** | **kokoro_v1_0.pth** + **kokoro_v1_1_zh.pth**（TTS，624 MB） |
+| ✅ **远程已有、可直接用** | **153** | YOLO 家族 + PP-OCR + 车牌 + 属性 + 3D/点云/车道 + 音频 4 个 + PGNet_lite |
 | ❌ **本地有、但不该上传** | **19**（1.67 GB） | **业务/对齐中间产物**（nc=1 实验权重、OBB 转换中间件、业务微调） |
 
 > ⚠️ **上一版本文档的推荐是错的**（曾说「远程只有 3 个、需上传 44 个」），
@@ -21,7 +43,7 @@
 
 ---
 
-## 二、⭐ 需上传的（2 个 / 624 MB）—— 唯一的通用 TTS 基座
+## 二、✅ kokoro（已上传并复核通过）
 
 | 文件 | 大小 | 来源 | 验证 |
 |---|---|---|---|
@@ -61,7 +83,32 @@ Architecture:
 
 ---
 
-## 三、❌ 不该上传的（19 个 / 1.67 GB）—— 业务与对齐中间产物
+## 三、⚠️ 待你决定：11 个配置是 `null`，但远程已有对应权重
+
+这些**没有擅自改** —— 填上预训练会把「从零训练」变成「微调」，属于**行为变更**，
+需你确认是否合适（有些 demo 本来就是要从零跑）。
+
+| 配置 | 建议 `pretrained_model` | 远程体积 | 备注 |
+|---|---|---|---|
+| `configs/audio/kokoro_demo.yml` | `kokoro_v1_0` | 312.1 MB | demo 用合成数据，**从零更合适** |
+| `configs/audio/panns_esc50_align.yml` | `panns_cnn14` | 308.1 MB | 对齐实验**故意从零**（否则无法与 Paddle 对比）|
+| `configs/audio/panns_esc50_ctrl.yml` | `panns_cnn14` | 308.1 MB | 同上 |
+| `configs/audio/panns_esc50_ctrl30.yml` | `panns_cnn14` | 308.1 MB | 同上 |
+| `configs/audio/panns_esc50_order30.yml` | `panns_cnn14` | 308.1 MB | 同上 |
+| `configs/lane/bev_lanedet.yml` | `bev_lanedet_apollo_576x1024` | 168.1 MB | **建议填**（官方 Apollo 预训练）|
+| `configs/local/apollo_bev_lanedet.yml` | `bev_lanedet_apollo_576x1024` | 168.1 MB | **建议填** |
+| `configs/pc/centerpoint-det3d.yml` | `centerpoint_pillars_kitti` | 19.2 MB | **强烈建议填**（当前是 smoke-only demo）|
+| `configs/pc/pointpillars-det3d.yml` | `centerpoint_pillars_kitti` | 19.2 MB | ⚠️ 架构不同（PointPillars ≠ CenterPoint），**不能直接填** |
+| `configs/pc/pointpillars-seg.yml` | `centerpoint_pillars_kitti` | 19.2 MB | ⚠️ 同上，**不能直接填** |
+| `configs/pc/squeezesegv3-pcseg.yml` | `squeezesegv3_rangenet53_semantickitti` | 99.7 MB | **强烈建议填** |
+
+> 📌 判定依据：`configs/pc/pointpillars-*` 是 **PointPillars** 架构，
+> 而远程的 `centerpoint_pillars_kitti.pth` 是 **CenterPoint** ——
+> 架构不同**不能混用**，只有 `centerpoint-det3d.yml` 能直接受益。
+
+---
+
+## 四、❌ 不该上传的（19 个 / 1.67 GB）—— 业务与对齐中间产物
 
 > **上传标准**：只上传「**官方权重转换**」产物（供用户微调的通用基座），
 > **不上传**业务对齐过程中的中间产物。
@@ -102,7 +149,7 @@ v8n_obb_fw.pth (6.0 MB)    v26n_obb_fw.pth (5.4 MB)    yolo11n_obb_fw.pth (10.4 
 
 ---
 
-## 四、远程已有的（149 个）—— 已验证可直接下载加载
+## 五、远程已有的（149 个）—— 已验证可直接下载加载
 
 ### 4.1 YOLO 检测家族（123）
 
@@ -150,7 +197,7 @@ v8n_obb_fw.pth (6.0 MB)    v26n_obb_fw.pth (5.4 MB)    yolo11n_obb_fw.pth (10.4 
 
 ---
 
-## 五、下载与加载机制
+## 六、下载与加载机制
 
 ```python
 # 框架自动下载（config 里写裸名，不带 .pth）
@@ -170,7 +217,7 @@ Global:
 
 ---
 
-## 六、上传操作（需 ModelScope token）
+## 七、上传操作（需 ModelScope token）
 
 ```bash
 pip install modelscope

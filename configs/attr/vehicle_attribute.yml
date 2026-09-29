@@ -6,7 +6,7 @@
   save_model_dir: ./output/PP-LCNet_x1_0_vehicle_attribute
   save_epoch_step: 1
   eval_batch_step: [0, 200]
-  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/master/pretrained/PP-LCNet_x1_0_vehicle_attribute.pth
+  pretrained_model: PP-LCNet_x1_0_vehicle_attribute
   checkpoints: null
   distributed: false
   seed: 1024

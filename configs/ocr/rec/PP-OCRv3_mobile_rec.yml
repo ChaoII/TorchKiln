@@ -12,7 +12,7 @@
   - 0
   - 2000
   cal_metric_during_train: true
-  pretrained_model: https://www.modelscope.cn/models/ChaoII0987/TorchKiln/resolve/master/pretrained/PP-OCRv3_mobile_rec.pth
+  pretrained_model: PP-OCRv3_mobile_rec
   checkpoints: null
   save_inference_dir: null
   output: null

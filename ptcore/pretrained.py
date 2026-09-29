@@ -301,11 +301,24 @@ def resolve_pretrained(name_or_path, logger=None):
 
     filename = _candidates(spec)[0]
     try:
-        return download_pretrained(filename, logger=logger)
+        path = download_pretrained(filename, logger=logger)
+        if logger is not None:
+            logger.info("Using downloaded pretrained weights: %s", path)
+        return path
     except Exception as exc:  # noqa: BLE001
         if logger is not None:
-            logger.warning(
-                "Could not obtain pretrained weights '%s' (%s).", spec, exc
+            # 这里 return None 的后果是「静默从零训练」——用户以为在微调、实际从零，
+            # 是最容易踩且最难发现的坑（名字拼错 / 远程没有该文件都走这里）。
+            # 故升级为 error 级别 + 明确说明后果 + 给出排查方向。
+            logger.error(
+                "Could NOT obtain pretrained weights '%s' (%s).\n"
+                "    >>> 将回退为「从零训练」——如果你以为在微调，请检查：\n"
+                "        1) 名字是否拼错（裸名会尝试 '%s'）；\n"
+                "        2) ModelScope %s/%s 的 pretrained/ 下是否确有该文件；\n"
+                "        3) 网络/代理是否可达（%s）；\n"
+                "        4) 或直接把本地 .pth 路径填进 pretrained_model。",
+                spec, exc, filename, MODELSCOPE_NAMESPACE, MODELSCOPE_MODEL,
+                model_url(filename),
             )
         return None
 
