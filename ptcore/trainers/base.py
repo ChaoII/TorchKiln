@@ -325,7 +325,11 @@ class BaseTrainer:
 
         self.global_step = 0
         self._last_eval_global_step = -1
-        self.best_metric = 0.0
+        # ⚠️ best 初值要按指标方向给：'min' 时必须初始化为 +inf，
+        #    否则 0.0 会被当成"已是最优"而永远不保存任何改进
+        _imode = str((gcfg.get("main_indicator_mode", "max")) or "max").lower()
+        self._indicator_mode = _imode
+        self.best_metric = float("inf") if _imode == "min" else 0.0
         self.best_metrics = {}
         self.best_fps = 0.0
         self.best_epoch = 0
@@ -936,7 +940,11 @@ class BaseTrainer:
             fps,
         )
         value = metrics.get(self.main_indicator, metrics.get("hmean", 0.0))
-        if value >= self.best_metric:
+        # ⚠️ 指标方向：多数任务「越大越好」，但 **RMSE/MAE/loss** 是「越小越好」。
+        #    由配置 `Global.main_indicator_mode: min|max` 指定（缺省 max）。
+        mode = getattr(self, "_indicator_mode", "max")
+        better = (value <= self.best_metric) if mode == "min" else (value >= self.best_metric)
+        if better:
             self.best_metric = value
             self.best_epoch = self.current_epoch
             self.best_metrics = dict(metrics)

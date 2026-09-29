@@ -2136,3 +2136,73 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 - **仍未覆盖**（如实标注）：`paddlets` 的 `representation/task`（`repr_classifier`/`repr_cluster`/`repr_forecasting`）
   本框架**用「导出表征 → ts_classify / ts_forecast」替代**，未单独实现该 task；
   `anomaly/ml`（纯 sklearn 基线）与 `classify` 的 `ml` 亦未移植（非 DL，价值低）。
+
+## `ts_rul`（剩余寿命预测 RUL，2026-09-29 新增）
+
+**背景**：盘点"空缺"时确认 —— RUL **此前完全没有**（既无任务、无 NASA Score 指标、
+也无 run-to-failure 数据管线）。本轮补齐，**模型层复用 `ts_forecast` 的模型族**。
+
+### 数据：NASA C-MAPSS FD001（涡扇发动机退化）
+- **下载（GitHub 被墙，走代理）**：`https://cdn.jsdelivr.net/gh/ericlrf/rul@main/CMAPSSData/`
+  或 `https://gh-proxy.com/https://raw.githubusercontent.com/ericlrf/rul/main/CMAPSSData/`
+  → `datasets/cmapss/{train,test,RUL}_FD001.txt`（3433/2177/0.4 KB；20631/13096/100 行）
+  （脚本 `_downloads/rul_fetch.py`；NASA PCoE 官网 / HF / ModelScope 本机均不可达）
+- 格式：空格分隔无表头，列 = `unit, cycle, op1..op3, s1..s21`（**24 列**）
+- 切分：`train` 完整 run-to-failure 轨迹；`test` 被截断，**每台只在最后一步取一个样本**，
+  RUL 真值来自 `RUL_FD001.txt`（100 行 = 100 台）
+
+### `torchkiln/data/ts_rul.py::RULDataset`
+- **按 unit 划分**（**绝不能按时间切**，否则同一设备相邻窗口泄漏到 train/test）
+- **分段线性 RUL 标签**：`min(MAX_RUL=125, 轨迹末尾 - 当前 cycle)`（业界标准截断）
+- ⭐ **`train_last_frac: 0.5`**（**关键**）：训练只用每条轨迹**后 50%** 的窗口。
+  否则早期健康段（RUL 恒为 125）占 28.3% → 模型退化成"输出均值"
+  （实测 `==125` 占比 28.3% → 2.3%，均值从 90.5 → 51.8，贴近 test 的 74.5）
+- ⭐ **`auto_select: true`**（**关键**）：按训练段 unit 的标准差**自动筛掉常量/无信息传感器**
+  （**24 → 17 列**；C-MAPSS 里 s1/s5/s6/s10/s16/s18/s19 等近似常量）
+- `standardize`：z-score，统计量**只用训练段 unit**
+
+### `torchkiln/tasks/ts_rul.py`
+- **`nasa_score(err)`**：**PHM08 非对称评分**
+  `err<0`（提前预测）→ `exp(-err/13)-1`；`err>=0`（滞后/高估寿命，**危险**）→ `exp(err/10)-1`。
+  自检：全准=0；滞后 +20×10 台=**63.9** ＞ 提前 -20×10 台=**36.6**（**滞后罚更重**）✓
+- **`RULMetric`**：`RMSE` / `MAE` / **`NASA_Score`** / **`Score_avg`** / `acc_at_10`（容差内比例）
+- **`RULLoss`**：`mse`/`mae`/`smooth_l1` + 可选 **`asymmetric_weight`**
+  （对"高估剩余寿命"加大惩罚，与 NASA Score 取向一致）
+- ⚠️ **`reduce` 口径**：这些 ts 模型是「**多变量 → 多变量**」结构（`target_dim` 同时是
+  输入/输出维），所以 RUL 时模型输出 `(B,1,C)`（C=17）。
+  * `mean`（默认）= **所有通道各预测一次 RUL 再平均** —— 等价**集成**，比单通道稳
+  * `min` = 取最小（**最保守**，与"宁可早修不可晚修"一致）
+  * `first` = 只用第 0 通道（**不推荐**，浪费 16/17 容量）
+- ⚠️ **维度探测**：`build_datasets` 在 `build_model` **之后**才被调用，
+  而 `auto_select` 会改变特征数（24→17）⇒ `build_model` 里**自己构建一次 Train 数据集探测 `dim`**。
+
+### 框架通用修复（影响所有"越小越好"的任务）
+- **`Global.main_indicator_mode: min|max`**（缺省 `max`）：原先 `best_metric` 硬编码
+  `value >= best`（越大越好），**RMSE/MAE/loss 类指标会把最优当成最差**。
+  同时 `best_metric` 初值按方向初始化（`min` → `+inf`，否则 0.0 会"已是最优"永不保存）。
+
+### 端到端实测（C-MAPSS FD001 test 100 台，80 epoch）
+| 配置 | RMSE | MAE | Score_avg | vs 常数基线 |
+|---|---|---|---|---|
+| **`rul_tcn_demo`**（TCN, h=128×3） | **25.49** | 19.85 | **13.2** | RMSE 40.1 → **提升 36%** |
+| `rul_rnn_demo`（LSTM×2, h=128） | 34.33 | 29.38 | 26.0 | 提升 14% |
+| `rul_rnn_asym_demo`（+`asymmetric_weight=1.0`） | 36.21 | 31.46 | 30.7 | RMSE 略差，但**惩罚取向不同** |
+
+- **常数基线**（只输出 test 均值 74.5）= **RMSE 40.1** ⇒ 三个配置**都确实学到了东西**。
+- **`Score_avg` 语义**：数值越小越好；TCN 的 13.2 说明其对"危险方向"（高估寿命）控制较好。
+- **如实标注**：文献 C-MAPSS FD001 的 RMSE 常见 **12~18**（多为 BiLSTM+Attention/Transformer
+  + 精细特征工程 + 多 seed 集成）。本框架的 TCN 25.5 属**同一量级但未及 SOTA**，
+  差距来自特征工程（未做平滑/趋势特征）与未集成，**不影响功能完备性**。
+- **未覆盖**：FD002/FD003/FD004（多工况）未配置；`Score` 的正式评测需按台汇总
+  （本实现按样本汇总，口径略有差异 —— test 每台仅 1 样本，故实际等价）。
+
+### 现状（时序部分，5 个任务）
+| 任务 | 模型/能力 |
+|---|---|
+| `ts_forecast` | 12 模型 + 点/分位数/概率 + nRMSE/PICP/滚动接口 |
+| `ts_anomaly` | AE/VAE/USAD/MTAD-GAT/AnomalyTransformer + point-adjust/AUC-PR |
+| `ts_classify` | CNN/InceptionTime + macro-F1/每类 F1 |
+| `ts_embed` | TS2Vec/CoST（自监督） |
+| **`ts_rul`** | **复用 ts_forecast 模型族 + NASA Score/Score_avg（新增）** |
+
+- **回归**：`check_graph_build` **55 OK / 0 FAIL**；`configs/ts/` 共 **21** 个配置。

@@ -1,0 +1,184 @@
+"""RUL（剩余寿命）数据集：run-to-failure 多轨迹切分 + 分段线性 RUL 标签。
+
+支持两种格式：
+  1. **C-MAPSS**（NASA 涡扇发动机退化，空格分隔、无表头）：
+     列 = ``unit, cycle, op1..op3, s1..s21``
+     * ``train_*.txt``：完整 run-to-failure 轨迹 → **在每条轨迹内**滑窗，
+       RUL 标签 = ``min(MAX_RUL, 该轨迹末尾 - 当前 cycle)``（**分段线性**，工业界标准做法）
+     * ``test_*.txt`` + ``RUL_*.txt``：测试轨迹被**截断**，只在**每条轨迹的最后一步**
+       取一个样本，RUL 真值来自 ``RUL_*.txt``（每行一台）
+  2. **通用长格式 CSV**：``unit, cycle, f1..fd, [rul]``
+     * 有 ``rul`` 列则直接用；无则按 ``unit`` 内 ``max(cycle) - cycle`` 推（并 ``MAX_RUL`` 截断）
+
+⚠️ **划分按 unit 分**（不是按时间切），否则同一台设备的相邻窗口会同时出现在
+train/test → **数据泄漏**。``split_ratio`` 只作用于 **unit 列表**。
+"""
+from __future__ import annotations
+
+import csv
+import os
+
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+
+__all__ = ["RULDataset", "rul_collate"]
+
+
+def _read_cmapss(path):
+    """返回 ``(unit, cycle, feats)``；feats 形状 ``(N, 24)``（3 操作 + 21 传感器）。"""
+    rows = []
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append([float(x) for x in line.split()])
+    a = np.asarray(rows, dtype=np.float64)
+    return a[:, 0].astype(np.int64), a[:, 1].astype(np.int64), a[:, 2:]
+
+
+def _read_long_csv(path, rul_col=None):
+    with open(path, encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    header = [h.strip() for h in rows[0]]
+    body = np.asarray([[float(x) if x != "" else np.nan for x in r] for r in rows[1:]],
+                      dtype=np.float64)
+    cols = {h: i for i, h in enumerate(header)}
+    unit = body[:, cols["unit"]].astype(np.int64)
+    cycle = body[:, cols["cycle"]].astype(np.int64)
+    if rul_col and rul_col in cols:
+        rul = body[:, cols[rul_col]]
+        drop = {cols["unit"], cols["cycle"], cols[rul_col]}
+    else:
+        rul = None
+        drop = {cols["unit"], cols["cycle"]}
+    feats = body[:, [i for i in range(len(header)) if i not in drop]]
+    return unit, cycle, feats, rul
+
+
+class RULDataset(Dataset):
+    """RUL 数据集（``mode='Train'`` / ``'Eval'``）。
+
+    样本 = ``[feat(L, D), rul(标量)]``。
+    """
+
+    def __init__(self, config, mode="Train", logger=None):
+        ds = (config.get(mode) or {}).get("dataset") or {}
+        self.window = int(ds.get("window", ds.get("in_chunk_len", 30)))
+        self.stride = int(ds.get("stride", 1))
+        self.max_rul = float(ds.get("max_rul", 125))
+        kind = str(ds.get("format", "cmapss")).lower()
+        sensor_cols = ds.get("sensor_cols")
+
+        if kind == "cmapss":
+            data_dir = ds.get("data_dir", "datasets/cmapss")
+            if mode == "Train":
+                unit, cycle, feats = _read_cmapss(os.path.join(data_dir, ds["train_file"]))
+                rul = None
+            else:
+                unit, cycle, feats = _read_cmapss(os.path.join(data_dir, ds["test_file"]))
+                rul = np.loadtxt(os.path.join(data_dir, ds["rul_file"]), dtype=np.float64)
+        else:
+            p = ds["csv_path"]
+            if not os.path.isabs(p) and ds.get("data_dir"):
+                p = os.path.join(ds["data_dir"], p)
+            unit, cycle, feats, rul = _read_long_csv(p, ds.get("rul_col", "rul"))
+
+        if sensor_cols:
+            idx = [int(i) for i in sensor_cols]
+            feats = feats[:, idx]
+        elif ds.get("auto_select", True):
+            # ⚠️ C-MAPSS 的 24 列里很多是**常量 / 无信息**传感器（std≈0）——直接全喂会
+            #    引入噪声、RUL 学不好。按「训练段 unit 内的标准差」自动筛掉常量列
+            #    （业界标准做法：只保留有退化趋势的传感器）。
+            units_all = sorted(set(unit.tolist()))
+            n_tr = max(1, int(len(units_all) * float(
+                (ds.get("split_ratio") or [0.7, 0.15, 0.15])[0])))
+            m_tr = np.isin(unit, units_all[:n_tr])
+            sd_col = np.nanstd(feats[m_tr], axis=0)
+            keep = np.where(sd_col > float(ds.get("min_std", 1e-6)))[0]
+            if len(keep) == 0:
+                keep = np.arange(feats.shape[1])
+            feats = feats[:, keep]
+            if logger is not None:
+                logger.info("RUL auto_select: %d/%d 列保留（std>%s）",
+                            len(keep), feats.shape[1] + (feats.shape[1] - len(keep)),
+                            ds.get("min_std", 1e-6))
+
+        self.mu, self.sd = None, None
+        if ds.get("standardize", True):
+            # ⚠️ 统计量只用**训练段 unit**（避免测试信息泄漏）
+            units_all = sorted(set(unit.tolist()))
+            n_tr = max(1, int(len(units_all) * float(
+                (ds.get("split_ratio") or [0.7, 0.15, 0.15])[0])))
+            tr_units = set(units_all[:n_tr])
+            mask = np.isin(unit, list(tr_units))
+            if not mask.any():
+                mask = np.ones(len(unit), bool)
+            self.mu = np.nanmean(feats[mask], axis=0)
+            self.sd = np.nanstd(feats[mask], axis=0)
+            self.sd = np.where(self.sd < 1e-8, 1.0, self.sd)
+            feats = (feats - self.mu) / self.sd
+
+        # 按 unit 划分（**禁止按时间切**，否则泄漏）
+        units = sorted(set(unit.tolist()))
+        r = list(ds.get("split_ratio", [0.7, 0.15, 0.15]))
+        a = int(len(units) * r[0])
+        b = int(len(units) * (r[0] + (r[1] if len(r) > 1 else 0)))
+        if kind == "cmapss" and mode != "Train":
+            keep = units                       # C-MAPSS 的 test 文件本身就是另一批 unit
+        else:
+            keep = units[:a] if mode == "Train" else units[a:b]
+        keep = set(keep)
+
+        self.feat, self.target = [], []
+        # ⚠️ C-MAPSS 经典陷阱：训练若用**全部窗口**，早期健康段（RUL 恒为 125）占大多数，
+        #    模型退化成"输出均值"（常数基线 RMSE≈40）。
+        #    标准做法：`train_last_frac` 只保留每条轨迹**后半段**的窗口，
+        #    让训练分布贴近评估口径（test 只取轨迹末尾）。
+        last_frac = float(ds.get("train_last_frac", 1.0))
+        for u in sorted(keep):
+            m = unit == u
+            f, c = feats[m], cycle[m]
+            o = np.argsort(c)
+            f, c = f[o], c[o]
+            if kind == "cmapss" and mode != "Train":
+                # 测试：只在轨迹**最后一步**取一个样本（对齐 C-MAPSS 官方评测口径）
+                if len(f) < self.window:
+                    pad = np.repeat(f[:1], self.window - len(f), axis=0)
+                    f = np.concatenate([pad, f], axis=0)
+                y = float(rul[u - 1]) if rul is not None else 0.0
+                self.feat.append(np.nan_to_num(f[-self.window:], nan=0.0).astype(np.float32))
+                self.target.append(np.float32(min(y, self.max_rul)))
+                continue
+            rul_u = (rul[m][o] if rul is not None else (c[-1] - c))
+            start = self.window - 1
+            if mode == "Train" and 0 < last_frac < 1.0:
+                n_keep = max(1, int(len(f) * last_frac))
+                start = max(start, len(f) - n_keep)
+            for i in range(start, len(f), self.stride):
+                y = rul_u[i]
+                self.feat.append(np.nan_to_num(f[i - self.window + 1:i + 1], nan=0.0).astype(np.float32))
+                self.target.append(np.float32(min(float(y), self.max_rul)))
+        self.dim = feats.shape[1]
+        if logger is not None:
+            logger.info("%s RUL dataset: %d samples, units=%d, L=%d D=%d max_rul=%s",
+                        mode, len(self.feat), len(keep), self.window, self.dim, self.max_rul)
+
+    def __len__(self):
+        return len(self.feat)
+
+    def set_epoch(self, epoch):
+        pass
+
+    def __getitem__(self, index):
+        return [self.feat[index], np.float32(self.target[index])]
+
+
+def rul_collate(batch):
+    batch = [b for b in batch if b is not None]
+    if not batch:
+        return []
+    return [torch.from_numpy(np.stack([b[0] for b in batch], 0)),
+            torch.from_numpy(np.stack([b[1] for b in batch], 0))]
