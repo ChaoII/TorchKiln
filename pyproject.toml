@@ -7,10 +7,65 @@ name = "torchkiln"
 version = "0.1.0"
 description = "Unified PyTorch training platform: OCR (PP-OCR), YOLO family (7 tasks + upstream YAML zoo), licence plate, attribute recognition"
 requires-python = ">=3.8"
-dependencies = ["torch", "numpy", "opencv-python", "PyYAML"]
+# ⚠️ torch **故意不钉版本**：CUDA 轮子必须与宿主驱动匹配（cu121/cu124/cu126/cu132…），
+#    钉死会在别的机器上装到不兼容的轮子。镜像侧请用
+#    `pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cu132` 精确指定。
+dependencies = [
+    "torch",
+    "torchvision",
+    "numpy",
+    "opencv-python",
+    "PyYAML",
+    "tqdm",
+    "Pillow",
+]
+
+# ---------------------------------------------------------------------------
+# 任务族可选依赖。**装不全的症状**是「某个任务族起不来」，例如缺 pyclipper 时
+# 连 OCR det 都无法构建（torchkiln/ocr/data/imaug/__init__.py 会顶层导入）。
+# 下面每一项都由 AST 扫描 torchkiln/ + ptcore/ 的真实 import 统计得出，
+# 不是拍脑袋——新增任务用到新包时，请同步补到这里，否则容器镜像会漏装。
+# ---------------------------------------------------------------------------
+[project.optional-dependencies]
+# configs/ocr/**：PP-OCRv6 det / rec / e2e
+ocr = [
+    "pyclipper",        # DB 后处理 + 收缩标签生成
+    "shapely",          # 多边形/几何增强、iou 计算
+    "albumentations",   # IaaAugment
+    "scikit-image",     # 骨架化（pg / e2e 文本点提取）
+    "editdistance",     # rec 编辑距离
+    "six",              # 旧式兼容
+    "PyMuPDF",          # fitz：PDF -> 图片
+    "scipy",
+    "packaging",
+]
+# configs/audio/**：kokoro TTS / panns 音频分类
+audio = [
+    "torchaudio",
+    "transformers",
+    "resampy",
+    "soundfile",
+]
+# tkiln export --onnx 与 ONNX 校验
+export = [
+    "onnx",
+    "onnxruntime",
+    "onnx-slim",
+]
+all = [
+    "torchkiln[ocr,audio,export]",
+]
 
 [project.scripts]
 tkiln = "torchkiln.cli:main"
+
+# tools/convert/** 还需要 paddlepaddle / paddlex(PaddleOCR) / ultralytics，
+# 但它们体量大且与 CUDA 轮子耦合，故**不在此声明**，按需单独装：
+#   pip install paddlepaddle-gpu==<与 torch 匹配的版本>   # 或用 paddlex 镜像
+#   pip install ultralytics
+#   pip install Cython                                  # pse 后处理可选加速扩展
+# 同理 lanms（EAST/SAST 后处理）、fasttext（Fasttext 增强算子）都是
+# **函数内惰性导入**，只在真正用到该算子时才需要，不是训练硬依赖。
 
 [tool.setuptools.packages.find]
 include = ["torchkiln*", "ptcore*"]
