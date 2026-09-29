@@ -17,8 +17,11 @@
 """
 from __future__ import absolute_import
 
+import json
 import os
 import sys
+
+from ptcore.config import flatten_opts
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -26,6 +29,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 变点/漂移检测（纯统计工具，无训练/无权重 -> 不注册为 task）
 TOOL_SCRIPTS = {"changepoint": "tools/changepoint.py",
                 "cp": "tools/changepoint.py"}
+
+#: 不需要 task/mode 的「平台元信息」命令（外部平台靠它们自动生成模型下拉与参数表单）
+META_COMMANDS = ("list", "schema")
 
 TASK_ALIASES = {
     "detect": "detect",
@@ -160,6 +166,10 @@ USAGE = """用法: tkiln [task] <mode> [args...]        (task 可省略,由配�
 显式写 task(等价,并做一致性校验):
   tkiln detect train -c configs/yolo/yolov8-det.yml
 
+平台元信息(供外部平台自动生成模型列表/参数表单,不需要 torch 与 GPU):
+  tkiln list [--json] [--task detect] [--family yolo] [子目录过滤]
+  tkiln schema <模型名或配置路径> [--json] [-o Key.Sub=value ...]
+
 其余参数与 tools/*.py 完全一致(-c 配置、-o 覆盖、--weights ...)。
 """.format(tasks=" | ".join(sorted(set(TASK_ALIASES))), modes=" | ".join(MODES))
 
@@ -205,6 +215,149 @@ def _config_task(argv):
 
 def _canonical(cfg_task):
     return CONFIG_TASK_ALIAS.get(cfg_task, cfg_task)
+
+
+# ------------------------------------------------------------------ 元信息命令
+def _opt_value(argv, *names):
+    """取 ``--flag value`` 形式的值（也接受 ``--flag=value``）。"""
+    for i, a in enumerate(argv):
+        for n in names:
+            if a == n and i + 1 < len(argv):
+                return argv[i + 1]
+            if a.startswith(n + "="):
+                return a.split("=", 1)[1]
+    return None
+
+
+def _cmd_list(argv):
+    """``tkiln list``：扫描 configs/ 输出模型清单（表格或 JSON）。
+
+    外部平台用它生成"模型下拉框"——加模型只要丢一个 YAML，无需改平台代码。
+    """
+    import argparse
+
+    from ptcore.config_schema import list_models
+
+    ap = argparse.ArgumentParser(
+        prog="tkiln list", description="列出全部可用模型配置")
+    ap.add_argument("--json", action="store_true", help="输出 JSON（给程序消费）")
+    ap.add_argument("--task", help="按 Architecture.task 过滤")
+    ap.add_argument("--family", "--model-family", dest="family",
+                    help="按 Architecture.model_family 过滤")
+    ap.add_argument("--name", help="按 Global.model_name 子串过滤")
+    ap.add_argument("--no-header", action="store_true", help="表格不打印表头")
+    ap.add_argument("subdir", nargs="?", help="只列该子目录，如 yolo / ocr / pc")
+    args = ap.parse_args(argv)
+
+    rows = list_models()
+    if args.subdir:
+        rows = [r for r in rows if args.subdir in (r.get("config_path") or "")]
+    if args.task:
+        rows = [r for r in rows if (r.get("task") or "") == args.task]
+    if args.family:
+        rows = [r for r in rows if (r.get("model_family") or "") == args.family]
+    if args.name:
+        low = args.name.lower()
+        rows = [r for r in rows
+                if low in (r.get("model_name") or "").lower()]
+
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+
+    if not rows:
+        print("没有匹配的模型配置。")
+        return 0
+    bad = [r for r in rows if r.get("error")]
+    good = [r for r in rows if not r.get("error")]
+    header = ("{:<26} {:<14} {:<10} {:<16} {:>5} {:>6}  {}".format(
+        "MODEL", "TASK", "FAMILY", "MAIN_INDICATOR", "EPOCH", "PT", "CONFIG"))
+    if not args.no_header:
+        print(header)
+        print("-" * len(header))
+    for r in good:
+        print("{:<26} {:<14} {:<10} {:<16} {:>5} {:>6}  {}".format(
+            str(r.get("model_name") or "-")[:26],
+            str(r.get("task") or "-")[:14],
+            str(r.get("model_family") or "-")[:10],
+            str(r.get("main_indicator") or "-")[:16],
+            str(r.get("epoch_num") if r.get("epoch_num") is not None else "-"),
+            "Y" if r.get("has_pretrained") else "-",
+            r.get("config_path"),
+        ))
+    for r in bad:
+        print("! {}  <解析失败: {}>".format(r.get("config_path"), r.get("error")))
+    print("\n共 {} 个配置（可用 {} 个）。".format(len(rows), len(good)))
+    return 0
+
+
+def _cmd_schema(argv):
+    """``tkiln schema <模型名|配置路径>``：输出超参 JSON Schema（表格或 JSON）。
+
+    外部平台用它生成"参数表单"——全部可覆盖键都在 ``params`` 里，类型/默认值/
+    取值范围/控件类型/分组都带好，不再需要平台侧维护手写映射表。
+    """
+    import argparse
+
+    from ptcore.config_schema import MODEL_GROUPS, describe_config, resolve_config
+
+    ap = argparse.ArgumentParser(
+        prog="tkiln schema", description="输出某配置的超参 schema")
+    ap.add_argument("target", nargs="?", help="模型名或配置路径")
+    ap.add_argument("--json", action="store_true", help="输出 JSON（给程序消费）")
+    ap.add_argument("-o", "--opt", nargs="*", action="append", default=None,
+                    help="先应用覆盖再看 schema（预览最终参数）")
+    args = ap.parse_args(argv)
+
+    if not args.target:
+        print("用法: tkiln schema <模型名或配置路径> [--json] [-o Key.Sub=value ...]")
+        print("提示: tkiln list  可先看有哪些模型。")
+        return 2
+    try:
+        path, how = resolve_config(args.target)
+    except (FileNotFoundError, ValueError) as exc:
+        print("解析失败: {}".format(exc))
+        return 2
+    overrides = flatten_opts(args.opt)
+    try:
+        info = describe_config(path, overrides=overrides or None)
+    except Exception as exc:  # noqa: BLE001
+        print("读取配置失败: {}: {}".format(type(exc).__name__, exc))
+        return 2
+
+    if args.json:
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+        return 0
+
+    print("model      : {}".format(info.get("model_name")))
+    print("config     : {}  (匹配方式: {})".format(info.get("config_path"), how))
+    print("task/family: {} / {}".format(info.get("task"), info.get("model_family")))
+    print("algorithm  : {}   scale: {}".format(
+        info.get("algorithm"), info.get("scale")))
+    print("main       : {} ({})".format(
+        info.get("main_indicator"), info.get("main_indicator_mode")))
+    if overrides:
+        print("overrides  : {}".format(", ".join(overrides)))
+    print("data       : train={}  val={}".format(
+        info["data"].get("train_name"), info["data"].get("eval_name")))
+    print("-" * 72)
+    for group in info.get("groups") or MODEL_GROUPS:
+        items = [(k, v) for k, v in info["params"].items() if v.get("group") == group]
+        if not items:
+            continue
+        print("[{}]".format(group))
+        for key, v in items:
+            extra = []
+            if v.get("min") is not None and v.get("max") is not None:
+                extra.append("range={}..{}".format(v["min"], v["max"]))
+            extra.append("widget={}".format(v.get("widget")))
+            print("  {:<48} {:<7} default={:<20} {}".format(
+                key, v.get("type"),
+                json.dumps(v.get("default"), ensure_ascii=False), "  ".join(extra)))
+    print("-" * 72)
+    print("可覆盖参数 {} 个；平台注入: {}".format(
+        len(info["params"]), ", ".join(info.get("managed_keys") or []) or "无"))
+    return 0
 
 
 def _check(argv):
@@ -254,6 +407,13 @@ def main(argv=None):
         from torchkiln.datasets import data_main
 
         return data_main(argv[1:])
+
+    # 平台元信息命令：不需要 task/mode，也不 import torch（可在无 GPU 环境跑）
+    if argv[0].lower() in META_COMMANDS:
+        cmd = argv[0].lower()
+        if cmd == "list":
+            return _cmd_list(argv[1:])
+        return _cmd_schema(argv[1:])
 
     explicit = (
         len(argv) >= 2

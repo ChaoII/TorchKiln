@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 
 from ptcore.batch_sampler import PaddleBatchSampler
 from ptcore.ema import ModelEMA
+from ptcore.metrics_sink import build_sink, finite_or_none, runtime_env, sink_enabled
 from ptcore.optimizer import build_optimizer
 from ptcore.precision import enable_paddle_like_precision
 from ptcore.task import TaskAdapter
@@ -47,6 +48,16 @@ def get_logger(name, log_file=None):
         fh.setFormatter(fmt)
         logger.addHandler(fh)
     return logger
+
+
+def _framework_version():
+    """torchkiln 版本号，写进 ``meta.json`` 供消费方做兼容性判断。"""
+    try:
+        from torchkiln import __version__
+
+        return __version__
+    except Exception:  # noqa: BLE001
+        return "0.0.0"
 
 
 class BaseTrainer:
@@ -341,6 +352,64 @@ class BaseTrainer:
         self.log_smooth_window = max(1, int(gcfg.get("log_smooth_window", 20)))
         self.main_indicator = config.get("Metric", {}).get("main_indicator", "hmean")
         self._load_resume()
+
+        # ---- 结构化指标（JSONL）------------------------------------------
+        # 外部平台（AIStation 等）按 `metrics.jsonl` 契约实时消费，**不再解析控制台日志**：
+        # 日志格式随版本变、stdout 有缓冲、无 step 对齐，三者都会让曲线静默失真。
+        # 只有 rank0 写盘；禁用时拿到 _NullSink，调用点无需 if。
+        # `dump_config=False` 的调用方（check / eval / smoke）只是"构建一下看看"，
+        # 不拥有 save_model_dir，故一并关掉，避免往公共产物目录里写 meta.json。
+        self.metrics_sink = build_sink(
+            self.save_model_dir,
+            enabled=(dump_config and self.is_main
+                     and sink_enabled(gcfg.get("metrics_sink", True))),
+            meta=self._metrics_meta(),
+        )
+        if self.metrics_sink.enabled:
+            self.logger.info(
+                "Metrics sink: %s (DDP rank0 only)" % self.metrics_sink.jsonl_path
+            )
+
+    def _metrics_meta(self):
+        """``meta.json`` 的内容：训练启动即写一次。
+
+        消费方据此渲染表单/图表，并把这份快照存进自己的任务记录——
+        否则 TorchKiln 改了默认值，老任务记录里的超参就解释不清了。
+        """
+        g = self.global_config
+        arch = self.config.get("Architecture") or {}
+        n_params = None
+        try:
+            n_params = int(sum(p.numel() for p in self._raw_model().parameters()))
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "framework": "torchkiln",
+            "framework_version": _framework_version(),
+            "model_name": g.get("model_name"),
+            "task": arch.get("task"),
+            "model_family": arch.get("model_family"),
+            "algorithm": arch.get("algorithm"),
+            "model_type": self.model_type,
+            "task_adapter": self.task_name,
+            "params_count": n_params,
+            "main_indicator": self.main_indicator,
+            "main_indicator_mode": self._indicator_mode,
+            "epoch_num": self.epoch_num,
+            "steps_per_epoch": self.steps_per_epoch,
+            "print_batch_step": self.print_batch_step,
+            "world_size": self.world_size,
+            "device": str(self.device),
+            "amp": self.use_amp,
+            "use_ema": bool(self.use_ema),
+            "seed": self.seed,
+            "resumed": bool(self.resumed),
+            "overrides": list(self.overrides or []),
+            "config_file": "config.yml",
+            "best_metric": finite_or_none(self.best_metric),
+            "best_epoch": self.best_epoch,
+            "env": runtime_env(),
+        }
 
     def _load_resume(self):
         state = self._checkpoint_state
@@ -777,9 +846,9 @@ class BaseTrainer:
                 remain = max(0, self.epoch_num * self.opt_steps_per_epoch - self.global_step)
                 eta = str(datetime.timedelta(seconds=int(remain * avg_batch)))
                 mem_res, mem_alloc = self._mem_stats()
+                comp_vals = {k: float(sum(h) / len(h)) for k, h in comp_hists.items()}
                 comps = "".join(
-                    ", {}: {:.6f}".format(k, float(sum(h) / len(h)))
-                    for k, h in comp_hists.items()
+                    ", {}: {:.6f}".format(k, v) for k, v in comp_vals.items()
                 )
                 self.logger.info(
                     "epoch: [%d/%d], global_step: %d, lr: %.6f, loss: %.6f%s, "
@@ -799,6 +868,24 @@ class BaseTrainer:
                     eta,
                     mem_res,
                     mem_alloc,
+                )
+                # ---- 结构化 step 指标（与上面日志同节奏，逐行 flush）----
+                # 字段全在这里：lr / loss / 各项 loss 分量 / ips / 显存 / 预计剩余秒数。
+                # 日志给人看，这行给机器读——外部平台 tail 本文件即可，无需正则。
+                self.metrics_sink.step(
+                    epoch=epoch + 1,
+                    epoch_num=self.epoch_num,
+                    global_step=self.global_step,
+                    steps_per_epoch=self.steps_per_epoch,
+                    lr=lr,
+                    loss=avg_loss,
+                    comps=comp_vals,
+                    avg_reader_cost=avg_reader,
+                    avg_batch_cost=avg_batch,
+                    ips=ips,
+                    eta_sec=int(remain * avg_batch),
+                    mem_reserved=mem_res,
+                    mem_allocated=mem_alloc,
                 )
             self._maybe_eval_and_save()
         # 对齐 ultralytics:每个 epoch 末更新 E2E loss 的 o2m/o2o 增益调度
@@ -944,12 +1031,35 @@ class BaseTrainer:
         #    由配置 `Global.main_indicator_mode: min|max` 指定（缺省 max）。
         mode = getattr(self, "_indicator_mode", "max")
         better = (value <= self.best_metric) if mode == "min" else (value >= self.best_metric)
+        # ---- 结构化 eval 指标（全部指标放 metrics 子对象，避免与顶层字段撞名）----
+        self.metrics_sink.eval(
+            epoch=self.current_epoch,
+            epoch_num=self.epoch_num,
+            global_step=self.global_step,
+            main_indicator=self.main_indicator,
+            main_value=value,
+            main_indicator_mode=mode,
+            is_best=bool(better),
+            is_float16=self.is_float16,
+            fps=fps,
+            metrics=metrics,
+        )
         if better:
             self.best_metric = value
             self.best_epoch = self.current_epoch
             self.best_metrics = dict(metrics)
             self.best_fps = fps
             self.save_checkpoint("best_accuracy", is_best=True)
+            # ---- 结构化 best 事件：告诉消费方"最优权重已落盘"及其指标 ----
+            self.metrics_sink.best(
+                epoch=self.current_epoch,
+                global_step=self.global_step,
+                main_indicator=self.main_indicator,
+                main_value=self.best_metric,
+                main_indicator_mode=mode,
+                metrics=dict(self.best_metrics),
+                checkpoint="best_accuracy.pth",
+            )
         best = self.best_metrics or dict(metrics)
         others = ", ".join(
             "{}: {}".format(k, float(v))
@@ -995,6 +1105,12 @@ class BaseTrainer:
         torch.save(latest, os.path.join(self.save_model_dir, "latest.pth"))
 
     def train(self):
+        started = time.time()
+        # 退出原因：finished / early_stop / already_complete / error。
+        # 无论走哪条路径（含抛异常）都要落一条 `end` 事件——外部平台靠它把任务
+        # 从「运行中」翻到终态，否则会永远卡在 running。
+        reason = "finished"
+        err = None
         self.logger.info(
             "Start training: type=%s epochs=%d steps/epoch=%d device=%s",
             self.model_type,
@@ -1010,6 +1126,18 @@ class BaseTrainer:
                 self.start_epoch,
                 self.epoch_num,
             )
+            self.metrics_sink.end(
+                exit_reason="already_complete",
+                epoch=self.current_epoch,
+                epoch_num=self.epoch_num,
+                global_step=self.global_step,
+                main_indicator=self.main_indicator,
+                main_value=finite_or_none(self.best_metric),
+                main_indicator_mode=self._indicator_mode,
+                best_epoch=self.best_epoch,
+                metrics=dict(self.best_metrics or {}),
+                duration_sec=round(time.time() - started, 2),
+            )
             return
         if self.resumed:
             self.train_batch_sampler.set_epoch(self.start_epoch)
@@ -1020,30 +1148,52 @@ class BaseTrainer:
             )
         patience = int((self.config.get("Global") or {}).get("patience", 0) or 0)
         _last_best, _no_improve = self.best_metric, 0
-        for epoch in range(self.start_epoch, self.epoch_num):
-            self.current_epoch = epoch + 1
-            if hasattr(self.train_dataset, "set_epoch"):
-                # e.g. close_mosaic for YOLO-style augmentation schedules
-                self.train_dataset.set_epoch(self.current_epoch)
-            self._train_one_epoch(epoch)
-            if (epoch + 1) % self.save_epoch_step == 0:
-                self.save_checkpoint("epoch_{}".format(epoch + 1))
-                self.logger.info("saved epoch_%d checkpoint", epoch + 1)
-            if self.eval_loader is not None and (epoch + 1) % self.eval_epoch_step == 0:
+        try:
+            for epoch in range(self.start_epoch, self.epoch_num):
+                self.current_epoch = epoch + 1
+                if hasattr(self.train_dataset, "set_epoch"):
+                    # e.g. close_mosaic for YOLO-style augmentation schedules
+                    self.train_dataset.set_epoch(self.current_epoch)
+                self._train_one_epoch(epoch)
+                if (epoch + 1) % self.save_epoch_step == 0:
+                    self.save_checkpoint("epoch_{}".format(epoch + 1))
+                    self.logger.info("saved epoch_%d checkpoint", epoch + 1)
+                if self.eval_loader is not None and (epoch + 1) % self.eval_epoch_step == 0:
+                    self.evaluate_and_save()
+                # ultralytics 风格早停:连续 patience 个 epoch 主指标无提升则停
+                if self.best_metric > _last_best + 1e-12:
+                    _last_best, _no_improve = self.best_metric, 0
+                else:
+                    _no_improve += 1
+                    if patience and _no_improve >= patience:
+                        self.logger.info(
+                            "EarlyStopping: no improvement for %d epoch(s) (best %s=%.5f), stop at epoch %d",
+                            patience, self.main_indicator, self.best_metric, epoch + 1)
+                        reason = "early_stop"
+                        break
+            self.save_checkpoint("final")
+            if self.eval_loader is not None:
                 self.evaluate_and_save()
-            # ultralytics 风格早停:连续 patience 个 epoch 主指标无提升则停
-            if self.best_metric > _last_best + 1e-12:
-                _last_best, _no_improve = self.best_metric, 0
-            else:
-                _no_improve += 1
-                if patience and _no_improve >= patience:
-                    self.logger.info(
-                        "EarlyStopping: no improvement for %d epoch(s) (best %s=%.5f), stop at epoch %d",
-                        patience, self.main_indicator, self.best_metric, epoch + 1)
-                    break
-        self.save_checkpoint("final")
-        if self.eval_loader is not None:
-            self.evaluate_and_save()
+        except BaseException as exc:  # noqa: BLE001
+            reason = "error"
+            err = "{}: {}".format(type(exc).__name__, exc)
+            self.logger.exception("Training aborted.")
+            raise
+        finally:
+            # `end` 只写一次（sink.end 会顺带 close）
+            self.metrics_sink.end(
+                exit_reason=reason,
+                error=err,
+                epoch=self.current_epoch,
+                epoch_num=self.epoch_num,
+                global_step=self.global_step,
+                main_indicator=self.main_indicator,
+                main_value=finite_or_none(self.best_metric),
+                main_indicator_mode=self._indicator_mode,
+                best_epoch=self.best_epoch,
+                metrics=dict(self.best_metrics or {}),
+                duration_sec=round(time.time() - started, 2),
+            )
         self.logger.info(
             "Training finished. Best %s = %.5f", self.main_indicator, self.best_metric
         )
