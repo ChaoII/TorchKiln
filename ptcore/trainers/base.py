@@ -708,7 +708,8 @@ class BaseTrainer:
                     if new_logs:
                         loss_dict = new_logs
                         loss = loss_dict["loss"]
-                        loss_hist[-1] = loss.detach()
+                        # ⚠️ 此时 `loss_hist` 尚未 append（在循环末尾），不能索引 -1；
+                        #    统一在末尾 append，这里只更新局部 `loss`（会随 loss_dict 一起打印）
                     for _p in self._raw_model().parameters():
                         _p.grad = None
                     self.lr_scheduler.step()

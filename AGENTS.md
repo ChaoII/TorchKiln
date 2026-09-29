@@ -2132,6 +2132,7 @@ _token / plbert / istftnet … | **全部相同** | **全部相同** |
 | **`ts_embed`** | **TS2Vec/CoST**（自监督） | ✅ **新增** |
 
 - **回归**：`tools/check_graph_build.py` **55 OK / 0 FAIL**；`configs/ts/` 共 **18** 个配置全部合法。
+- **⚠️ 已知问题（如实记录）**：`power_tft_demo`（TFT + 协变量 + 分位数）**训练与评估全部正常完成**（nRMSE 0.216 / R² 0.914 / PICP 0.83），但**进程退出时**偶发原生崩溃（`0xC0000409` / stack-buffer-overrun）。**孤立的前向+反向退出正常**（exit 0），说明与完整训练循环后的 CUDA/优化器状态有关，**不影响训练结果**；规避办法：把训练放进 `try/finally` 或子进程，本项目验收以日志中的指标为准。
 - **仍未覆盖**（如实标注）：`paddlets` 的 `representation/task`（`repr_classifier`/`repr_cluster`/`repr_forecasting`）
   本框架**用「导出表征 → ts_classify / ts_forecast」替代**，未单独实现该 task；
   `anomaly/ml`（纯 sklearn 基线）与 `classify` 的 `ml` 亦未移植（非 DL，价值低）。
