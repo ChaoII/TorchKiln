@@ -83,32 +83,48 @@ Architecture:
 
 ---
 
-## 三、⚠️ 待你决定：11 个配置是 `null`，但远程已有对应权重
+## 三、✅ 已接入预训练的配置（4 个，均实测 missing=0）
 
-这些**没有擅自改** —— 填上预训练会把「从零训练」变成「微调」，属于**行为变更**，
-需你确认是否合适（有些 demo 本来就是要从零跑）。
-
-| 配置 | 建议 `pretrained_model` | 远程体积 | 备注 |
+| 配置 | `pretrained_model` | 模型参数 | 加载结果 |
 |---|---|---|---|
-| `configs/audio/kokoro_demo.yml` | `kokoro_v1_0` | 312.1 MB | demo 用合成数据，**从零更合适** |
-| `configs/audio/panns_esc50_align.yml` | `panns_cnn14` | 308.1 MB | 对齐实验**故意从零**（否则无法与 Paddle 对比）|
-| `configs/audio/panns_esc50_ctrl.yml` | `panns_cnn14` | 308.1 MB | 同上 |
-| `configs/audio/panns_esc50_ctrl30.yml` | `panns_cnn14` | 308.1 MB | 同上 |
-| `configs/audio/panns_esc50_order30.yml` | `panns_cnn14` | 308.1 MB | 同上 |
-| `configs/lane/bev_lanedet.yml` | `bev_lanedet_apollo_576x1024` | 168.1 MB | **建议填**（官方 Apollo 预训练）|
-| `configs/local/apollo_bev_lanedet.yml` | `bev_lanedet_apollo_576x1024` | 168.1 MB | **建议填** |
-| `configs/pc/centerpoint-det3d.yml` | `centerpoint_pillars_kitti` | 19.2 MB | **强烈建议填**（当前是 smoke-only demo）|
-| `configs/pc/pointpillars-det3d.yml` | `centerpoint_pillars_kitti` | 19.2 MB | ⚠️ 架构不同（PointPillars ≠ CenterPoint），**不能直接填** |
-| `configs/pc/pointpillars-seg.yml` | `centerpoint_pillars_kitti` | 19.2 MB | ⚠️ 同上，**不能直接填** |
-| `configs/pc/squeezesegv3-pcseg.yml` | `squeezesegv3_rangenet53_semantickitti` | 99.7 MB | **强烈建议填** |
+| `configs/pc/centerpoint-det3d.yml` | `centerpoint_pillars_kitti` | 4.996 M / 223 张量 | **missing=0 / unexpected=0 / 形状全对** |
+| `configs/lane/bev_lanedet.yml` | `bev_lanedet_apollo_576x1024` | 43.997 M / 440 张量 | **missing=0 / unexpected=0** |
+| `configs/local/apollo_bev_lanedet.yml` | `bev_lanedet_apollo_576x1024` | 43.997 M / 440 张量 | **missing=0 / unexpected=0** |
+| `configs/pc/squeezesegv3-semantickitti.yml`（**新增**） | `squeezesegv3_rangenet53_semantickitti` | 25.960 M / 612 张量 | **missing=0 / unexpected=0**（**真实从 ModelScope 下载 105MB 验证**）|
 
-> 📌 判定依据：`configs/pc/pointpillars-*` 是 **PointPillars** 架构，
-> 而远程的 `centerpoint_pillars_kitti.pth` 是 **CenterPoint** ——
-> 架构不同**不能混用**，只有 `centerpoint-det3d.yml` 能直接受益。
+### ⭐ SqueezeSegV3 的类别数坑（新增配置的原因）
+
+原 `configs/pc/squeezesegv3-pcseg.yml` 是 **5 类合成 demo**，
+而官方 SemanticKITTI 权重是 **20 类**（19 语义类 + 1 unlabeled）：
+
+| 配置 | 模型形状 | 权重形状 | 结果 |
+|---|---|---|---|
+| `num_classes: 5` | `heads.* = (5, …)` | `heads.* = (20, …)` | ❌ **10 个张量形状不符** |
+| `num_classes: 20` | `heads.* = (20, …)` | `heads.* = (20, …)` | ✅ **missing=0** |
+
+⇒ **只有 20 类能加载官方权重**。故：
+- 原 5 类 demo 配置**保持 `null` 不动**（合成数据，改类别数会让指标不可比）；
+- **新增** `configs/pc/squeezesegv3-semantickitti.yml`（20 类 + 预训练），
+  注释里写清数据来源与标签重映射要求。
+
+> ⚠️ `num_classes` 的真实位置是 **`Architecture.Head.num_classes`**
+> （`build_loss` / `build_metric` 都从那里读；写到 `Architecture` 顶层**无效**）。
 
 ---
 
-## 四、❌ 不该上传的（19 个 / 1.67 GB）—— 业务与对齐中间产物
+## 四、⚠️ 保持 `null` 的配置及原因
+
+| 配置 | 原因 |
+|---|---|
+| `configs/audio/kokoro_demo.yml` | demo 用合成数据，**从零更合适** |
+| `configs/audio/panns_esc50_*.yml`（4 个） | 对齐实验**故意从零**（否则无法与 PaddleSpeech 逐步对比）|
+| `configs/pc/squeezesegv3-pcseg.yml` | 5 类 demo，权重是 20 类（**形状不匹配**）|
+| `configs/pc/pointpillars-det3d.yml`、`pointpillars-seg.yml` | ⚠️ **架构不同**（PointPillars ≠ CenterPoint），**不能混用** |
+| `configs/ts/*`（34 个） | 时序模型**无官方预训练权重**（paddlets 不发布）|
+
+---
+
+## 五、❌ 不该上传的（19 个 / 1.67 GB）—— 业务与对齐中间产物
 
 > **上传标准**：只上传「**官方权重转换**」产物（供用户微调的通用基座），
 > **不上传**业务对齐过程中的中间产物。
@@ -149,7 +165,7 @@ v8n_obb_fw.pth (6.0 MB)    v26n_obb_fw.pth (5.4 MB)    yolo11n_obb_fw.pth (10.4 
 
 ---
 
-## 五、远程已有的（149 个）—— 已验证可直接下载加载
+## 六、远程已有的（153 个）—— 已验证可直接下载加载
 
 ### 4.1 YOLO 检测家族（123）
 
@@ -197,7 +213,7 @@ v8n_obb_fw.pth (6.0 MB)    v26n_obb_fw.pth (5.4 MB)    yolo11n_obb_fw.pth (10.4 
 
 ---
 
-## 六、下载与加载机制
+## 七、下载与加载机制
 
 ```python
 # 框架自动下载（config 里写裸名，不带 .pth）
@@ -217,7 +233,7 @@ Global:
 
 ---
 
-## 七、上传操作（需 ModelScope token）
+## 八、上传操作（需 ModelScope token）
 
 ```bash
 pip install modelscope

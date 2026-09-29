@@ -10,7 +10,7 @@ Global:
   save_epoch_step: 10
   eval_batch_step: [0, 2000]
   eval_epoch_step: 1
-  pretrained_model: null
+  pretrained_model: bev_lanedet_apollo_576x1024   # Paddle3D 官方 Apollo 预训练（missing=0 已实测）
   checkpoints: null
   distributed: false
   seed: 1024
