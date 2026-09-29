@@ -183,4 +183,8 @@ class DetMetric(object):
             float(np.mean(list(per_thr.values()))) if per_thr else 0.0
         )
         metrics["mAP75"] = per_thr.get(0.75, 0.0)
+        # 逐阈值的 AP 原样留一份：下游（Det3DMetric）要按**实际配置**的阈值取
+        # mAP@0.7，只暴露 mAP50/mAP75 会让未配置 0.75 的场景恒读到 0.0。
+        # 纯增量，不改变上面三个 key 的既有语义。
+        self._last_per_thr = dict(per_thr)
         return metrics

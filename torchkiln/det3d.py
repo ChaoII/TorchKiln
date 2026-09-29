@@ -325,18 +325,20 @@ class Det3DMetric(object):
 
     def get_metric(self):
         raw = self._inner.get_metric()
-        # rename to design keys: mAP50 / mAP
-        m = {
+        # DetMetric 只暴露 mAP50 / mAP50-95 / mAP75 三个 key，而本配置用的是
+        # ``iou_thresholds: [0.5, 0.7]``——查 mAP75 永远取不到值，**mAP70 恒为 0.0**
+        # （0.7 处的 AP 其实算出来了，只是没被暴露）。改为按实际阈值取。
+        per_thr = getattr(self._inner, "_last_per_thr", None) or {}
+        mAP70 = per_thr.get(0.7)
+        if mAP70 is None:                     # 没配 0.7 时退回 0.75，再退回原 key
+            mAP70 = per_thr.get(0.75, raw.get("mAP75", 0.0))
+        return {
+            # main_indicator：mAP50-95 是「所配各阈值的均值」（此配置下即 0.5 与 0.7
+            # 的平均），不是逐 0.05 扫描——命名有误导性但保持与既有 det3d 一致。
             "mAP": raw.get("mAP50-95", 0.0),
             "mAP50": raw.get("mAP50", 0.0),
-            "mAP70": raw.get("mAP75", 0.0) if 0.75 in (0.5, 0.7) else raw.get("mAP75", 0.0),
+            "mAP70": float(mAP70),
         }
-        # prefer threshold 0.7 if present under mAP75-like keys; DetMetric stores
-        # mAP50 / mAP50-95 / mAP75 — for thr=[0.5,0.7] mAP50-95 is mean of both.
-        if abs(m["mAP"] - raw.get("mAP50-95", 0.0)) < 1e-12:
-            # expose mean as mAP (design main_indicator)
-            pass
-        return m
 
 
 def build_det3d_loss(loss_cfg, num_classes=None, pc_range=None, pillar_size=None):
