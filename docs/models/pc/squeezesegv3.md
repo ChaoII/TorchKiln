@@ -5,6 +5,12 @@
 > **任务**：`pc_seg`（`Architecture.algorithm: squeezesegv3`）
 > **权重**：`squeezesegv3_rangenet53_semantickitti.pth`（`weights/`，ModelScope `ChaoII0987/TorchKiln → pretrained/`）
 
+> ⚠️ **框架内可用性（2026-09-29 决定）**：
+> **模型与 5 类流程已通**（`configs/pc/squeezesegv3-pcseg.yml`，合成数据，够跑 smoke/流程验证），
+> 但**官方预训练暂不可用** —— 需 SemanticKITTI（**点云 80.9 GB**），
+> 且权重是 **20 类**、demo 是 **5 类**。
+> 已删除为此新建的 `squeezesegv3-semantickitti.yml`；细节见 §4 的提示与 §9。
+
 ---
 
 ## 1. 论文与出处
@@ -172,9 +178,18 @@ Train:
 
 ```bash
 tkiln check -c configs/pc/squeezesegv3-pcseg.yml
-tkiln train -c configs/pc/squeezesegv3-pcseg.yml -o Global.pretrained_model=squeezesegv3_rangenet53_semantickitti
+tkiln train -c configs/pc/squeezesegv3-pcseg.yml
 tkiln val   -c configs/pc/squeezesegv3-pcseg.yml --weights output/squeezesegv3-pcseg/best_accuracy.pth
 ```
+
+> 🚫 **不要**加 `-o Global.pretrained_model=squeezesegv3_rangenet53_semantickitti`
+> —— 权重是 **20 类**（19 语义类 + 1 unlabeled），而本 demo 配置是 **5 类**，
+> 实测会 **10 个 `heads.*` 张量形状不符**（`(5,…)` vs `(20,…)`）⇒ 分类头随机初始化。
+>
+> 要用官方预训练必须同时改**类别数**：
+> `-o Architecture.Head.num_classes=20`（实测 missing=0），
+> **且数据必须换成 SemanticKITTI**（点云 **80.9 GB** + 标签 171 MB）——
+> 见 §6 的数据说明。
 
 > ⚠️ `smoke_all` 会强制 `batch=4` 且同进程连跑；range image 必须**足够小**
 > （示例用 64×256，batch=1），否则直接 OOM 崩进程。

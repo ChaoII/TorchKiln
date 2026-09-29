@@ -83,31 +83,30 @@ Architecture:
 
 ---
 
-## 三、✅ 已接入预训练的配置（4 个，均实测 missing=0）
+## 三、✅ 已接入预训练的配置（3 个，均实测 missing=0）
 
 | 配置 | `pretrained_model` | 模型参数 | 加载结果 |
 |---|---|---|---|
 | `configs/pc/centerpoint-det3d.yml` | `centerpoint_pillars_kitti` | 4.996 M / 223 张量 | **missing=0 / unexpected=0 / 形状全对** |
 | `configs/lane/bev_lanedet.yml` | `bev_lanedet_apollo_576x1024` | 43.997 M / 440 张量 | **missing=0 / unexpected=0** |
 | `configs/local/apollo_bev_lanedet.yml` | `bev_lanedet_apollo_576x1024` | 43.997 M / 440 张量 | **missing=0 / unexpected=0** |
-| `configs/pc/squeezesegv3-semantickitti.yml`（**新增**） | `squeezesegv3_rangenet53_semantickitti` | 25.960 M / 612 张量 | **missing=0 / unexpected=0**（**真实从 ModelScope 下载 105MB 验证**）|
 
-### ⭐ SqueezeSegV3 的类别数坑（新增配置的原因）
+### 关于 SqueezeSegV3（**已决定不做**）
 
-原 `configs/pc/squeezesegv3-pcseg.yml` 是 **5 类合成 demo**，
-而官方 SemanticKITTI 权重是 **20 类**（19 语义类 + 1 unlabeled）：
+远程有官方权重 `squeezesegv3_rangenet53_semantickitti.pth`（99.7 MB），
+但**框架用不起来**，两条原因（均实测确认）：
 
-| 配置 | 模型形状 | 权重形状 | 结果 |
-|---|---|---|---|
-| `num_classes: 5` | `heads.* = (5, …)` | `heads.* = (20, …)` | ❌ **10 个张量形状不符** |
-| `num_classes: 20` | `heads.* = (20, …)` | `heads.* = (20, …)` | ✅ **missing=0** |
+| 问题 | 实测 |
+|---|---|
+| **类别数不匹配** | 权重是 **20 类**（19 语义类 + 1 unlabeled）；现有 `configs/pc/squeezesegv3-pcseg.yml` 是 **5 类** demo ⇒ `heads.*` 形状 `(5,…)` vs `(20,…)`，**10 个张量形状不符** |
+| **数据量太大** | 用官方权重必须下 SemanticKITTI：**点云 80.9 GB** + 标定 0.6 MB + 标签 171 MB —— **性价比不划算** |
 
-⇒ **只有 20 类能加载官方权重**。故：
-- 原 5 类 demo 配置**保持 `null` 不动**（合成数据，改类别数会让指标不可比）；
-- **新增** `configs/pc/squeezesegv3-semantickitti.yml`（20 类 + 预训练），
-  注释里写清数据来源与标签重映射要求。
+⇒ 已删除为它新建的 `squeezesegv3-semantickitti.yml`。
+**5 类 demo 配置保持 `null` 不动**（合成数据，够跑通流程与 smoke 验证）。
+远程权重留着无害（99.7 MB），将来若拿到数据可直接用：
+把 `Architecture.Head.num_classes` 改成 **20** 即可（实测 missing=0）。
 
-> ⚠️ `num_classes` 的真实位置是 **`Architecture.Head.num_classes`**
+> 📌 顺带记一个坑：`num_classes` 的真实位置是 **`Architecture.Head.num_classes`**
 > （`build_loss` / `build_metric` 都从那里读；写到 `Architecture` 顶层**无效**）。
 
 ---
@@ -118,7 +117,7 @@ Architecture:
 |---|---|
 | `configs/audio/kokoro_demo.yml` | demo 用合成数据，**从零更合适** |
 | `configs/audio/panns_esc50_*.yml`（4 个） | 对齐实验**故意从零**（否则无法与 PaddleSpeech 逐步对比）|
-| `configs/pc/squeezesegv3-pcseg.yml` | 5 类 demo，权重是 20 类（**形状不匹配**）|
+| `configs/pc/squeezesegv3-pcseg.yml` | 权重 20 类 vs 配置 5 类（形状不匹配）+ 需 80 GB 数据 |
 | `configs/pc/pointpillars-det3d.yml`、`pointpillars-seg.yml` | ⚠️ **架构不同**（PointPillars ≠ CenterPoint），**不能混用** |
 | `configs/ts/*`（34 个） | 时序模型**无官方预训练权重**（paddlets 不发布）|
 
