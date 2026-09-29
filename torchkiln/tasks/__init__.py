@@ -31,6 +31,7 @@ TASK_SPECS = {
     "lane_row": ("torchkiln.tasks.lane_row", "LaneRowTask"),
     "pc_seg": ("torchkiln.tasks.pc_seg", "PcSegTask"),
     "det3d": ("torchkiln.tasks.det3d", "Det3DTask"),
+    "mono3d": ("torchkiln.tasks.mono3d", "Mono3DTask"),
     "lane_bev": ("torchkiln.tasks.lane_bev", "LaneBEVTask"),
     "plate_det": ("torchkiln.tasks.plate_det", "PlateDetTask"),
     "plate_rec": ("torchkiln.tasks.plate_rec", "PlateRecTask"),

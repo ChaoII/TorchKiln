@@ -46,6 +46,9 @@ TRAINER_REGISTRY = {
     "lane_row": LaneRowTrainer,
     "pc_seg": PcSegTrainer,
     "det3d": Det3DTrainer,
+    # 单目 3D：模型/损失/评估与 det3d 完全一致，只有 dataset 不同（图像 vs 点云），
+    # 所以直接复用同一个 trainer —— 分叉一份只会带来无谓的同步负担
+    "mono3d": Det3DTrainer,
     "lane_bev": LaneBEVTrainer,
     "plate_det": PlateDetTrainer,
     "plate_rec": PlateRecTrainer,

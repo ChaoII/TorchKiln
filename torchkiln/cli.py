@@ -54,6 +54,10 @@ TASK_ALIASES = {
     "pc-seg": "pc_seg",
     "pcseg": "pc_seg",
     "det3d": "det3d",
+    # 单目 3D：det3d 的图像分支（模型/损失复用，数据入口不同）
+    "mono3d": "mono3d",
+    "mono-3d": "mono3d",
+    "monodet3d": "mono3d",
     "det-3d": "det3d",
     "3d": "det3d",
     "lane_bev": "lane_bev",
@@ -121,6 +125,7 @@ FAMILY_OF = {
     "lane_row": "yolo",
     "pc_seg": "pc",
     "det3d": "pc",
+    "mono3d": "pc",
     "lane_bev": "lane_bev",
     "plate_det": "yolo",
     "plate_rec": "yolo",
@@ -204,7 +209,7 @@ def _config_task(argv):
         arch = load_config(path).get("Architecture") or {}
         raw = str(arch.get("task") or arch.get("name") or "").lower()
         for key in ("ts_rul", "ts_embed", "ts_classify", "ts_anomaly", "ts_forecast", "kokoro_tts", "panns_cls", "plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
-                    "lane_bev", "lane_seg", "lane_row", "pc_seg", "det3d", "detect", "segment", "obb", "pose",
+                    "lane_bev", "lane_seg", "lane_row", "pc_seg", "det3d", "mono3d", "detect", "segment", "obb", "pose",
                     "classify", "semantic", "depth", "e2e", "det", "rec", "cls"):
             if key in raw:
                 return key, cfg

@@ -1,0 +1,110 @@
+# 单目（图像）3D 检测(mono3d)：CenterPoint 式 heatmap + L1，BEV rotated IoU AP。
+#
+# 与 LiDAR 版 det3d 的唯一差别：**输入是 RGB 图而不是点云**。
+# `PillarDetNet` 就是若干 nn.Conv2d，输入契约只有 (B, C, H, W)，RGB 图是 (B,3,H,W)，
+# 所以 `in_channels: 3` 就够了——网络 / Loss / Metric / PostProcess 全部原样复用。
+#
+# ⚠️ 标签仍是 **LiDAR/ego 系**（x 前 / y 左 / z 上）、`z` 为框**中心**、`l` 沿 `yaw`，
+#    与 det3d 完全一致。本任务**不做任何坐标变换**，相机系 → LiDAR 系的转换
+#    在平台侧导出器里完成。
+#
+# ⚠️ `pc_range` / `pillar_size` 在这里的作用是「米制 x,y → 输出网格」的**比例尺**，
+#    不是真的把图像重采样成 BEV。等价于「CenterNet 在图像上定位 + 3D 参数回归」，
+#    评估仍按 BEV 旋转 IoU（det3d 的 metric 会丢掉 z 与 h）。
+#
+# 用时改:Head.num_classes、Train/Eval data_dir + label_file_list、pc_range、image_size、batch。
+Global:
+  model_name: mono3d
+  use_gpu: true
+  device: cuda:0
+  epoch_num: 50
+  print_batch_step: 10
+  save_model_dir: ./output/mono3d
+  save_epoch_step: 10
+  eval_batch_step: [0, 2000]
+  eval_epoch_step: 1
+  pretrained_model: null
+  checkpoints: null
+  distributed: false
+  seed: 1024
+  use_ema: false
+  show_eval_progress: true
+Architecture:
+  model_family: pc
+  task: mono3d
+  algorithm: pointpillars
+  # 3 = RGB。与 det3d 的 4（x,y,z + intensity）不同，这是图像分支唯一的结构差异。
+  in_channels: 3
+  Head:
+    num_classes: 3
+    base_channels: 32
+Optimizer:
+  name: AdamW
+  lr:
+    name: Cosine
+    learning_rate: 0.001
+    lrf: 0.05
+    warmup_epoch: 2
+    warmup_bias_lr: 0.1
+    warmup_momentum: 0.8
+  regularizer:
+    name: L2
+    factor: 0.0001
+Loss:
+  name: Det3DLoss
+  focal_alpha: 2.0
+  focal_beta: 4.0
+  box_weight: 0.25
+  hm_weight: 1.0
+  gaussian_radius: 2
+Metric:
+  name: Det3DMetric
+  main_indicator: mAP
+  iou_thresholds: [0.5, 0.7]
+PostProcess:
+  name: Det3DPostProcess
+  score_thres: 0.1
+  nms_thres: 0.2
+  max_det: 100
+Train:
+  dataset:
+    name: Mono3DDataset
+    data_dir: datasets/mono3d_demo
+    label_file_list: [datasets/mono3d_demo/train.txt]
+    num_classes: 3
+    # names 同时决定「类名 → 类 id」的映射（load_box_labels 用它建 name_to_id），
+    # 顺序即 id 顺序，必须与平台侧导出的类下标严格一致
+    names: [car, ped, cyc]
+    max_boxes: 64
+    transform:
+      image_size: [320, 320]
+    augment:
+      hflip: true
+      color_jitter: 0.2
+    # 米制 x,y → 网格的比例尺（[xmin,ymin,zmin,xmax,ymax,zmax]，mins first）
+    pc_range: [-16, -16, -3, 16, 16, 3]
+    pillar_size: [0.5, 0.5, 4.0]
+  loader:
+    batch_size_per_card: 4
+    shuffle: true
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2
+Eval:
+  dataset:
+    name: Mono3DDataset
+    data_dir: datasets/mono3d_demo
+    label_file_list: [datasets/mono3d_demo/val.txt]
+    num_classes: 3
+    names: [car, ped, cyc]
+    max_boxes: 64
+    transform:
+      image_size: [320, 320]
+    pc_range: [-16, -16, -3, 16, 16, 3]
+    pillar_size: [0.5, 0.5, 4.0]
+  loader:
+    batch_size_per_card: 4
+    shuffle: false
+    drop_last: false
+    num_workers: 0
+    prefetch_factor: 2
