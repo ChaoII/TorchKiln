@@ -54,10 +54,12 @@ audio = [
     "soundfile",
 ]
 # tkiln export --onnx 与 ONNX 校验
+# ⚠️ PyPI 上的包名是 `onnxslim`（**无连字符**）。写成 `onnx-slim` 会报
+#    "No matching distribution found"——镜像构建时才发现，代价很高。
 export = [
     "onnx",
     "onnxruntime",
-    "onnx-slim",
+    "onnxslim",
 ]
 all = [
     "torchkiln[ocr,audio,export]",

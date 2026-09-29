@@ -50,3 +50,7 @@ configs/local/
 
 # ===== 对照/验收/消融（本地跑，不入库）=====
 configs/_parity/
+
+# ===== 服务运行期数据（作业输出/指标/权重，本机产物）=====
+tk-data/
+service/tk-data/
