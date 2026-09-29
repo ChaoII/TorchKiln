@@ -177,6 +177,9 @@ class JobManager(object):
             return
 
         run.pid = run.proc.pid
+        # ⚠️ 必须显式取出 stdout 挂到 run 上：_pump_logs 只认 run.stdout。
+        #    漏掉这行 pump 会在首行 AttributeError，静默死亡 → 日志全丢。
+        run.stdout = run.proc.stdout
         self.store.mark_running(job_id, run.pid, run.log_path, run.metrics_path)
 
         pump = asyncio.ensure_future(self._pump_logs(run))
@@ -191,6 +194,12 @@ class JobManager(object):
                 await poller
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+            # 等日志泵把管道读完再收尾：进程已退出 → stdout 到达 EOF → 循环
+            # 自然结束 → 文件 close 落盘。限时兜底，防止管道异常时整体卡死。
+            try:
+                await asyncio.wait_for(pump, timeout=10)
+            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):  # noqa: BLE001
+                pump.cancel()
             # 最后再拉一次，确保 end 事件一定被消费到
             try:
                 await self._drain_metrics(run)
@@ -230,8 +239,18 @@ class JobManager(object):
                     self._publish(run.job_id, "log", line)
         except (asyncio.CancelledError, GeneratorExit):
             raise
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # 绝不能静默吞掉：日志泵一死，service.log / SSE / /logs 会同时变空，
+            # 而训练本身照常跑完——用户看到的只有「什么都没有」，无从排查。
+            # 把异常本身作为一行日志落到环形缓冲与文件里，让故障可见。
+            msg = "[service] 日志泵异常中止: {}: {}".format(type(exc).__name__, exc)
+            try:
+                with open(run.log_path, "a", encoding="utf-8", newline="\n") as fh:
+                    fh.write(msg + "\n")
+                self.log_ring.append(run.job_id, msg)
+                self._publish(run.job_id, "log", msg)
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _poll_metrics(self, run: TrainingRun):
         """按字节偏移增量 tail metrics.jsonl 并广播。"""

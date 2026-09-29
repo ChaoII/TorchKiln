@@ -201,6 +201,10 @@ class TrainingRun(object):
         self.log_ring = log_ring
         self.proc = None
         self.pid = None
+        #: 子进程 stdout（stderr 已合并进来）。**必须由 jobs.py 在 spawn 之后显式
+        #: 赋值**——曾经漏赋值导致 ``_pump_logs`` 首行 AttributeError 被静默吞掉，
+        #: 结果 service.log 永远 0 字节、SSE 日志流与 /logs 接口全空。
+        self.stdout = None
         self._metrics_offset = 0
         self.cancel_requested = False
         self.exit_code = None

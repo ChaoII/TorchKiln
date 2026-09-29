@@ -1,5 +1,108 @@
 # AGENTS.md
 
+---
+
+## 国内镜像源（**强制**，apt / pip / 任何拉取）
+
+### 用户原话（要求原样记录，不得改写）
+
+> 现在跟你说你不管是有装拍神库还是apt get的这源全部都用国内的镜像听到没把它写在agents.md里面。
+
+> 还有apt也要换阿里镜像
+
+（"拍神库" = 第三方库，指 pip 装包；这两句是本节的**唯一来源**。）
+
+### 由此得出的硬规矩
+
+**所有**装包、拉权重、拉数据的动作一律走国内镜像。
+- **apt → 清华**：`https://mirrors.tuna.tsinghua.edu.cn/ubuntu`（阿里云实测 0.02 MB/s，别用）
+- **pip / uv → 清华**：`https://pypi.tuna.tsinghua.edu.cn/simple`
+
+走官方源会慢到无法忍受（实测 `docker build` 从 `archive.ubuntu.com` 拉 apt 依赖，
+5 分钟只走了 85 个包还没进下一步）。
+
+| 用途 | 国内源 | 覆盖写法 |
+|---|---|---|
+| pip 默认 | `https://pypi.tuna.tsinghua.edu.cn/simple` | `pip install --index-url ...` |
+| pip 永久 | 同上 | `%APPDATA%\pip\pip.ini` 的 `[global] index-url`（本机已配好） |
+| uv | 同上 | `uv sync --index-url https://pypi.tuna.tsinghua.edu.cn/simple` |
+| apt (Debian/Ubuntu) | **`https://mirrors.tuna.tsinghua.edu.cn/ubuntu`** | 改 `/etc/apt/sources.list` |
+| apt 备选 | `https://mirrors.ustc.edu.cn/ubuntu` | 同上 |
+
+**实测测速（2026-09-29，本机线路，勿凭印象换源）：**
+
+| 源 | 实测速度（拉 1.7MB Packages） | 结论 |
+|---|---|---|
+| **清华** `https://mirrors.tuna.tsinghua.edu.cn/ubuntu` | **6.2 MB/s**（0.3s） | ✅ **默认用它** |
+| 中科大 `https://mirrors.ustc.edu.cn/ubuntu` | 5.2 MB/s（0.3s） | ✅ 备选 |
+| 阿里云 `https://mirrors.aliyun.com/ubuntu` | **0.02 MB/s**（82s） | ❌ 本机线路极慢，**别用** |
+
+### 容器内（Dockerfile）
+已固化在 `service/Dockerfile`：**apt 阿里云 + pip 清华**。
+- `ARG APT_MIRROR`（默认阿里云）/ `ARG PIP_INDEX`（默认清华）；
+  **换源用 `--build-arg` 覆盖，不要改回官方源**
+
+#### ⚠️ 写 Dockerfile 换源时的三个坑（都实际踩过）
+1. **`ARG` 必须写在 `FROM` 之后重新声明一遍。** 写在 `FROM` 之前的那份
+   只在 `FROM` 指令里可见，构建阶段 `${APT_MIRROR}` 展开成**空字符串**，
+   源文件被写坏，报错还指向不相干的地方。
+2. **用 `echo`，不要用 `printf '...\n'`。** 反斜杠 + n 会被 Dockerfile
+   当成**真换行**，单引号字符串被拆到两行，shell 直接语法错误（exit code 2）。
+3. **每条 `RUN` 开头 `set -eux`。** 没有 `-e`，中间步骤失败会被后续步骤掩盖，
+   报错指向无关的地方，排查成本极高。
+4. **Ubuntu 24.04(noble) 用 deb822 格式的 `/etc/apt/sources.list.d/ubuntu.sources`**，
+   只改 `sources.list` 不够——必须一并 `rm` 掉，否则 apt 同时读两个源、
+   照样去访问 `archive.ubuntu.com`。
+
+```powershell
+# 默认（阿里云 apt + 清华 pip）
+docker build -f service/Dockerfile -t torchkiln:0.1.0 .
+
+# 两套都换阿里云
+docker build -f service/Dockerfile `
+  --build-arg APT_MIRROR=https://mirrors.aliyun.com/ubuntu `
+  --build-arg PIP_INDEX=https://mirrors.aliyun.com/pypi/simple/ `
+  --build-arg PIP_HOST=mirrors.aliyun.com `
+  -t torchkiln:0.1.0 .
+```
+
+### PyTorch CUDA 轮子也有国内镜像（用户原话）
+
+> 对于pytorch的cuda版本也有国内镜像你比如说南科科大的。
+
+**实测结论（2026-09-29 逐个探测，勿凭印象选源）：**
+
+| 源 | 实测 | 结论 |
+|---|---|---|
+| **清华** `https://mirrors.tuna.tsinghua.edu.cn/pytorch-wheels/cu132/` | 6.2 MB/s | ✅ **默认用它** |
+| 中科大 `https://mirrors.ustc.edu.cn/pytorch-wheels/cu132/` | 5.2 MB/s | ✅ 备选 |
+| 阿里云 `https://mirrors.aliyun.com/pytorch-wheels/cu132/` | 目录可访问，但整体线路 0.02 MB/s | ❌ 别用 |
+| 南科大 `https://mirrors.sustech.edu.cn/pytorch-wheels/cu132/` | HEAD 200 但正文是 "Making sure you're not a bot!" 验证页 | ❌ 反爬，pip 拉不到 |
+| 南京大 `https://mirror.nju.edu.cn/pytorch/whl/cu132/` | 目录可访问但无 torch 2.1x 条目 | ❌ 无所需版本 |
+
+→ `service/Dockerfile` 默认用 `ARG TORCH_WHEEL_INDEX=https://mirrors.aliyun.com/pytorch-wheels/cu132/`。
+换源用 `--build-arg TORCH_WHEEL_INDEX=...`。
+**注意**：PyPI 同步（清华/阿里云）里**没有** PyTorch CUDA 轮子，这是独立的一套索引，
+不能靠 `PIP_INDEX_URL` 覆盖，必须单独指定。
+
+#### 探测国内镜像是否真可用的正确姿势
+`Invoke-WebRequest -Method Head` 返回 200 **不代表可用**——南科大就是反爬典型
+（HEAD 200、GET 返回验证页）。**必须 GET 一次看正文**，或直接 `pip download --no-deps -d tmp <包>` 试拉。
+
+### 唯一例外（需在提交信息里写明理由）
+**pytorch 官方 CUDA 轮子**（`download.pytorch.org`）国内可能未同步，尤其 `cu132`
+这类新版本。默认基础镜像已自带 torch（`pytorch/pytorch:2.13.0-cuda13.2-cudnn9-runtime`），
+**不需要**走这条路；只有切到 `nvidia/cuda` 基础镜像（`NEED_TORCH=1`）时才可能需要，
+届时用 `--build-arg TORCH_INDEX=https://download.pytorch.org/whl/cu132` 并在
+提交信息里注明「国内无等价源」。
+
+### 装依赖的其它硬规矩
+- **一律 `pip install --no-deps` + 手工补传递依赖**。让 resolver 自己解会把
+  `torch`/`numpy`/`opencv` 一起升级，毁掉已经跑通的通路。
+  实测：装完 OCR 依赖后 `torch 2.14.0+cu132` / `numpy 2.2.6` / `cv2 4.11.0` /
+  `scipy 1.15.3` **一版本未动**。
+- **改 conda 环境前先 `pip install --dry-run` 看 `Would install`**，确认没有
+  torch/numpy/cv2 才动手。
 ## 仓库改名（PytorchOCR → TorchKiln，2026-09-23，已完成）
 - **三层命名**：
   | 层 | 旧 | 新 |
