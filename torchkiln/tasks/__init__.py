@@ -21,6 +21,7 @@ from torchkiln.tasks.video_cls import VideoClsTask
 from torchkiln.tasks.ts_forecast import TsForecastTask
 from torchkiln.tasks.ts_anomaly import TsAnomalyTask
 from torchkiln.tasks.ts_classify import TsClassifyTask
+from torchkiln.tasks.ts_embed import TsEmbedTask
 from torchkiln.tasks.kokoro_tts import KokoroTtsTask
 from torchkiln.tasks.panns_cls import PannsClsTask
 
@@ -45,6 +46,7 @@ TASK_REGISTRY = {
     "ts_forecast": TsForecastTask,
     "ts_anomaly": TsAnomalyTask,
     "ts_classify": TsClassifyTask,
+    "ts_embed": TsEmbedTask,
     "kokoro_tts": KokoroTtsTask,
     "panns_cls": PannsClsTask,
 }

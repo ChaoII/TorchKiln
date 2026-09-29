@@ -72,6 +72,10 @@ TASK_ALIASES = {
     "ts": "ts_forecast",
     "ts_anomaly": "ts_anomaly",
     "ts_classify": "ts_classify",
+    "ts_embed": "ts_embed",
+    "ts-embed": "ts_embed",
+    "ts_repr": "ts_embed",
+    "repr": "ts_embed",
     "ts-classify": "ts_classify",
     "ts_cls": "ts_classify",
     "ts-cls": "ts_classify",
@@ -114,6 +118,7 @@ FAMILY_OF = {
     "ts_forecast": "ts",
     "ts_anomaly": "ts",
     "ts_classify": "ts",
+    "ts_embed": "ts",
     "ocr": "ocr_det",
     "ocr_det": "ocr_det",
     "ocr_rec": "ocr_rec",
@@ -180,7 +185,7 @@ def _config_task(argv):
 
         arch = load_config(path).get("Architecture") or {}
         raw = str(arch.get("task") or arch.get("name") or "").lower()
-        for key in ("ts_classify", "ts_anomaly", "ts_forecast", "kokoro_tts", "panns_cls", "plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
+        for key in ("ts_embed", "ts_classify", "ts_anomaly", "ts_forecast", "kokoro_tts", "panns_cls", "plate_rec", "plate_det", "attribute", "pose_action", "video_cls",
                     "lane_bev", "lane_seg", "lane_row", "pc_seg", "det3d", "detect", "segment", "obb", "pose",
                     "classify", "semantic", "depth", "e2e", "det", "rec", "cls"):
             if key in raw:

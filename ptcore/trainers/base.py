@@ -773,7 +773,7 @@ class BaseTrainer:
                 eta = str(datetime.timedelta(seconds=int(remain * avg_batch)))
                 mem_res, mem_alloc = self._mem_stats()
                 comps = "".join(
-                    ", {}: {:.6f}".format(k, sum(h) / len(h))
+                    ", {}: {:.6f}".format(k, float(sum(h) / len(h)))
                     for k, h in comp_hists.items()
                 )
                 self.logger.info(

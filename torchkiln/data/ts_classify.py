@@ -63,10 +63,14 @@ class TSClassifyDataset(Dataset):
             csv_path = os.path.join(ds["data_dir"], csv_path)
         label_col = ds.get("label_col", "label")
         cols, data = _load_csv(csv_path)
-        li = cols.index(label_col)
-        lab = data[:, li].astype(np.int64)
-        data = np.delete(data, li, axis=1)
-        cols = [c for i, c in enumerate(cols) if i != li]
+        # ⚠️ 表示学习(无标签)场景：label_col 不存在时**不报错**，标签全 0（不参与监督）
+        if label_col in cols:
+            li = cols.index(label_col)
+            lab = data[:, li].astype(np.int64)
+            data = np.delete(data, li, axis=1)
+            cols = [c for i, c in enumerate(cols) if i != li]
+        else:
+            lab = np.zeros(data.shape[0], dtype=np.int64)
         feature_cols = ds.get("feature_cols")
         if feature_cols:
             idx = [cols.index(c) for c in feature_cols]
