@@ -1,100 +1,190 @@
-# 预训练权重清单：本地 vs ModelScope 远程
+# 预训练权重清单（本地 vs ModelScope 远程）
 
-> 盘点时间：2026-09-29 · 本地目录 `weights/` · 远程 `ModelScope: ChaoII0987/TorchKiln → pretrained/`
-
-## 一、远程已托管（3 个）
-
-| 文件 | 大小 | 对应模型 |
-|---|---|---|
-| `centerpoint_pillars_kitti.pth` | 19.6 MB | 3D 检测 CenterPoint-Pillars |
-| `squeezesegv3_rangenet53_semantickitti.pth` | 99.7 MB | 点云语义分割 SqueezeSegV3 |
-| `bev_lanedet_apollo_576x1024.pth` | 168 MB | BEV 车道线 BEV-LaneDet |
-
-> 用法：config 里写裸名（不带 `.pth`），框架会从 ModelScope 自动下载到 `~/.torchkiln/pretrained/`。
+> **盘点时间**：2026-09-29
+> **远程仓库**：`ChaoII0987/TorchKiln` → `pretrained/`（**公开**，否则 resolve 404）
+> **远程 .pth 总数**：**151**
+> **本地 `weights/` .pth 总数**：**26**
 
 ---
 
-## 二、⭐ **本地有、远程无 → 需要上传（44 个 / 约 3.92 GB）**
+## 一、结论先行
 
-### 2.1 音频（4 个 / 约 412 MB）—— **建议优先上传**
-
-| 文件 | 大小 | 模型 | 备注 |
-|---|---|---|---|
-| `panns_cnn14.pth` | 323.1 MB | PANNs CNN14 语音分类 | AudioSet 预训练，80.77M |
-| `ecapa_tdnn_voxceleb12.pth` | 83.3 MB | ECAPA-TDNN 说话人 | VoxCeleb1+2，20.77M |
-| `mdtc_heysnips.pth` | 0.2 MB | MDTC 关键词 | HeySnips，0.034M |
-| `pgnet_lite_totaltext.pth` | 5.1 MB | PGNet_lite 端到端 OCR | 轻量 e2e，1.22M |
-
-### 2.2 OBB 专用（5 个 / 约 40 MB）—— **建议上传**
-
-| 文件 | 大小 | 说明 |
+| 判定 | 数量 | 说明 |
 |---|---|---|
-| `yolo11n_obb_fw.pth` | 10.9 MB | yolo11n-OBB（DOTA 15 类，去掉函数式 dfl） |
-| `v8n_obb_fw.pth` | 6.3 MB | yolov8n-OBB（框架格式） |
-| `v26n_obb_fw.pth` | 5.6 MB | yolo26n-OBB（框架格式，reg_max=1） |
-| `v8n-obb.pt` | 6.6 MB | yolov8n-OBB（ultralytics 原始） |
-| `yolo26n-obb.pt` | 5.9 MB | yolo26n-OBB（ultralytics 原始） |
+| ✅ **远程已有、可直接用** | **149** | YOLO 家族 + PP-OCR + 车牌 + 3D/点云/车道 + 音频 3 个 + PGNet_lite |
+| ⭐ **本地新生成、需上传** | **2** | **kokoro_v1_0.pth** + **kokoro_v1_1_zh.pth**（TTS，624 MB） |
+| ❌ **本地有、但不该上传** | **19**（1.67 GB） | **业务/对齐中间产物**（nc=1 实验权重、OBB 转换中间件、业务微调） |
 
-### 2.3 检测（2 个 / 约 11 MB）
-
-| 文件 | 大小 | 说明 |
-|---|---|---|
-| `yolo26n.pt` / `yolo26n_det.pt` | 5.5 MB ×2 | yolo26n 检测（COCO） |
-
-### 2.4 分割 nc=1 对齐实验（32 个 / 约 3.1 GB）—— **可按需上传**
-
-> 这批是**为对齐验证生成**的 nc=1 权重（框架 `.pth` + ultra `.pt` 成对），
-> 用于跨端同权重评估。**非通用模型**，若不对外发布对齐实验可**不上传**。
-
-| 家族 | 档位 | 每档两文件（fw / ultra） |
-|---|---|---|
-| yolo11-seg | n/s/m/l/x | `yolo11{n,s,m,l,x}-seg_nc1.pth` + `_ultra.pt` |
-| yolov8-seg | n/s/m/l/x | `yolov8{n,s,m,l,x}-seg_nc1.pth` + `_ultra.pt` |
-| yolo26-seg | n/s/m/l/x | `yolo26{n,s,m,l,x}-seg_nc1.pth` + `_ultra.pt` |
-| 合计 | 15 档 × 2 | 大小 11.6 MB(n) ~ 287 MB(x) |
-
-- 另有 `yolo11n_seg_ft_fw.pth`（11.6 MB，package-seg 微调产物）。
-
-### 2.5 临时/中间文件（1 个）
-
-| 文件 | 大小 | 说明 |
-|---|---|---|
-| `.yolo26n.pt.edace82c...part` | 3.5 MB | **下载残留**，可删除 |
+> ⚠️ **上一版本文档的推荐是错的**（曾说「远程只有 3 个、需上传 44 个」），
+> 根因是**列表接口分页没取全**。现以 `repo/files?Root=pretrained` 一次性取
+> `Data.Files` 的 `Name` 为准。
 
 ---
 
-## 三、上传建议（按价值排序）
+## 二、⭐ 需上传的（2 个 / 624 MB）—— 唯一的通用 TTS 基座
 
-| 优先级 | 内容 | 大小 | 理由 |
+| 文件 | 大小 | 来源 | 验证 |
 |---|---|---|---|
-| **P0** | 音频 4 个 + PGNet_lite | ~412 MB | **对外可用**：语音分类/说话人/KWS/轻量 e2e OCR，官方权重已转好且四条对齐全过 |
-| **P0** | OBB 5 个 | ~40 MB | **对外可用**：DOTA OBB 是常见需求，已转为框架格式 |
-| **P1** | 检测 2 个 | ~11 MB | yolo26n COCO 检测，通用 |
-| **P2** | 分割 nc=1 32 个 | ~3.1 GB | **对齐实验用**，非通用模型；建议**不上传**或单独放 `_parity/` 目录 |
+| **`kokoro_v1_0.pth`** | 312.1 MB | 官方 `hexgrad/Kokoro-82M` v1.0（多语言/英文） | 549 张量 / **81.763 M** / **missing=0 unexpected=0** |
+| **`kokoro_v1_1_zh.pth`** | 312.1 MB | 官方 `hexgrad/Kokoro-82M-v1.1-zh`（中文） | 同上，**missing=0 unexpected=0** |
 
-**最小上传集（推荐）**：**11 个文件 / 约 458 MB**
+**为什么值得上传**：
+- 是**唯一的通用 TTS 预训练基座**（仓库此前无任何 TTS 权重）；
+- 两版**架构完全相同**（仅 `vocab` 不同：114 vs 171 词表），可互换；
+- 转换要点已固化为「**扁平 state_dict + `InstanceNorm1d(affine=False)`**」。
+
+**转换脚本**：`_downloads/kokoro_convert.py`
+**关键修法**（框架 `torchkiln/audio/kokoro/istftnet.py` 已内置）：
+
 ```
-panns_cnn14.pth  ecapa_tdnn_voxceleb12.pth  mdtc_heysnips.pth  pgnet_lite_totaltext.pth
-yolo11n_obb_fw.pth  v8n_obb_fw.pth  v26n_obb_fw.pth  v8n-obb.pt  yolo26n-obb.pt
-yolo26n.pt  yolo26n_det.pt
+官方 AdaIN1d 的 InstanceNorm1d 是 affine=True（ONNX 导出 workaround 的副产物），
+但官方权重里**没有** weight/bias ⇒ 必须 affine=False 才能 missing=0。
+官方源码注释自认：affine=True 在推理模式下「不应该有影响」，
+本框架实测**端到端波形逐位一致（maxdiff=0.000e+00）**。
 ```
 
+**用法**：
+
+```yaml
+Global:
+  pretrained_model: kokoro_v1_0        # 裸名，自动从 ModelScope 下载
+Architecture:
+  task: kokoro_tts
+  Head:
+    model: kokoro
+    config: torchkiln/audio/kokoro/configs/kokoro-v1_0.json   # 必需（HF 被墙，不回退下载）
+```
+
+> ⚠️ kokoro 需 `config.json` 配套（已入库于 `torchkiln/audio/kokoro/configs/`）。
+> ⚠️ `Generator` 含 3 处随机噪声（正弦初相 + 两处 `randn_like`）⇒ 复现需固定种子。
+> ⚠️ 整链一次反传在部分输入下会触发原生段错误 `0xC0000005` ⇒ 训练需**分段反传**。
+
 ---
 
-## 四、上传方式
+## 三、❌ 不该上传的（19 个 / 1.67 GB）—— 业务与对齐中间产物
+
+> **上传标准**：只上传「**官方权重转换**」产物（供用户微调的通用基座），
+> **不上传**业务对齐过程中的中间产物。
+
+### 3.1 `*-seg_nc1.pth`（15 个 / 1640.3 MB）—— 对齐实验用
+
+```
+yolov8{n,s,m,l,x}-seg_nc1.pth    yolo11{n,s,m,l,x}-seg_nc1.pth    yolo26{n,s,m,l,x}-seg_nc1.pth
+```
+
+**是什么**：为做「同起点单步对齐」，用 ultra `SegmentModel(alg.yaml, nc=1) + load(COCO)`
+重建的**单类别**权重。
+
+**为什么不上传**：
+- `nc=1` 对 COCO 80 类的用户**毫无微调价值**（分类头只认 1 个类）；
+- 属于**过程产物**，不是官方发布物；
+- 体积 1.6 GB，会把仓库撑大。
+
+### 3.2 `*_obb_fw.pth`（3 个 / 21.8 MB）—— 去掉函数式 DFL 的中间件
+
+```
+v8n_obb_fw.pth (6.0 MB)    v26n_obb_fw.pth (5.4 MB)    yolo11n_obb_fw.pth (10.4 MB)
+```
+
+**是什么**：官方 OBB 权重去掉 ultralytics 那个**函数式** `model.23.dfl.conv.weight`
+（它在 `state_dict` 里是死键，框架侧 DFL 是 `Identity`）后的转换结果。
+
+**为什么不上传**：
+- 框架加载官方 OBB 权重时**自动跳过该键**即可（`load_state_dict` 的
+  `unexpected=1` 已实测无害），**不需要**人工转换版；
+- **OBB 微调基座直接用远程已有的** `yolo11n-obb.pth`（10.4 MB）/ `yolo26n-obb.pth`（5.4 MB）。
+
+### 3.3 `yolo11n_seg_ft_fw.pth`（1 个 / 11.1 MB）—— 业务微调产物
+
+**是什么**：在 `datasets/package-seg` 上微调后的 seg 权重（对齐实验用）。
+
+**为什么不上传**：这是**特定业务数据**的产物，不是通用基座。
+
+---
+
+## 四、远程已有的（149 个）—— 已验证可直接下载加载
+
+### 4.1 YOLO 检测家族（123）
+
+| 家族 | 任务 | 权重示例 | 本框架验证 |
+|---|---|---|---|
+| **yolo11** | det/seg/pose/obb/cls | `yolo11n.pth` (5.2 MB) / `yolo11n-obb.pth` (10.4 MB) / `yolo11n-seg.pth` (5.7 MB) | n/s/m/l/x 全 missing=0；OBB mAP 0.8005↔ultra 0.821 |
+| **yolo26** | det/seg/sem/depth/obb/cls | `yolo26n.pth` (5.2 MB) / `yolo26n-obb.pth` (5.4 MB) | 全家族 missing=0；E2E loss 27.138552↔27.138544 |
+| **yolov8 / v9 / v10 / v12** | det/seg/pose/obb/cls | 各 n/s/m/l/x | 全部 missing=0（仅差函数式 dfl） |
+| **yolov3u / v5u** | det | 各 n/s/m/l/x | missing=0 |
+
+> ✅ 端到端训练 mAP 与 ultra 对齐（v11 差 0.009 / v8 0.005 / v26 0.013 / v12 0.006 / v10 0.026 / v9c 0.005）。
+
+### 4.2 PP-OCR（24）
+
+| 系列 | 权重 | 体积 |
+|---|---|---|
+| PP-OCRv6 | `{tiny,small,medium}_{det,rec}.pth` | 6.25 / 30.04 / 132.68 MB |
+| PP-OCRv5 | `{mobile,server}_{det,rec}.pth` | 20.76 / 165.19 MB |
+| PP-OCRv4 / v3 | 各 det/rec | — |
+
+### 4.3 车牌 / 属性（3）
+
+| 文件 | 大小 | 说明 |
+|---|---|---|
+| `plate_detect.pth` | 1.0 MB | yolov5n-0.5 车牌检测 |
+| `plate_rec_color.pth` | 0.7 MB | CRNN+CTC 车牌识别 |
+| （属性头） | — | PP-LCNet 多标签属性 |
+
+### 4.4 3D / 点云 / 车道（3）
+
+| 文件 | 大小 | 验证 |
+|---|---|---|
+| `centerpoint_pillars_kitti.pth` | 19.2 MB | missing=0（191 张量）；KITTI BEV mAP(Mod) 均值 67.8 vs Paddle3D 71.87 |
+| `squeezesegv3_rangenet53_semantickitti.pth` | 99.7 MB | missing=0（524 张量）；前向 maxdiff ~1e-5 |
+| `bev_lanedet_apollo_576x1024.pth` | 168.1 MB | missing=0（372 张量）；F1 0.8378 vs Paddle3D 0.7776 |
+
+### 4.5 音频（3）+ OCR 端到端（1）
+
+| 文件 | 大小 | 验证（四条全过） |
+|---|---|---|
+| `panns_cnn14.pth` | 308.1 MB | fp64 前向 **3.55e-11** / loss **6.46e-12** / probs 差 **3.4e-05** |
+| `ecapa_tdnn_voxceleb12.pth` | 79.5 MB | fp64 **1.47e-15** / 余弦 **0.9999996** |
+| `mdtc_heysnips.pth` | 0.2 MB | fp64 **6.02e-10** / logits **4.04e-09** |
+| `pgnet_lite_totaltext.pth` | 4.9 MB | PGLoss 逐位一致（349.08233642578125 ↔ 同值） |
+
+---
+
+## 五、下载与加载机制
 
 ```python
-# ModelScope 上传（需 token）
-from modelscope.hub.api import HubApi
-api = HubApi()
-api.login('你的_token')
-for f in [...]:
-    api.upload_file(
-        repo_id='ChaoII0987/TorchKiln',
-        file_path=f'weights/{f}',          # 本地路径
-        path_in_repo=f'pretrained/{f}',    # 远程路径（必须 pretrained/ 前缀）
-    )
+# 框架自动下载（config 里写裸名，不带 .pth）
+Global:
+  pretrained_model: kokoro_v1_0     # -> ~/.torchkiln/pretrained/kokoro_v1_0.pth
 ```
 
-> ⚠️ **仓库必须是 public**（框架用公开 URL 下载，无 token）；私有会导致 resolve 404。
-> 上传后验证：`resolve_pretrained('<裸名>')` 应能下载并加载 `missing=0/unexpected=0`。
+| 环境变量 | 作用 |
+|---|---|
+| `PYTORCHOCR_HOME` | 缓存根目录（默认 `~/.torchkiln/`） |
+| `PYTORCHOCR_ALLOW_LOCAL_REPO` | 允许读本地镜像 `\\tsclient\E\TorchKiln` |
+| `PYTORCHOCR_AUTO_DOWNLOAD` | 关掉自动下载（离线环境） |
+
+> ⚠️ **仓库必须公开**：框架用公开 URL 无 token 下载，
+> 私有仓库会导致 `resolve 404`（git 返回 401）。
+> ⚠️ 权重文件名**不带** `_ptocr` / `_state` 后缀（配置 URL 与缓存均为裸名 `.pth`）。
+
+---
+
+## 六、上传操作（需 ModelScope token）
+
+```bash
+pip install modelscope
+modelscope login --token <YOUR_TOKEN>
+
+# 逐个上传（保持裸名 .pth）
+for f in kokoro_v1_0 kokoro_v1_1_zh; do
+  modelscope upload ChaoII0987/TorchKiln "E:/TorchKiln/weights/$f.pth" "pretrained/$f.pth"
+done
+
+# 验证可下载
+python -c "from torchkiln.ptcore.pretrained import resolve_pretrained; \
+           print(resolve_pretrained('kokoro_v1_0'))"
+```
+
+> ⚠️ 私有仓库会让 resolve 失败 ⇒ **保持公开**或提供 token。
+> ⚠️ `kokoro` 还需 `config.json`（已入库，不需上传）。
