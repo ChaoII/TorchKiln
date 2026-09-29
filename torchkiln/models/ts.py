@@ -109,6 +109,26 @@ def build_ts_model(arch):
             num_samples=head.get("num_samples", 10),
             regression_mode=head.get("regression_mode", "mean"),
             output_mode=head.get("output_mode", "quantiles"))
+    if model in ("bilstm_attn", "bilstm", "lstm_attn"):
+        from torchkiln.nn.ts_attn import BiLSTMAttention
+        return BiLSTMAttention(
+            in_len, out_len, dim,
+            hidden_dim=head.get("hidden_dim", 128),
+            num_layers=head.get("num_layers", 2),
+            dropout=head.get("dropout", 0.1),
+            attn_dim=head.get("attn_dim", 64),
+            head_hidden=head.get("head_hidden", 64),
+            use_input_proj=head.get("use_input_proj", True))
+    if model in ("transformer_reg", "transformerreg", "trf_reg"):
+        from torchkiln.nn.ts_attn import TransformerRegressor
+        return TransformerRegressor(
+            in_len, out_len, dim,
+            d_model=head.get("d_model", head.get("hidden_dim", 128)),
+            nhead=head.get("nhead", head.get("num_heads", 4)),
+            num_layers=head.get("num_layers", 2),
+            dim_ff=head.get("dim_ff", head.get("ff_dim", 256)),
+            dropout=head.get("dropout", 0.1),
+            head_hidden=head.get("head_hidden", 64))
     if model == "tft":
         from torchkiln.nn.s_tft import TemporalFusionTransformer
         # ⚠️ TFT/DeepAR 需要各协变量维度；未显式给定时**从数据集配置推断**
