@@ -66,6 +66,10 @@ def create_app(settings=None):
     async def _startup():
         settings.ensure_dirs()
         await app.state.jobs.start()
+        # 预热 torch 版本探测（import torch 要几秒），挪到启动期而不是首个 /info。
+        # 放线程池执行，避免阻塞事件循环。
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, registry.warm_runtime_info)
 
     @app.on_event("shutdown")
     async def _shutdown():
@@ -80,7 +84,9 @@ def create_app(settings=None):
 
     @app.get("/api/v1/info", dependencies=[Depends(require_auth)])
     async def info():
-        return registry.framework_info(settings.repo_root)
+        # framework_info 首次要起子进程读 torch 版本（冷启动 20s+），放进线程池，
+        # 免得这一个请求把事件循环（日志/指标 SSE 转发、作业心跳）一起拖住。
+        return await asyncio.to_thread(registry.framework_info, settings.repo_root)
 
     # ------------------------------------------------------------ 1. 模型自描述
     @app.get("/api/v1/models", dependencies=[Depends(require_auth)])
