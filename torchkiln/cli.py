@@ -9,10 +9,11 @@
     tkiln check   -c configs/attr/vehicle_attribute.yml
     tkiln export  -c configs/yolo/yolov8-pose.yml --weights ... --onnx
     tkiln predict -c configs/yolo/yolov8-pose.yml --weights ... --input imgs
+    tkiln serve   -c configs/yolo/yolov8-pose.yml --weights ... --port 8000
     tkiln data list | tkiln data get <name>          # 数据集(ModelScope)下载/检查
   tkiln detect train -c configs/yolo/yolov8-det.yml        # 显式 task
 
-``mode ∈ {train, val, export, predict, check}``。除 ``<mode>``(与可选 ``<task>``)之外,
+``mode ∈ {train, val, export, predict, serve, check}``。除 ``<mode>``(与可选 ``<task>``)之外,
 其余参数**原样透传**给 ``tools/{train,eval,export}.py`` / ``tools/infer/predict_{yolo,det,rec}.py``。
 """
 from __future__ import absolute_import
@@ -109,7 +110,7 @@ TASK_ALIASES = {
     "e2e": "ocr_e2e",
 }
 
-MODES = ("train", "val", "export", "predict", "check")
+MODES = ("train", "val", "export", "predict", "serve", "check")
 
 # 配置里的 Architecture.task -> CLI 命名空间 / 模型族
 CONFIG_TASK_ALIAS = {"det": "ocr_det", "rec": "ocr_rec", "e2e": "ocr_e2e"}
@@ -167,6 +168,7 @@ USAGE = """用法: tkiln [task] <mode> [args...]        (task 可省略,由配�
   tkiln check   -c configs/attr/vehicle_attribute.yml
   tkiln export  -c configs/yolo/yolov8-pose.yml --weights ... --onnx
   tkiln predict -c configs/yolo/yolov8-pose.yml --weights ... --input imgs
+  tkiln serve   -c configs/yolo/yolov8-pose.yml --weights ... --port 8000
 
 显式写 task(等价,并做一致性校验):
   tkiln detect train -c configs/yolo/yolov8-det.yml
@@ -190,7 +192,13 @@ def _load_script(rel_path, name):
 
 
 def _config_task(argv):
-    """取 ``-c`` 配置并读它的 ``Architecture.task``(返回 (task, cfg_raw))。"""
+    """取 ``-c`` 配置并读它的 ``Architecture.task``(返回 (task, cfg_raw))。
+
+    ``-c`` **路径或模型名**都认（``yolo11-det`` / ``configs/yolo/yolo11-det.yml``
+    等价）——统一走 :func:`ptcore.config_schema.resolve_config`。平台侧（AIStation）
+    从数据库里拿到的是模型名，若这里只认路径，平台就得先调一次元数据服务把名字
+    换成路径；那个转换一旦服务不可用就失败，而容器里本来有能力自己解析。
+    """
     cfg = None
     for i, a in enumerate(argv):
         if a in ("-c", "--config", "--cfg") and i + 1 < len(argv):
@@ -200,7 +208,14 @@ def _config_task(argv):
         return None, None
     path = cfg if os.path.isabs(cfg) else os.path.join(ROOT, cfg)
     if not os.path.isfile(path):
-        return None, cfg
+        # 不是现成文件 -> 当作模型名/路径片段再解析一次（解析不了就保持原样，
+        # 交给后面的报错路径，不要在这里抛栈）。
+        try:
+            from ptcore.config_schema import resolve_config
+
+            path, _how = resolve_config(cfg)
+        except Exception:  # noqa: BLE001
+            return None, cfg
     # 任务推断:优先 Configuration 里的 task/name,再退回配置所在目录(det/rec/cls...)
     dirname = os.path.basename(os.path.dirname(os.path.abspath(path))).lower()
     try:
@@ -220,6 +235,29 @@ def _config_task(argv):
 
 def _canonical(cfg_task):
     return CONFIG_TASK_ALIAS.get(cfg_task, cfg_task)
+
+
+def _resolve_config_arg(rest):
+    """把 ``rest`` 里的 ``-c <值>`` 就地换成**配置绝对路径**。
+
+    ``_config_task`` 认模型名，但真正读配置的是 ``load_config``（只 open 文件）与
+    ``parse_args_to_config``，它们只吃路径。所以在这里统一归一化一次，下游
+    （check / predict / train / val / export 的子脚本）拿到的永远是可用路径，
+    而命令行依然允许用户只敲模型名。
+    """
+    for i, a in enumerate(rest):
+        if a in ("-c", "--config", "--cfg") and i + 1 < len(rest):
+            val = rest[i + 1]
+            if os.path.isabs(val) or os.path.isfile(os.path.join(ROOT, val)):
+                return
+            try:
+                from ptcore.config_schema import resolve_config
+
+                path, _how = resolve_config(val)
+            except Exception:  # noqa: BLE001
+                return
+            rest[i + 1] = path
+            return
 
 
 # ------------------------------------------------------------------ 元信息命令
@@ -420,6 +458,14 @@ def main(argv=None):
             return _cmd_list(argv[1:])
         return _cmd_schema(argv[1:])
 
+    # `--help` 直接交给 serve 自己的 argparse。serve 用的是 -c 之外的参数
+    # （--weights/--port/--api-key），如果先走下面的「省略 <task> 时必须用 -c
+    # <config>」检查，`tkiln serve --help` 会被挡掉、用户看不到任何参数说明。
+    if argv[0].lower() == "serve" and any(a in ("-h", "--help") for a in argv[1:]):
+        from torchkiln.serve import main as _serve_main
+
+        return _serve_main(argv[1:])
+
     explicit = (
         len(argv) >= 2
         and argv[0].lower() in TASK_ALIASES
@@ -445,6 +491,9 @@ def main(argv=None):
             return 2
         print("[task] {:<10} (来自配置 Architecture.task={!r})".format(task, cfg_task))
 
+    # 命令行允许 -c 写模型名，但下游读配置的一律只吃路径 -> 统一归一化
+    _resolve_config_arg(rest)
+
     if explicit:
         cfg_task, _ = _config_task(rest)
         if cfg_task and cfg_task != task and not (
@@ -464,6 +513,14 @@ def main(argv=None):
         sys.argv = [script] + rest
         mod.main()
         return 0
+
+    if mode == "serve":
+        # HTTP 推理服务。推理逻辑与 `tkiln predict` 共用 torchkiln/infer_api.py，
+        # 这里只多套一层 HTTP 外壳，所以不做 FAMILY_OF 路由——由 Runtime.load
+        # 按配置的 Architecture.task 自己判断支不支持。
+        from torchkiln.serve import main as _serve_main
+
+        return _serve_main(rest)
 
     mod = _load_script(SCRIPT[mode], "tkiln_" + mode)
     sys.argv = [SCRIPT[mode]] + rest

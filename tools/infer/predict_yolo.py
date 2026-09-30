@@ -7,6 +7,11 @@ Examples::
 
 The image is letterboxed to the training size (``Train.dataset.transform.image_size``),
 results are mapped back to the original resolution.
+
+⚠️ 推理逻辑**不在本文件**——letterbox、后处理、坐标回映射、各任务输出格式
+都在 :mod:`torchkiln.infer_api` 里，``tkiln serve``（HTTP 推理服务）调的是同一份。
+本脚本只做三件事：解析参数、读图、调 ``infer``、把结果画成图存盘。
+若在下面再写一遍推理，就会出现"命令行与线上服务结果不一致"这种极难排查的问题。
 """
 from __future__ import absolute_import
 from __future__ import division
@@ -17,49 +22,12 @@ import os
 import sys
 
 import cv2
-import numpy as np
-import torch
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..", "..")))
 
-from ptcore.precision import enable_paddle_like_precision  # noqa: E402
-from ptcore.pretrained import resolve_pretrained  # noqa: E402
-from torchkiln.trainer import build_task  # noqa: E402
-from torchkiln.det.ops import letterbox  # noqa: E402
-from torchkiln.det.rbox import rbox2poly_np  # noqa: E402
-from torchkiln.ocr.utils.config import flatten_opts, parse_args_to_config  # noqa: E402
-
-enable_paddle_like_precision()
-
-
-def _names(config):
-    ds = (config.get("Train", {}).get("dataset") or {})
-    return ds.get("names")
-
-
-def _load(config, weights, device):
-    task = build_task(config)
-    post = task.build_post_process(config)
-    model = task.build_model(config, post)
-    path = resolve_pretrained(weights)
-    if not path:
-        raise FileNotFoundError("Could not resolve weights: {}".format(weights))
-    state = torch.load(path, map_location="cpu")
-    if isinstance(state, dict) and "model" in state:
-        state = state["model"]
-    own = model.state_dict()
-    state = {
-        k: v for k, v in state.items() if k in own and tuple(own[k].shape) == tuple(v.shape)
-    }
-    model.load_state_dict(state, strict=False)
-    model.eval().to(device)
-    return task, post, model
-
-
-def _color(i):
-    rng = np.random.RandomState(i * 9973 + 17)
-    return tuple(int(v) for v in rng.randint(60, 255, 3))
+from torchkiln.infer_api import Runtime  # noqa: E402
+from torchkiln.ocr.utils.config import flatten_opts  # noqa: E402
 
 
 def main():
@@ -72,132 +40,21 @@ def main():
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
 
-    config = parse_args_to_config(args.config, flatten_opts(args.opt))
-    task_name = (config.get("Architecture") or {}).get("task", "classify")
-    device = torch.device(
-        args.device if (args.device.startswith("cuda") and torch.cuda.is_available()) else "cpu"
-    )
-    task, post, model = _load(config, args.weights, device)
+    runtime = Runtime.load(args.config, args.weights, device=args.device,
+                           overrides=flatten_opts(args.opt))
 
     img0 = cv2.imread(args.input)
     if img0 is None:
         raise FileNotFoundError("Cannot read image: {}".format(args.input))
-    ds = (config.get("Train", {}).get("dataset") or {})
-    size = int((ds.get("transform") or {}).get("image_size", 640))
-    img, ratio, pad = letterbox(img0, size)
-    x = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    x = torch.from_numpy(np.ascontiguousarray(x.transpose(2, 0, 1)))[None].to(device)
-    names = _names(config)
 
-    with torch.no_grad():
-        raw = model(x)
-        result = post(raw) if task_name not in ("semantic", "depth", "lane_seg") else post(
-            raw, size=(img.shape[0], img.shape[1])
-        )
+    result = runtime.infer(img0)
+    for line in result.notes:
+        print(line)
 
-    vis = img0.copy()
-    h0, w0 = img0.shape[:2]
-
-    if task_name == "classify":
-        from torchkiln.tasks._cls import is_multi_label_loss_cfg
-
-        multi = (
-            "MultiLabel" in type(post).__name__
-            or is_multi_label_loss_cfg(config.get("Loss"))
-        )
-        if multi:
-            r = result[0]
-            sc = r["scores"]
-            hit = [
-                (int(i), names[int(i)] if names else int(i), round(float(sc[i]), 4))
-                for i in r["labels"]
-            ]
-            print("multi-label hits:", hit or "(none)")
-            labels_txt = ", ".join(
-                "{}:{:.3f}".format(names[int(i)] if names else int(i), float(sc[i]))
-                for i in r["labels"]
-            ) or "none"
-            cv2.putText(
-                vis, labels_txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-            )
-        else:
-            probs = torch.softmax(raw, dim=1)[0].cpu().numpy()
-            top = probs.argsort()[::-1][:5]
-            print("top-5:", [(int(i), names[i] if names else int(i), round(float(probs[i]), 4)) for i in top])
-            cv2.putText(vis, "{} {:.3f}".format(names[int(top[0])] if names else int(top[0]), probs[top[0]]),
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-    elif task_name in ("detect", "segment"):
-        r = result[0]
-        for box, score, lab in zip(r["bboxes"].cpu().numpy(), r["scores"].cpu().numpy(), r["labels"].cpu().numpy()):
-            p1 = ((box[0] - pad[0]) / ratio, (box[1] - pad[1]) / ratio)
-            p2 = ((box[2] - pad[0]) / ratio, (box[3] - pad[1]) / ratio)
-            c = _color(int(lab))
-            cv2.rectangle(vis, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), c, 2)
-            label = "{} {:.2f}".format(names[int(lab)] if names else int(lab), score)
-            cv2.putText(vis, label, (int(p1[0]), max(12, int(p1[1]) - 5)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
-            if task_name == "segment" and r["masks"] is not None and r["masks"].shape[0]:
-                idx = list(r["labels"].cpu().numpy()).index(lab)
-                m = r["masks"][idx].cpu().numpy().astype(np.uint8)
-                m = cv2.resize(m, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
-                m = m[int(pad[1]):int(pad[1] + h0 * ratio), int(pad[0]):int(pad[0] + w0 * ratio)]
-                m = cv2.resize(m, (w0, h0), interpolation=cv2.INTER_NEAREST)
-                vis[m > 0] = (0.5 * vis[m > 0] + 0.5 * np.array(c)).astype(np.uint8)
-
-    elif task_name == "obb":
-        r = result[0]
-        for box, score, lab in zip(r["bboxes"].cpu().numpy(), r["scores"].cpu().numpy(), r["labels"].cpu().numpy()):
-            bx = box.copy()
-            bx[0] = (bx[0] - pad[0]) / ratio
-            bx[1] = (bx[1] - pad[1]) / ratio
-            bx[2] /= ratio
-            bx[3] /= ratio
-            poly = rbox2poly_np(bx[None])[0].astype(np.int32)
-            c = _color(int(lab))
-            cv2.polylines(vis, [poly], True, c, 2)
-            cv2.putText(vis, "{} {:.2f}".format(names[int(lab)] if names else int(lab), score),
-                        (int(poly[0][0]), max(12, int(poly[0][1]) - 4)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, c, 1)
-
-    elif task_name in ("semantic", "lane_seg"):
-        mask = result[0].cpu().numpy().astype(np.uint8)
-        mask = cv2.resize(mask, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_NEAREST)
-        mask = mask[int(pad[1]):int(pad[1] + h0 * ratio), int(pad[0]):int(pad[0] + w0 * ratio)]
-        mask = cv2.resize(mask, (w0, h0), interpolation=cv2.INTER_NEAREST)
-        colored = np.zeros_like(vis)
-        for c in np.unique(mask):
-            if c == 0:
-                continue
-            colored[mask == c] = _color(int(c))
-        vis = cv2.addWeighted(vis, 0.5, colored, 0.5, 0)
-
-    elif task_name == "lane_row":
-        xs = result[0].cpu().numpy()  # (L, R) in [0,1]
-        h0v, w0v = vis.shape[:2]
-        for li in range(xs.shape[0]):
-            pts = []
-            for ri in range(xs.shape[1]):
-                xv = float(xs[li, ri])
-                if xv < 0:
-                    continue
-                pts.append((int(xv * (w0v - 1)), int(ri / max(xs.shape[1] - 1, 1) * (h0v - 1))))
-            if len(pts) >= 2:
-                c = _color(li)
-                for a, b in zip(pts, pts[1:]):
-                    cv2.line(vis, a, b, c, 2, cv2.LINE_AA)
-        print("lane_row lanes:", xs.shape[0], "rows:", xs.shape[1])
-
-    elif task_name == "depth":
-        d = result[0].cpu().numpy()
-        d = cv2.resize(d, (img.shape[1], img.shape[0]), interpolation=cv2.INTER_LINEAR)
-        d = d[int(pad[1]):int(pad[1] + h0 * ratio), int(pad[0]):int(pad[0] + w0 * ratio)]
-        d = cv2.resize(d, (w0, h0), interpolation=cv2.INTER_LINEAR)
-        dn = ((d - d.min()) / max(1e-6, d.max() - d.min()) * 255).astype(np.uint8)
-        vis = cv2.applyColorMap(dn, cv2.COLORMAP_TURBO)
-        print("depth range: {:.3f} .. {:.3f} m".format(float(d.min()), float(d.max())))
-
-    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    vis = runtime.visualize(img0, result)
+    out_dir = os.path.dirname(os.path.abspath(args.output))
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     cv2.imwrite(args.output, vis)
     print("saved to", args.output)
 

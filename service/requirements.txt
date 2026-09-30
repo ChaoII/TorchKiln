@@ -1,3 +1,5 @@
 fastapi>=0.110,<1.0
 uvicorn[standard]>=0.27,<1.0
 pydantic>=2.6,<3.0
+# tkiln serve 的 /predict 用 UploadFile = File(...)，FastAPI 靠它解析 multipart
+python-multipart>=0.0.9
