@@ -27,10 +27,14 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 cv2 = pytest.importorskip("cv2")
-_testclient = pytest.importorskip("starlette.testclient")
 torch = pytest.importorskip("torch")
 
-from starlette.testclient import TestClient  # noqa: E402
+# starlette 的 TestClient 依赖 httpx（或容器里那个版本的 httpx2）。缺依赖时它
+# 抛的是 RuntimeError 而不是 ImportError，所以 importorskip 抓不到，得手动接。
+try:
+    from starlette.testclient import TestClient
+except Exception as _exc:  # noqa: BLE001  (ImportError / RuntimeError 都算)
+    pytest.skip("starlette.testclient 不可用: {}".format(_exc), allow_module_level=True)
 
 from torchkiln.infer_api import InferResult  # noqa: E402
 from torchkiln.serve import build_app  # noqa: E402
