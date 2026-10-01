@@ -20,6 +20,16 @@ TERMINAL = ("succeeded", "failed", "cancelled")
 #: 全部状态
 STATUSES = ("queued", "running") + TERMINAL
 
+#: 作业种类。决定 :func:`service.runner.build_argv` 拼出哪条命令。
+#:
+#: - ``train``    ``python -m torchkiln train``（默认值，保持向后兼容）
+#: - ``eval``     ``python -m torchkiln val``，需要 ``weights_path``
+#:
+#: 评估之所以要做成"一等作业"而不是让调用方自己拼命令：评估的**产物不是权重而是指标**，
+#: 而指标只有走 ``metrics.jsonl`` 契约才能被 HTTP 消费方可靠拿到——
+#: 解析控制台日志在小版本改动后会静默失效（见 :mod:`ptcore.metrics_sink` 开头的说明）。
+JOB_KINDS = ("train", "eval")
+
 
 class Resources(BaseModel):
     """资源诉求。单卡场景请把 ``gpu_memory_gb`` 填准，用于排队前的准入判断。"""
@@ -45,14 +55,18 @@ class DatasetRef(BaseModel):
 
 
 class JobSpec(BaseModel):
-    """一次训练请求的完整声明。"""
+    """一次作业请求的完整声明。"""
 
     spec_version: str = "1.0"
     framework: str = "torchkiln"
     framework_version: Optional[str] = None
+    #: 作业种类。默认 ``train``，老客户端不带这个字段时行为不变。
+    kind: str = "train"
     #: 二选一：模型名（走 resolve_config）或直接给配置路径
     model_name: Optional[str] = None
     config_path: Optional[str] = None
+    #: 待评估权重（容器内绝对路径）。仅 ``kind="eval"`` 需要。
+    weights_path: Optional[str] = None
     #: 点分键 -> 值，直接转成 ``-o k=v``
     params: Dict[str, Any] = Field(default_factory=dict)
     dataset: Optional[DatasetRef] = None
@@ -60,6 +74,18 @@ class JobSpec(BaseModel):
     seed: Optional[int] = None
     #: 平台侧可塞任意透传信息（如数据集版本号、审批单号），原样保留在作业记录里
     labels: Dict[str, str] = Field(default_factory=dict)
+
+    def validate_kind(self) -> str:
+        """校验 ``kind`` 并返回归一化值。
+
+        单独做成方法（而不是靠 pydantic 的 ``Literal``）是为了让错误信息能说清
+        「有哪些可选值」，而不是只说字符串不在枚举里。
+        """
+        k = (self.kind or "train").strip().lower()
+        if k not in JOB_KINDS:
+            raise ValueError(
+                "unsupported job kind: {!r}（可选：{}）".format(self.kind, ", ".join(JOB_KINDS)))
+        return k
 
 
 class JobCreated(BaseModel):

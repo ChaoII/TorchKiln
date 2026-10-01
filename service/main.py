@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from . import registry
 from .jobs import JobManager
 from .runner import sse_log_frame, sse_metric_frame
-from .schemas import (STATUSES, CancelResult, JobCreated, JobInfo, JobList,
+from .schemas import (JOB_KINDS, STATUSES, CancelResult, JobCreated, JobInfo, JobList,
                       JobSpec)
 from .settings import Settings
 from .store import JobStore
@@ -122,18 +122,27 @@ def create_app(settings=None):
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc))
 
-    # ------------------------------------------------------------ 2. 训练作业
-    @app.post("/api/v1/train/jobs", status_code=202,
-              response_model=JobCreated, dependencies=[Depends(require_auth)])
-    async def submit_job(
-        spec: JobSpec,
-        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
-        x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
-        x_tenant: Optional[str] = Header(default=None, alias="X-Tenant"),
-    ):
+    # ------------------------------------------------------------ 2. 作业提交
+    async def _submit(spec, idempotency_key, x_user_id, x_tenant):
+        """训练与评估共用的提交逻辑。
+
+        刻意只有一个实现：两条通路除了 ``spec.kind`` 与「评估必须有 weights」之外
+        没有任何差别——排队、幂等、终态判定、日志与指标全部一样。分成两份必然会
+        漂移（曾出现评估侧漏了幂等头、训练侧漏了 kind 校验这类问题）。
+        """
         if spec.framework and spec.framework != "torchkiln":
             raise HTTPException(status_code=400,
                                 detail="unsupported framework: {}".format(spec.framework))
+        try:
+            kind = spec.validate_kind()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if kind == "eval" and not spec.weights_path:
+            # 不在这里补默认值：评估权重是"被评估对象"的身份，猜错等于评了个
+            # 别的模型还报成功。宁可直接拒。
+            raise HTTPException(
+                status_code=400,
+                detail="kind=eval 需要 weights_path（待评估权重的容器内路径）")
         try:
             job, hit = await app.state.jobs.submit(
                 spec, user_id=x_user_id, tenant=x_tenant,
@@ -143,20 +152,71 @@ def create_app(settings=None):
         return JobCreated(job_id=job["job_id"], status=job["status"],
                           idempotent_hit=hit, created_ts=job["created_ts"])
 
+    @app.post("/api/v1/train/jobs", status_code=202,
+              response_model=JobCreated, dependencies=[Depends(require_auth)])
+    async def submit_train_job(
+        spec: JobSpec,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+        x_tenant: Optional[str] = Header(default=None, alias="X-Tenant"),
+    ):
+        # 显式钉住 kind：这个端点只接训练，body 里写 kind=eval 应该被忽略还是报错？
+        # 选**忽略**——客户端复用同一个 spec 构造器时不该因为多带一个字段就 400，
+        # 而 kind 只是这次提交走哪条命令的提示，端点路径才是权威。
+        spec.kind = "train"
+        return await _submit(spec, idempotency_key, x_user_id, x_tenant)
+
+    @app.post("/api/v1/eval/jobs", status_code=202,
+              response_model=JobCreated, dependencies=[Depends(require_auth)])
+    async def submit_eval_job(
+        spec: JobSpec,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+        x_tenant: Optional[str] = Header(default=None, alias="X-Tenant"),
+    ):
+        spec.kind = "eval"
+        return await _submit(spec, idempotency_key, x_user_id, x_tenant)
+
+    def _list_jobs(status, user_id, kind, limit, offset):
+        """列作业的共同逻辑。训练/评估两个端点都走它，只是 ``kind`` 不同。"""
+        if status and status not in STATUSES:
+            raise HTTPException(status_code=400,
+                                detail="bad status: {}".format(status))
+        if kind and kind not in JOB_KINDS:
+            raise HTTPException(status_code=400,
+                                detail="bad kind: {}（可选：{}）".format(kind, ", ".join(JOB_KINDS)))
+        data = app.state.jobs.list(status=status, user_id=user_id,
+                                   limit=limit, offset=offset, kind=kind)
+        return JobList(**data)
+
     @app.get("/api/v1/train/jobs", response_model=JobList,
              dependencies=[Depends(require_auth)])
     async def list_jobs(
         status: Optional[str] = Query(None),
         user_id: Optional[str] = Query(None),
+        kind: Optional[str] = Query(None, description="只列该种类作业（train/eval）"),
         limit: int = Query(50, ge=1, le=500),
         offset: int = Query(0, ge=0),
     ):
-        if status and status not in STATUSES:
-            raise HTTPException(status_code=400,
-                                detail="bad status: {}".format(status))
-        data = app.state.jobs.list(status=status, user_id=user_id,
-                                   limit=limit, offset=offset)
-        return JobList(**data)
+        """列作业。不带 ``kind`` 时返回全部种类——训练端点不预设 kind=train，
+        否则调用方想看"全部作业"时还得自己合并两个前缀。"""
+        return _list_jobs(status, user_id, kind, limit, offset)
+
+    @app.get("/api/v1/eval/jobs", response_model=JobList,
+             dependencies=[Depends(require_auth)])
+    async def list_eval_jobs(
+        status: Optional[str] = Query(None),
+        user_id: Optional[str] = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+    ):
+        """列**评估**作业。
+
+        与训练端点的区别只有一处：``kind`` 被**强制**成 ``eval``。不强制的话，
+        ``GET /api/v1/eval/jobs`` 会把训练作业也返回——那正是这个前缀存在的理由
+        所要避免的（调用方按名字就该拿到它期望的那一类）。
+        """
+        return _list_jobs(status, user_id, "eval", limit, offset)
 
     def _must_get(job_id):
         job = app.state.jobs.info(job_id)
@@ -359,6 +419,32 @@ def create_app(settings=None):
                 yield sse_metric_frame(ev)
 
         return _sse_response(gen())
+
+    # ------------------------------------------------------------ 4. eval 别名
+    # 评估作业除了提交时的 kind，其余生命周期端点与训练**完全同构**（同一个
+    # JobManager、同一套队列与产物目录）。所以这里把已定义的处理器**再注册一遍**
+    # 到 /api/v1/eval 前缀，而不是复制一份实现——复制必然会漂移。
+    #
+    # 为什么要有别名：让调用方拿着评估作业 id 去请求 /api/v1/train/jobs/{id}
+    # 语义上是错的（那是训练作业的命名空间），而 job_id 是全局唯一的。
+    # 复用同一个函数对象也让 OpenAPI 文档里两套路径共享一份签名。
+    # 注意：列表端点**不在**这里——它需要强制 kind=eval，已单独注册。
+    _ALIAS_SUFFIXES = (
+        ("/{job_id}", ["GET"], get_job),
+        ("/{job_id}/cancel", ["POST"], cancel_job),
+        ("/{job_id}/artifacts", ["GET"], list_artifacts),
+        ("/{job_id}/artifacts/{filename}", ["GET"], download_artifact),
+        ("/{job_id}/logs", ["GET"], get_logs),
+        ("/{job_id}/logs/stream", ["GET"], stream_logs),
+        ("/{job_id}/metrics", ["GET"], get_metrics),
+        ("/{job_id}/metrics/stream", ["GET"], stream_metrics),
+    )
+    for suffix, methods, endpoint in _ALIAS_SUFFIXES:
+        app.add_api_route(
+            "/api/v1/eval/jobs" + suffix, endpoint, methods=methods,
+            dependencies=[Depends(require_auth)],
+            name="eval_jobs{}".format(suffix or "_list"),
+        )
 
     return app
 

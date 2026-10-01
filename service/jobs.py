@@ -17,7 +17,7 @@ import os
 import time
 
 from . import runner
-from .runner import (TrainingRun, build_train_argv, classify_exit,
+from .runner import (JobRun, classify_exit,
                      pid_alive, read_last_event, send_signal)
 from .schemas import TERMINAL, JobSpec
 from .store import JobStore, row_to_dict
@@ -30,7 +30,7 @@ class JobManager(object):
         self.settings = settings
         self.hub = hub or Hub()
         self.log_ring = log_ring or LogRing(settings.log_ring)
-        self.runs = {}              # job_id -> TrainingRun（仅本进程启动的）
+        self.runs = {}              # job_id -> JobRun（仅本进程启动的）
         self._configs = {}          # job_id -> 解析后的配置绝对路径
         self._queue = None
         self._workers = []
@@ -144,7 +144,8 @@ class JobManager(object):
         os.makedirs(output_dir, exist_ok=True)
 
         config_abs = self._configs.get(job_id) or self._resolve_config(spec)
-        argv = build_train_argv(
+        # 按 spec.kind 分派到 train / eval 的 argv 构造器（分派只在 runner 一处）
+        argv = runner.build_argv(
             spec, config_abs, output_dir,
             self.settings.python_exe, self.settings.repo_root)
         env = runner._spawn_env(os.environ, {
@@ -152,7 +153,7 @@ class JobManager(object):
             "TKILN_METRICS": "1",
         })
 
-        run = TrainingRun(job_id, spec, argv, output_dir, self.settings.repo_root,
+        run = JobRun(job_id, spec, argv, output_dir, self.settings.repo_root,
                           self.settings.python_exe, env=env, log_ring=self.log_ring)
         self.runs[job_id] = run
 
@@ -209,7 +210,7 @@ class JobManager(object):
             run.end_event = read_last_event(run.metrics_path, "end")
             status, reason, error = classify_exit(
                 run.end_event, run.exit_code, run.cancel_requested,
-                os.path.isfile(run.metrics_path))
+                os.path.isfile(run.metrics_path), kind=spec.kind)
             self.store.mark_finished(job_id, status, exit_reason=reason,
                                      exit_code=run.exit_code, error=error)
             self._publish(job_id, "log", "[service] job {} -> {} ({})".format(
@@ -224,7 +225,7 @@ class JobManager(object):
             self.log_ring.drop(job_id)
 
     # ------------------------------------------------------------ 泵
-    async def _pump_logs(self, run: TrainingRun):
+    async def _pump_logs(self, run: JobRun):
         """把子进程 stdout 逐行读到日志文件 + 内存环形缓冲 + SSE。"""
         try:
             with open(run.log_path, "a", encoding="utf-8", newline="\n") as fh:
@@ -252,7 +253,7 @@ class JobManager(object):
             except Exception:  # noqa: BLE001
                 pass
 
-    async def _poll_metrics(self, run: TrainingRun):
+    async def _poll_metrics(self, run: JobRun):
         """按字节偏移增量 tail metrics.jsonl 并广播。"""
         while True:
             events, run._metrics_offset = run.metrics_since(run._metrics_offset)
@@ -263,7 +264,7 @@ class JobManager(object):
                 self._publish(run.job_id, "metric", ev)
             await asyncio.sleep(max(0.2, float(self.settings.poll_interval)))
 
-    async def _drain_metrics(self, run: TrainingRun):
+    async def _drain_metrics(self, run: JobRun):
         """收尾：把文件里剩下的事件（含 end）一次性消费掉。"""
         deadline = time.time() + 5.0
         while time.time() < deadline:
@@ -316,15 +317,33 @@ class JobManager(object):
             d["queue_position"] = self._queue_position(job_id)
         return d
 
-    def list(self, status=None, user_id=None, tenant=None, limit=50, offset=0):
+    def list(self, status=None, user_id=None, tenant=None, limit=50, offset=0, kind=None):
+        """列出作业。``kind`` 非空时只返回该种类的作业。
+
+        ⚠️ 过滤在**取回之后**做，不下推到 SQL：``spec_json`` 是 JSON 列，按里面的
+        字段过滤要么写 JSONB 表达式（依赖特定 PG 版本）要么加冗余列。作业列表的
+        单页上限本来就只有几百条，内存过滤的代价可以忽略；而下推一旦出错是
+        **静默少返回数据**，比慢更糟。
+
+        ⚠️ 此时 ``total`` 已是过滤前的数字，与 ``items`` 对不上。已按过滤后的长度
+        重算——宁可总数看起来偏小，也不要出现"第 2 页翻出空列表"的错位现象。
+        """
         total, rows = self.store.list(status=status, user_id=user_id, tenant=tenant,
                                      limit=limit, offset=offset)
         items = []
         for r in rows:
             d = row_to_dict(r)
-            if d and d.get("status") == "queued":
+            if not d:
+                continue
+            # ⚠️ row_to_dict 把 spec_json 还原成 **JobSpec 对象**（不是 dict），
+            #    所以这里必须用属性访问——写成 .get() 会 500（已踩过一次）。
+            if kind and (getattr(d.get("spec"), "kind", None) or "train") != kind:
+                continue
+            if d.get("status") == "queued":
                 d["queue_position"] = self._queue_position(d["job_id"])
             items.append(d)
+        if kind:
+            total = len(items)
         return {"total": total, "items": items}
 
     def _queue_position(self, job_id):
@@ -387,7 +406,7 @@ class JobManager(object):
             job_id = row["job_id"]
             if pid_alive(row["pid"]) and os.path.isdir(row["output_dir"] or ""):
                 # 训练还活着：只接管指标流与日志观察，不重复起进程
-                run = TrainingRun(
+                run = JobRun(
                     job_id, JobSpec.model_validate_json(row["spec_json"]), [],
                     row["output_dir"], self.settings.repo_root,
                     self.settings.python_exe, log_ring=self.log_ring)
@@ -403,7 +422,8 @@ class JobManager(object):
                 end = read_last_event(row["metrics_path"], "end")
                 has_file = os.path.isfile(row["metrics_path"] or "")
                 status, reason, error = classify_exit(
-                    end, None, bool(row["cancel_requested"]), has_file)
+                    end, None, bool(row["cancel_requested"]), has_file,
+                    kind=JobSpec.model_validate_json(row["spec_json"]).kind)
                 if end is None and not has_file and row["status"] == "queued":
                     status, reason, error = "failed", "lost_on_restart", \
                         "服务在作业启动前重启，作业未真正开始"
@@ -415,7 +435,7 @@ class JobManager(object):
                     "error": error, "recovered": True,
                 })
 
-    async def _watch_recovered(self, run: TrainingRun):
+    async def _watch_recovered(self, run: JobRun):
         """接管模式下：轮询到 end 事件就收敛作业状态。"""
         while True:
             await asyncio.sleep(max(0.5, float(self.settings.poll_interval)))
@@ -428,7 +448,7 @@ class JobManager(object):
                 if ev.get("type") == "end":
                     status, reason, error = classify_exit(
                         ev, None, bool(self.store.cancel_requested(run.job_id)),
-                        True)
+                        True, kind=run.spec.kind)
                     self.store.mark_finished(run.job_id, status, exit_reason=reason,
                                              error=error)
                     self._publish(run.job_id, "end", {

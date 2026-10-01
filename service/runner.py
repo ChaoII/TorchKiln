@@ -1,4 +1,14 @@
-"""训练执行器：把声明式 JobSpec 变成一个训练进程，并消费它的 metrics.jsonl。
+"""作业执行器：把声明式 JobSpec 变成一个进程，并消费它的 metrics.jsonl。
+
+支持两种 kind（分派见 :func:`build_argv`）：
+
+  ``train``  ``python -m torchkiln train ...``
+  ``eval``   ``python -m torchkiln val ...``，产物是**指标**而非权重
+
+两者共用同一套进程管理 / 日志泵 / 指标契约 / 终态判定——这不是为了少写代码，
+而是**强制它们共享同一个可观测性契约**：只要走这个服务的作业，外部就都能用
+同一套 HTTP 接口与 SSE 事件消费。评估若绕开契约自己 print 日志，调用方就得
+为它单独写一套解析，而日志格式恰恰是最容易在小版本改动中静默失效的东西。
 
 职责边界（与 AIStation 的分工）：
   - 本模块只管 **执行 + 产出**：起进程、吐日志、tail 指标、判终态；
@@ -6,7 +16,7 @@
   - 不做业务状态机/审批/权限/计费（那是 AIStation 的事）。
 
 ⚠️ 终态判定规则（对应 ptcore/metrics_sink 的契约说明）：
-  训练**开始后**结束一定会写 ``end`` 事件；但**训练还没开始就失败**（配置错、
+  作业**开始后**结束一定会写 ``end`` 事件；但**还没开始就失败**（配置错、
   权重下载失败、数据集路径不存在、模型构建报错——都发生在 trainer 构造阶段）
   **不会有任何指标文件**，只有进程非零退出码。
   所以：**"进程退出 且 没有 end 事件" = setup 失败**。
@@ -81,6 +91,91 @@ def build_train_argv(spec, config_abs_path, output_dir, python_exe, repo_root):
     if opts:
         argv += ["-o"] + opts
     return argv
+
+
+def build_eval_argv(spec, config_abs_path, output_dir, python_exe, repo_root):
+    """把 JobSpec 翻译成 ``python -m torchkiln val ...`` 参数列表。
+
+    与训练的几处**刻意不同**：
+
+    - ``--weights`` 走**命令行参数**而不是 ``-o Global.pretrained_model=``。
+      ``tools/eval.py`` 会把它写进 ``Global.pretrained_model``，两种写法等价，
+      但用参数更明确：评估权重是被评估对象的身份，不该混在"可调超参"里。
+    - 依然强制 ``Global.save_model_dir`` 与 ``Global.metrics_sink``：
+      评估的产物就是指标，不落到本服务的 output_dir 就没人读得到。
+
+    ⚠️ **必须同时注入 ``Train.dataset.*``**，即使评估根本不迭代训练集。
+
+    原因：``build_trainer`` 在 ``BaseTrainer.__init__`` 里**无条件**构造两个数据集
+    （``train_dataset, eval_dataset = task.build_datasets(...)``），构造阶段就会去
+    ``open(label_file)``。只注入 ``Eval.dataset.*`` 的话，训练集会退回配置里的默认
+    路径（实测报 ``FileNotFoundError: datasets/seg_demo/train.txt``），
+    作业在 trainer 构造阶段就死掉——表现为 ``setup_failed``。
+
+    ``tools/eval.py`` 已把 ``Global.epoch_num`` 设为 0，训练集构造完不会被迭代，
+    所以指向哪份清单并不影响评估结果。这里给的是**评估那份**（而不是另找 train.txt）：
+    调用方只需要导出一份清单，契约更小，也不会出现「train.txt 不在挂载里」的失败。
+    """
+    argv = [python_exe, "-m", "torchkiln", "val",
+            "-c", os.path.relpath(config_abs_path, repo_root).replace("\\", "/")]
+
+    if spec.weights_path:
+        argv += ["--weights", str(spec.weights_path)]
+
+    opts = []
+
+    def add(key, value):
+        if value is None:
+            return
+        if isinstance(value, bool):
+            opts.append("{}={}".format(key, "true" if value else "false"))
+        elif isinstance(value, (list, tuple)):
+            opts.append("{}={}".format(key, json.dumps(list(value), ensure_ascii=False)))
+        else:
+            opts.append("{}={}".format(key, value))
+
+    ds = spec.dataset
+    if ds is not None:
+        add("Eval.dataset.data_dir", ds.data_dir)
+        if ds.val_list:
+            add("Eval.dataset.label_file_list", [ds.val_list])
+            # 见 docstring：trainer 构造期会打开这两个文件，缺一个就 setup 失败。
+            # 给同一份清单即可——epoch_num=0 时它不会被迭代。
+            add("Train.dataset.data_dir", ds.data_dir)
+            add("Train.dataset.label_file_list", [ds.val_list])
+
+    for key, value in (spec.params or {}).items():
+        add(key, value)
+
+    if spec.seed is not None:
+        add("Global.seed", spec.seed)
+
+    add("Global.save_model_dir", output_dir)
+    add("Global.metrics_sink", True)
+
+    if opts:
+        argv += ["-o"] + opts
+    return argv
+
+
+#: ``kind`` -> argv 构造器。新增作业种类时只改这一处。
+_ARGV_BUILDERS = {
+    "train": build_train_argv,
+    "eval": build_eval_argv,
+}
+
+
+def build_argv(spec, config_abs_path, output_dir, python_exe, repo_root):
+    """按 ``spec.kind`` 分派到对应的 argv 构造器。
+
+    分派只在这一处——``jobs._run_job`` 不该知道有哪些种类，否则每加一种都要改
+    两个文件（这类分散历史上就出过「加了新种类却忘了改分发点」的问题）。
+    """
+    kind = spec.validate_kind() if hasattr(spec, "validate_kind") else (spec.kind or "train")
+    builder = _ARGV_BUILDERS.get(kind)
+    if builder is None:  # validate_kind 已经报过更清楚的错，这里只是兜底
+        raise ValueError("unsupported job kind: {!r}".format(kind))
+    return builder(spec, config_abs_path, output_dir, python_exe, repo_root)
 
 
 # ------------------------------------------------------------------ 指标文件
@@ -184,8 +279,18 @@ def pid_alive(pid):
 
 
 # ------------------------------------------------------------------ 运行器
-class TrainingRun(object):
-    """一个正在跑的（或跑过的）训练作业。"""
+class JobRun(object):
+    """一个正在跑的（或跑过的）作业。
+
+    名字里没有 "train" 是因为它服务**所有** kind：训练与评估的进程管理、
+    日志泵、指标契约、终态判定完全一致，差别只在 ``argv`` 怎么拼
+    （见 :func:`build_argv`）。原先叫 ``TrainingRun``，加评估种类时就得跟着改
+    一堆误导性的类型标注。
+
+    ⚠️ 不管哪种 kind，**终态都依赖 ``metrics.jsonl`` 里的 ``end`` 事件**——
+    「进程退出且没有 end」会被 ``classify_exit`` 判成 ``no_end_event / failed``。
+    所以新增种类时，CLI 侧必须同样写契约（见 ``tools/eval.py``）。
+    """
 
     def __init__(self, job_id, spec, argv, output_dir, cwd, python_exe,
                  env=None, log_ring=None):
@@ -242,20 +347,27 @@ def send_signal(proc, hard=False):
         pass   # 进程已经没了，视为终止成功
 
 
-def classify_exit(end_event, exit_code, cancel_requested, has_metrics_file):
+def classify_exit(end_event, exit_code, cancel_requested, has_metrics_file, kind="train"):
     """把 (end 事件, 退出码, 是否取消) 收敛成 (status, exit_reason, error)。
 
     这是整套判定规则的**唯一**实现，实时路径与重启恢复路径共用它——
     避免两条路径给出不一致的结论。
+
+    ``kind`` 只影响**提示文案**（"训练未开始即失败" vs "评估未开始即失败"）。
+    它有默认值 ``"train"``，所以旧调用点不需要改；而判定逻辑本身与 kind 无关——
+    那是刻意的：终态规则对所有种类必须一致，否则「什么算失败」会有两套解释。
     """
     if cancel_requested:
         return "cancelled", "cancelled", None
 
     if end_event is None:
-        # 没有 end：训练没真正开始（构造阶段就炸了）或被 SIGKILL
+        # 没有 end：作业没真正开始（构造阶段就炸了）或被 SIGKILL
         if exit_code not in (0, None):
-            hint = ("训练未开始即失败（trainer 构造阶段异常：配置/权重/数据集/依赖问题）"
-                    if not has_metrics_file else "训练进程被强杀，未写出 end 事件")
+            # ⚠️ 文案里**不能写死「训练」**——kind=eval 的作业也会走这里。
+            #   这条提示是用户看到的第一现场，出现无关的字眼会让人怀疑自己看错了对象。
+            what = "训练" if (kind or "train") == "train" else "评估"
+            hint = (f"{what}未开始即失败（模型构造阶段异常：配置/权重/数据集/依赖问题）"
+                    if not has_metrics_file else f"{what}进程被强杀，未写出 end 事件")
             return "failed", "setup_failed" if not has_metrics_file else "killed", hint
         return "failed", "no_end_event", "进程退出但没有 end 事件，状态未知"
 
