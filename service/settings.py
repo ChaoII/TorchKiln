@@ -67,6 +67,17 @@ class Settings(object):
         self.poll_interval = overrides.get("poll_interval") or _env_float(
             "TKILN_POLL_INTERVAL", 1.0)
         self.log_ring = overrides.get("log_ring") or _env_int("TKILN_LOG_RING", 2000)
+        # ---- 构建身份（用于判断 job 镜像是否过期）----
+        #: 构建时注入的 TorchKiln git 修订号。Dockerfile 用 ARG/ENV 写入；
+        #: 本地直接跑（不构建镜像）时为 ``unknown``——那不是过期，别误报。
+        self.code_revision = overrides.get("code_revision") or _env_str(
+            "TKILN_REVISION", "unknown")
+        #: 构建时源码工作区是否有未提交改动。是 ``True`` 时镜像不可复现，
+        #: 但**不**据此拒绝运行——本地开发构建带改动是常态。
+        raw_dirty = (overrides.get("code_dirty")
+                     or _env_str("TKILN_DIRTY", ""))
+        self.code_dirty = str(raw_dirty).strip().lower() in ("1", "true", "yes", "on")
+
         self.heartbeat = overrides.get("heartbeat") or _env_float(
             "TKILN_HEARTBEAT", 15.0)
         self.cancel_grace = overrides.get("cancel_grace") or _env_float(

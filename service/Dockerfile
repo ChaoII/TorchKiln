@@ -96,6 +96,16 @@ RUN set -eux; \
             "torch==${TORCH_VERSION}" torchvision; \
     fi
 
+# ---- 构建身份：让服务能自报「镜像是从哪份代码构建的」------------------
+# 这样平台侧能在提交作业**之前**判断镜像是否过期，而不是等提交后收到一个
+# 「404 Not Found」或「AttributeError: MetricSink 没有 predict」这类指向不明
+# 的报错。用 service/build-image.ps1 构建会自动填上当前 git 修订号。
+ARG TKILN_REVISION=unknown
+ARG TKILN_DIRTY=false
+ENV TKILN_REVISION=${TKILN_REVISION}\
+    TKILN_DIRTY=${TKILN_DIRTY}\
+    TKILN_REPO_ROOT=${TKILN_REPO_ROOT}
+
 WORKDIR ${TKILN_REPO_ROOT}
 
 # ---- 依赖层：先只拷声明文件，改代码时这一层不失效 ----

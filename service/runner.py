@@ -224,6 +224,16 @@ _ARGV_BUILDERS = {
 }
 
 
+def supported_job_kinds():
+    """本构建实际支持的作业种类（``_ARGV_BUILDERS`` 的键）。
+
+    刻意从**分派表**推导而不是从 ``JOB_KINDS`` 常量读：后者是「协议允许什么」，
+    前者是「这份代码真的能跑什么」。加了新种类但忘了重建镜像时，两者会不一致——
+    而 ``/healthz`` 报出去的正应该是后者。
+    """
+    return sorted(_ARGV_BUILDERS)
+
+
 def build_argv(spec, config_abs_path, output_dir, python_exe, repo_root):
     """按 ``spec.kind`` 分派到对应的 argv 构造器。
 

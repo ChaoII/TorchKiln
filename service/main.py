@@ -79,8 +79,31 @@ def create_app(settings=None):
     # ------------------------------------------------------------ 基础
     @app.get("/healthz")
     async def healthz():
+        """健康 + **代码身份**。
+
+        为什么在 healthz 里带版本：平台侧需要判断「job 容器里的镜像是不是
+        最新构建的」。以前两者之间没有任何强制关联——改完 TorchKiln 代码忘了
+        重建镜像，症状是提交作业直接 404（端点不存在）或
+        ``AttributeError: 'MetricSink' object has no attribute 'predict'``
+        （契约里少一个方法）。这两种报错都指向离原因很远的地方。
+
+        现在平台可以在起完容器后**一次 GET** 判断镜像是否过期，并在提交作业
+        之前给出「镜像里的代码是 xxx，本地是 yyy，请重建镜像」这样的可执行提示。
+
+        字段：
+          ``code_revision`` 构建时注入的 TorchKiln 修订号（未注入时为 ``unknown``）
+          ``code_dirty``   构建时源码工作区是否有未提交改动
+          ``job_kinds``    本次构建支持的作业种类（由 ``_ARGV_BUILDERS`` 的键推导，
+                          加了新种类但没重建镜像时这里会缺）
+        """
+        from .runner import supported_job_kinds
+
         return {"ok": True, "framework": "torchkiln",
-                "max_concurrent": settings.max_concurrent}
+                "max_concurrent": settings.max_concurrent,
+                "code_revision": settings.code_revision,
+                "code_dirty": settings.code_dirty,
+                "job_kinds": supported_job_kinds(),
+                }
 
     @app.get("/api/v1/info", dependencies=[Depends(require_auth)])
     async def info():
