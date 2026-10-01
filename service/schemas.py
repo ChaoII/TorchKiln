@@ -24,11 +24,16 @@ STATUSES = ("queued", "running") + TERMINAL
 #:
 #: - ``train``    ``python -m torchkiln train``（默认值，保持向后兼容）
 #: - ``eval``     ``python -m torchkiln val``，需要 ``weights_path``
+#: - ``predict``  ``python -m torchkiln predict``，需要 ``weights_path`` + ``input_dir``
 #:
-#: 评估之所以要做成"一等作业"而不是让调用方自己拼命令：评估的**产物不是权重而是指标**，
-#: 而指标只有走 ``metrics.jsonl`` 契约才能被 HTTP 消费方可靠拿到——
-#: 解析控制台日志在小版本改动后会静默失效（见 :mod:`ptcore.metrics_sink` 开头的说明）。
-JOB_KINDS = ("train", "eval")
+#: 评估/预测做成"一等作业"而不是让调用方自己拼命令，两个同样关键的理由：
+#:
+#: 1. 产物是**指标与结果图**，只有走 ``metrics.jsonl`` 契约才能被 HTTP 消费方可靠
+#:    拿到——解析控制台日志在小版本改动后会静默失效（见 :mod:`ptcore.metrics_sink`
+#:    开头的说明）。
+#: 2. 外部调度靠 ``end`` 事件判终态。CLI 不写契约就会被判成 ``no_end_event /
+#:    failed``，哪怕进程退出码是 0。
+JOB_KINDS = ("train", "eval", "predict")
 
 
 class Resources(BaseModel):
@@ -65,8 +70,10 @@ class JobSpec(BaseModel):
     #: 二选一：模型名（走 resolve_config）或直接给配置路径
     model_name: Optional[str] = None
     config_path: Optional[str] = None
-    #: 待评估权重（容器内绝对路径）。仅 ``kind="eval"`` 需要。
+    #: 待评估 / 待推理的权重（容器内绝对路径）。``eval`` 与 ``predict`` 都需要。
     weights_path: Optional[str] = None
+    #: 待推理的**图片目录**（容器内绝对路径）。仅 ``kind="predict"`` 需要。
+    input_dir: Optional[str] = None
     #: 点分键 -> 值，直接转成 ``-o k=v``
     params: Dict[str, Any] = Field(default_factory=dict)
     dataset: Optional[DatasetRef] = None

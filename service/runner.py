@@ -158,10 +158,69 @@ def build_eval_argv(spec, config_abs_path, output_dir, python_exe, repo_root):
     return argv
 
 
+def _posix_join(base, *parts):
+    """用 ``/`` 拼路径，**不用** ``os.path.join``。
+
+    ⚠️ 服务跑在 Linux 容器里，但 spec 的路径常常由 Windows 上的平台侧构造；
+    ``os.path.join("/workspace/jobs/job_1", "predict_results")`` 在 Windows 上
+    会得到 ``/workspace/jobs/job_1\\predict_results``。它在自己的宿主上看着
+    完全正常，传进容器就找不到文件——这类错没有任何本地信号。
+    """
+    out = str(base).rstrip("/\\")
+    for p in parts:
+        seg = str(p).strip("/\\")
+        if seg:
+            out = out + "/" + seg
+    return out
+
+
+def build_predict_argv(spec, config_abs_path, output_dir, python_exe, repo_root):
+    """把 JobSpec 翻译成 ``python -m torchkiln predict ...`` 参数列表。
+
+    与 eval 的三处**刻意不同**：
+
+    - ``--input`` 传**图片目录**（``DatasetRef.data_dir`` 不适用——预测不吃清单），
+      所以走 ``JobSpec.input_dir`` 这个专用字段；
+    - ``--output`` 是**结果图目录**，指向本作业的 ``output_dir``，于是结果图直接
+      落在挂载出来的共享卷上，宿主无需再从容器里拷；
+    - ``--metrics-dir`` **必须显式传**：``--output`` 的语义随输入而变（单图=文件、
+      批量=目录），从它反推 metrics.jsonl 该写哪是不可靠的。而外部调度正是靠那个
+      文件里的 ``end`` 事件判终态，写错地方等于每次预测都被判失败。
+
+    不注入 ``Global.save_model_dir``：预测的产物是 ``--output`` 指定的图，
+    与训练/评估的权重落盘无关。
+    """
+    argv = [python_exe, "-m", "torchkiln", "predict",
+            "-c", os.path.relpath(config_abs_path, repo_root).replace("\\", "/")]
+
+    if spec.weights_path:
+        argv += ["--weights", str(spec.weights_path)]
+    if spec.input_dir:
+        argv += ["--input", str(spec.input_dir)]
+    argv += ["--output", _posix_join(output_dir, "predict_results")]
+    argv += ["--metrics-dir", output_dir]
+
+    opts = []
+    for key, value in (spec.params or {}).items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            opts.append("{}={}".format(key, "true" if value else "false"))
+        elif isinstance(value, (list, tuple)):
+            opts.append("{}={}".format(key, json.dumps(list(value), ensure_ascii=False)))
+        else:
+            opts.append("{}={}".format(key, value))
+
+    if opts:
+        argv += ["-o"] + opts
+    return argv
+
+
 #: ``kind`` -> argv 构造器。新增作业种类时只改这一处。
 _ARGV_BUILDERS = {
     "train": build_train_argv,
     "eval": build_eval_argv,
+    "predict": build_predict_argv,
 }
 
 
@@ -363,9 +422,11 @@ def classify_exit(end_event, exit_code, cancel_requested, has_metrics_file, kind
     if end_event is None:
         # 没有 end：作业没真正开始（构造阶段就炸了）或被 SIGKILL
         if exit_code not in (0, None):
-            # ⚠️ 文案里**不能写死「训练」**——kind=eval 的作业也会走这里。
-            #   这条提示是用户看到的第一现场，出现无关的字眼会让人怀疑自己看错了对象。
-            what = "训练" if (kind or "train") == "train" else "评估"
+            # ⚠️ 文案里**不能写死某一种**——三种 kind 都会走这里。
+            #   这条提示是用户看到的第一现场，出现无关的字眼会让人怀疑自己看错了
+            #   对象（比如预测作业报「评估进程被强杀」）。
+            what = {"train": "训练", "eval": "评估", "predict": "预测"}.get(
+                (kind or "train"), "作业")
             hint = (f"{what}未开始即失败（模型构造阶段异常：配置/权重/数据集/依赖问题）"
                     if not has_metrics_file else f"{what}进程被强杀，未写出 end 事件")
             return "failed", "setup_failed" if not has_metrics_file else "killed", hint

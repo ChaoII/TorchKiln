@@ -137,12 +137,16 @@ def create_app(settings=None):
             kind = spec.validate_kind()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        if kind == "eval" and not spec.weights_path:
-            # 不在这里补默认值：评估权重是"被评估对象"的身份，猜错等于评了个
+        if kind in ("eval", "predict") and not spec.weights_path:
+            # 不在这里补默认值：权重是"被处理对象"的身份，猜错等于评/推了
             # 别的模型还报成功。宁可直接拒。
             raise HTTPException(
                 status_code=400,
-                detail="kind=eval 需要 weights_path（待评估权重的容器内路径）")
+                detail="kind={} 需要 weights_path（待处理权重的容器内路径）".format(kind))
+        if kind == "predict" and not spec.input_dir:
+            raise HTTPException(
+                status_code=400,
+                detail="kind=predict 需要 input_dir（待推理图片目录的容器内路径）")
         try:
             job, hit = await app.state.jobs.submit(
                 spec, user_id=x_user_id, tenant=x_tenant,
@@ -176,6 +180,32 @@ def create_app(settings=None):
     ):
         spec.kind = "eval"
         return await _submit(spec, idempotency_key, x_user_id, x_tenant)
+
+    @app.post("/api/v1/predict/jobs", status_code=202,
+              response_model=JobCreated, dependencies=[Depends(require_auth)])
+    async def submit_predict_job(
+        spec: JobSpec,
+        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+        x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
+        x_tenant: Optional[str] = Header(default=None, alias="X-Tenant"),
+    ):
+        spec.kind = "predict"
+        return await _submit(spec, idempotency_key, x_user_id, x_tenant)
+
+    @app.get("/api/v1/predict/jobs", response_model=JobList,
+             dependencies=[Depends(require_auth)])
+    async def list_predict_jobs(
+        status: Optional[str] = Query(None),
+        user_id: Optional[str] = Query(None),
+        limit: int = Query(50, ge=1, le=500),
+        offset: int = Query(0, ge=0),
+    ):
+        """列**预测**作业。与 eval 端点同理强制 kind=predict——
+
+        不强制的话 ``GET /api/v1/predict/jobs`` 会把训练与评估作业也返回，
+        而那正是这个前缀存在的理由所要避免的。
+        """
+        return _list_jobs(status, user_id, "predict", limit, offset)
 
     def _list_jobs(status, user_id, kind, limit, offset):
         """列作业的共同逻辑。训练/评估两个端点都走它，只是 ``kind`` 不同。"""
@@ -428,7 +458,7 @@ def create_app(settings=None):
     # 为什么要有别名：让调用方拿着评估作业 id 去请求 /api/v1/train/jobs/{id}
     # 语义上是错的（那是训练作业的命名空间），而 job_id 是全局唯一的。
     # 复用同一个函数对象也让 OpenAPI 文档里两套路径共享一份签名。
-    # 注意：列表端点**不在**这里——它需要强制 kind=eval，已单独注册。
+    # 注意：列表端点**不在**这里——它需要强制各自的 kind，已单独注册。
     _ALIAS_SUFFIXES = (
         ("/{job_id}", ["GET"], get_job),
         ("/{job_id}/cancel", ["POST"], cancel_job),
@@ -440,11 +470,13 @@ def create_app(settings=None):
         ("/{job_id}/metrics/stream", ["GET"], stream_metrics),
     )
     for suffix, methods, endpoint in _ALIAS_SUFFIXES:
-        app.add_api_route(
-            "/api/v1/eval/jobs" + suffix, endpoint, methods=methods,
-            dependencies=[Depends(require_auth)],
-            name="eval_jobs{}".format(suffix or "_list"),
-        )
+        for prefix in ("eval", "predict"):
+            app.add_api_route(
+                "/api/v1/{}/jobs".format(prefix) + suffix, endpoint,
+                methods=methods,
+                dependencies=[Depends(require_auth)],
+                name="{}_jobs{}".format(prefix, suffix or "_list"),
+            )
 
     return app
 

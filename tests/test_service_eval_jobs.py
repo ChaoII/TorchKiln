@@ -28,8 +28,8 @@ from service.schemas import JOB_KINDS, JobSpec
 # ---------------------------------------------------------------------------
 
 
-def test_job_kinds_contains_train_and_eval():
-    assert JOB_KINDS == ("train", "eval")
+def test_job_kinds_contains_train_eval_predict():
+    assert JOB_KINDS == ("train", "eval", "predict")
 
 
 def test_spec_kind_defaults_to_train():
@@ -46,12 +46,17 @@ def test_validate_kind_normalizes(raw, expected):
 
 
 def test_validate_kind_rejects_unknown_with_helpful_message():
+    # "predict" 已是一等作业种类，所以拿一个真正未知的来测
     with pytest.raises(ValueError) as ei:
-        JobSpec(kind="predict").validate_kind()
+        JobSpec(kind="export").validate_kind()
     msg = str(ei.value)
-    assert "predict" in msg
+    assert "export" in msg
     # 错误信息要能告诉调用方有哪些可选值
-    assert "train" in msg and "eval" in msg
+    assert "train" in msg and "eval" in msg and "predict" in msg
+
+
+def test_validate_kind_accepts_predict():
+    assert JobSpec(kind="predict").validate_kind() == "predict"
 
 
 # ---------------------------------------------------------------------------
@@ -147,14 +152,42 @@ def test_eval_argv_without_val_list_injects_neither():
 # ---------------------------------------------------------------------------
 
 
-def test_classify_exit_uses_kind_wording():
-    """评估作业失败时不该说「训练未开始即失败」——那是用户看到的第一现场。"""
-    _s, _r, msg_train = runner.classify_exit(None, 1, False, has_metrics_file=False)
-    _s, _r, msg_eval = runner.classify_exit(
-        None, 1, False, has_metrics_file=False, kind="eval")
-    assert "训练未开始即失败" in msg_train
-    assert "评估未开始即失败" in msg_eval
-    assert "训练" not in msg_eval
+def test_classify_exit_wording_covers_all_three_kinds():
+    """三种 kind 的失败文案必须各自说对——这是用户看到的第一现场。
+
+    实跑抓到过两次退化：
+    1. 文案写死「训练」，于是**评估**作业失败时报「训练未开始即失败」；
+    2. 改成 train / 其它 两分之后，**预测**作业又报「评估进程被强杀」。
+    现在是三种各自对应，未知 kind 用中性文案。
+    """
+    msgs = {}
+    for kind in ("train", "eval", "predict"):
+        for has_file in (False, True):
+            _s, _r, msg = runner.classify_exit(
+                None, 1, False, has_metrics_file=has_file, kind=kind)
+            msgs[(kind, has_file)] = msg
+
+    assert "训练未开始即失败" in msgs[("train", False)]
+    assert "评估未开始即失败" in msgs[("eval", False)]
+    assert "预测未开始即失败" in msgs[("predict", False)]
+
+    assert "训练进程被强杀" in msgs[("train", True)]
+    assert "评估进程被强杀" in msgs[("eval", True)]
+    assert "预测进程被强杀" in msgs[("predict", True)]
+
+    # 交叉检查：每条文案里都不该出现别的 kind 的字眼
+    words = {"train": "训练", "eval": "评估", "predict": "预测"}
+    for (kind, _hf), msg in msgs.items():
+        for other, w in words.items():
+            if other != kind:
+                assert w not in msg, f"{kind} 的文案里混进了 {other} 的字眼: {msg}"
+
+
+def test_classify_exit_unknown_kind_falls_back_neutral():
+    """未知 kind 用中性文案，而不是错说成训练。"""
+    _s, _r, msg = runner.classify_exit(None, 1, False, False, kind="weird")
+    assert "作业未开始即失败" in msg
+    assert "训练" not in msg
 
 
 def test_classify_exit_kind_defaults_to_train():

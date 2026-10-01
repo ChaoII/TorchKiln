@@ -21,7 +21,10 @@
            (epoch/global_step/lr/loss/各 loss 分量/ips/显存/eta)
   ``eval``  每次评估一条（全部指标 + fps + 主指标）
   ``best``  主指标刷新最优时一条
-  ``end``   训练结束一条（best 值/轮次/退出原因），无论正常结束/早停/异常都会写
+  ``predict``  批量推理产出结果一条（总张数 / 成功张数 / 耗时 / 输出目录）。
+                预测**没有精度指标**——它没有 ground truth，任何 mAP 都是编出来的；
+                这里报的是「处理了多少张」这类可验证的事实
+  ``end``   作业结束一条（best 值/轮次/退出原因），无论正常结束/早停/异常都会写
 
 关闭：环境变量 ``TKILN_METRICS=0``，或配置 ``Global.metrics_sink: false``。
 关闭时返回 :class:`_NullSink`，调用点无需写 ``if``，热路径零开销。
@@ -172,6 +175,9 @@ class _NullSink:
     def best(self, **fields):
         pass
 
+    def predict(self, **fields):
+        pass
+
     def end(self, **fields):
         pass
 
@@ -206,7 +212,7 @@ class MetricSink(object):
         self._meta_written = True
         payload = clean_value(dict(meta or {}))
         payload.setdefault("schema_version", 1)
-        payload.setdefault("metric_events", ["step", "eval", "best", "end"])
+        payload.setdefault("metric_events", ["step", "eval", "best", "predict", "end"])
         payload["metrics_jsonl"] = os.path.basename(self.jsonl_path)
         try:
             tmp = self.meta_path + ".tmp"
@@ -250,6 +256,14 @@ class MetricSink(object):
     def best(self, **fields):
         """主指标刷新最优一条。"""
         self.emit("best", **fields)
+
+    def predict(self, **fields):
+        """批量推理结果一条（张数 / 耗时 / 输出目录）。
+
+        语义边界：这里**只有计数与耗时**，没有精度指标。预测没有 ground truth，
+        写 mAP 之类等于编数据，消费方会当成真值用。
+        """
+        self.emit("predict", **fields)
 
     def end(self, **fields):
         """训练结束一条，然后关闭文件。"""

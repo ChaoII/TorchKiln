@@ -38,12 +38,14 @@ from __future__ import print_function
 import argparse
 import os
 import sys
+import time
 
 import cv2
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..", "..")))
 
+from ptcore.metrics_sink import build_sink, sink_enabled  # noqa: E402
 from torchkiln.infer_api import Runtime  # noqa: E402
 from torchkiln.ocr.utils.config import flatten_opts  # noqa: E402
 
@@ -95,6 +97,10 @@ def main():
                     help="单张图片，或图片目录（目录则批量推理）")
     ap.add_argument("--output", default="output/yolo_result.jpg",
                     help="单图输入时是输出文件路径；目录输入时是输出目录")
+    ap.add_argument("--metrics-dir", default=None,
+                    help="metrics.jsonl 的写入目录。默认取 --output "
+                         "（单图时取其所在目录）。**外部调度必须显式传**："
+                         "它靠这个文件判终态")
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
 
@@ -102,43 +108,75 @@ def main():
     runtime = Runtime.load(args.config, args.weights, device=args.device,
                            overrides=flatten_opts(args.opt))
 
-    items = _list_images(args.input)
-    if not items:
-        raise FileNotFoundError(
-            "No readable image under: {} (looked for {})".format(
-                args.input, ", ".join(IMAGE_EXTS)))
+    # 指标契约：与训练/评估同一种写法，外部服务据此判终态。
+    #
+    # ⚠️ 预测**没有精度指标**——它的产物是结果图，不是数值。所以这里报的是
+    #   「处理了多少张图 / 写出多少张 / 耗时」，不是 mAP 之类。
+    #   但**必须**写 end 事件：服务侧的 classify_exit 把「进程退出且没有 end」
+    #   判成 no_end_event / failed，不写就等于每次预测都被判失败。
+    # metrics.jsonl 落在哪，必须是**确定**的：外部调度靠它判终态
+    # （「进程退出且没有 end 事件」会被判成 no_end_event / failed）。
+    # 而 --output 语义随输入而变（单图=文件、批量=目录），没法可靠地反推它的父目录，
+    # 所以显式给 --metrics-dir。
+    if args.metrics_dir:
+        metrics_dir = args.metrics_dir
+    elif os.path.isdir(args.output):
+        metrics_dir = args.output
+    else:
+        metrics_dir = os.path.dirname(os.path.abspath(args.output)) or "."
+    sink = build_sink(metrics_dir, enabled=sink_enabled(True))
+    started = time.time()
 
-    if len(items) > 1:
-        # 目录输入：--output 当作输出目录
-        os.makedirs(args.output, exist_ok=True)
+    try:
+        items = _list_images(args.input)
+        if not items:
+            raise FileNotFoundError(
+                "No readable image under: {} (looked for {})".format(
+                    args.input, ", ".join(IMAGE_EXTS)))
 
-    done = 0
-    for img_path, rel in items:
-        img0 = cv2.imread(img_path)
-        if img0 is None:
-            print("skip unreadable image: {}".format(img_path))
-            continue
+        if len(items) > 1:
+            # 目录输入：--output 当作输出目录
+            os.makedirs(args.output, exist_ok=True)
 
-        result = runtime.infer(img0)
-        for line in result.notes:
-            print(line)
+        done = 0
+        for img_path, rel in items:
+            img0 = cv2.imread(img_path)
+            if img0 is None:
+                print("skip unreadable image: {}".format(img_path))
+                continue
 
-        vis = runtime.visualize(img0, result)
-        if rel is None:
-            out_path = args.output
-        else:
-            # 保持相对路径（只统一扩展名），避免 train/val 同名图互相覆盖
-            rel_jpg = os.path.splitext(rel)[0] + ".jpg"
-            out_path = os.path.join(args.output, rel_jpg)
-            out_dir = os.path.dirname(os.path.abspath(out_path))
-            if out_dir:
-                os.makedirs(out_dir, exist_ok=True)
-        cv2.imwrite(out_path, vis)
-        print("saved to", out_path)
-        done += 1
+            result = runtime.infer(img0)
+            for line in result.notes:
+                print(line)
 
-    if done == 0:
-        raise RuntimeError("All {} input image(s) were unreadable".format(len(items)))
+            vis = runtime.visualize(img0, result)
+            if rel is None:
+                out_path = args.output
+            else:
+                # 保持相对路径（只统一扩展名），避免 train/val 同名图互相覆盖
+                rel_jpg = os.path.splitext(rel)[0] + ".jpg"
+                out_path = os.path.join(args.output, rel_jpg)
+                out_dir = os.path.dirname(os.path.abspath(out_path))
+                if out_dir:
+                    os.makedirs(out_dir, exist_ok=True)
+            cv2.imwrite(out_path, vis)
+            print("saved to", out_path)
+            done += 1
+
+        if done == 0:
+            raise RuntimeError("All {} input image(s) were unreadable".format(len(items)))
+    except Exception as exc:  # noqa: BLE001
+        # 异常路径也必须收尾写 end，否则外部服务会永远等不到终态。
+        sink.end(exit_reason="error",
+                 error="{}: {}".format(type(exc).__name__, exc))
+        raise
+
+    elapsed = time.time() - started
+    sink.predict(images_total=len(items), images_done=done,
+                 elapsed_sec=round(elapsed, 3), output_dir=args.output)
+    # ⚠️ 顺序不能反：end 会 close 文件。
+    sink.end(exit_reason="finished", images_done=done,
+             elapsed_sec=round(elapsed, 3))
     if len(items) > 1:
         print("done: {}/{} images -> {}".format(done, len(items), args.output))
 
