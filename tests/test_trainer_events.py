@@ -109,6 +109,25 @@ def test_dump_config_false_still_emits():
     assert events[-1][0] == "step" and events[-1][1]["loss"] == 0.7
 
 
+def test_step_loss_is_number():
+    """step 事件的 loss 必须可 JSON 序列化为数字（GPU 烟雾发现的回归）。"""
+    import pytest
+
+    from ptcore.trainers.base import _num
+    import torch
+
+    assert _num(torch.tensor(3.14)) == pytest.approx(3.14)  # float32 精度
+    assert _num(2.5) == 2.5
+    # 带梯度 tensor 走 detach 路径，不产生 autograd 告警
+    t = torch.tensor(1.5, requires_grad=True)
+    assert _num(t) == 1.5
+    # 关键断言：序列化后是数字而非 "tensor(...)" 字符串
+    import json as _json
+
+    s = _json.dumps({"loss": _num(torch.tensor(2.5))}, default=str)
+    assert '"loss": 2.5' in s and "tensor" not in s
+
+
 def test_build_trainer_passes_event_sink(monkeypatch):
     """event_sink 经 build_trainer 的 kwargs 原样到达 trainer 构造。"""
     from ptcore import trainers

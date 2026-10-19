@@ -35,6 +35,17 @@ def _to_fp32(x):
     return x
 
 
+def _num(value):
+    """把 tensor/数值统一转为 float（detach 以避免 autograd 告警）。
+
+    事件回调通道的 JSON 序列化兜底：0-dim tensor 若直接进 JSON 会变成
+    ``"tensor(...)"`` 字符串（metrics.jsonl 的 sink 路径自行处理，无此问题）。
+    """
+    if hasattr(value, "detach"):
+        value = value.detach()
+    return float(value)
+
+
 def get_logger(name, log_file=None):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
@@ -946,6 +957,8 @@ class BaseTrainer:
                     mem_allocated=mem_alloc,
                 )
                 # ---- 结构化 step 事件（与 metrics.jsonl 并行的事件通道）----
+                # ⚠️ avg_loss 是 0-dim tensor：进 JSON 会被序列化成 "tensor(...)"
+                # 字符串，消费方拿到非数字；这里统一转 float（lr/ips 等已是 float）。
                 self._emit(
                     "step",
                     {
@@ -954,7 +967,7 @@ class BaseTrainer:
                         "global_step": self.global_step,
                         "steps_per_epoch": self.steps_per_epoch,
                         "lr": lr,
-                        "loss": avg_loss,
+                        "loss": _num(avg_loss),
                         "comps": comp_vals,
                         "ips": ips,
                         "eta_sec": int(remain * avg_batch),
