@@ -7,7 +7,6 @@ import os
 import sys
 import numpy as np
 # import paddle
-import signal
 import random
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))

@@ -17,13 +17,18 @@ import subprocess
 
 python_path = sys.executable
 
-ori_path = os.getcwd()
-os.chdir('torchkiln/ocr/postprocess/pse_postprocess/pse')
+# 就地编译 C 扩展 pse：用列表参数 + cwd= 指定工作目录（shell=False）。
+# 相比原来的 shell=True + os.chdir 相对路径：避免 shell 注入风险、避免
+# Windows cmd 下 POSIX 相对路径脆弱、且不再改动进程 cwd（无全局副作用）。
+_pse_dir = os.path.dirname(os.path.realpath(__file__))
 if subprocess.call(
-        '{} setup.py build_ext --inplace'.format(python_path), shell=True) != 0:
+        [python_path, "setup.py", "build_ext", "--inplace"],
+        cwd=_pse_dir) != 0:
     raise RuntimeError(
-        'Cannot compile pse: {}, if your system is windows, you need to install all the default components of `desktop development using C++` in visual studio 2019+'.
-        format(os.path.dirname(os.path.realpath(__file__))))
-os.chdir(ori_path)
+        'Cannot compile pse in {}: if your system is Windows, you need to '
+        'install all the default components of `desktop development using C++` '
+        'in Visual Studio 2019+ '
+        '（Windows 需 VS2019+ 的 C++ 桌面开发工具链，含 C++ 编译器与 v143 工具集）。'
+        .format(_pse_dir))
 
 from .pse import pse
