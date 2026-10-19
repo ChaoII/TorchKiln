@@ -435,6 +435,12 @@ $env:PYTHONIOENCODING="utf-8"
 注意：
 
 - **`--slim` 不会自动触发 `--onnx`**；单独 `--slim` 会在 onnxslim 失败（异常被吞，只打印）。
+- **简单模式（`torchkiln.simple_run` 的 `kind=export`）强制加 `--onnx`**：平台交付物以
+  `model.onnx` 为准（可转 TensorRT/OpenVINO/onnxruntime 等），并校验产物存在；
+  `model.pt`（TorchScript）仅为兼容保留，不作为交付标准。
+- ONNX 用新 dynamo 导出器（`--legacy-exporter` 才回退旧 trace 导出）；需要 `onnx` +
+  `onnxscript`（`torchkiln[export]` 已含 onnx/onnxruntime/onnxslim，`onnxscript` 由
+  AIStation 的 simple 依赖组补齐）。
 - 端到端头（`Head.end2end: true`，v10/v26）ONNX **图内无 NMS**；非端到端需部署侧外部 NMS。
 - 权重按**名字+形状**过滤 `strict=False` 加载，形状不匹配会静默跳过。
 

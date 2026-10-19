@@ -452,21 +452,34 @@ class SimpleRun:
         config_path = self._resolve_config_path()
         out_dir = ((self.spec.params or {}).get("Global.output")
                    or os.path.join("output", "export"))
+        # 简单模式导出统一产出 ONNX：可转任意部署框架（TensorRT/OpenVINO/
+        # onnxruntime…），TorchScript（trace）不再作为交付产物。
+        # tools/export.py 仍会顺带写 model.pt/inference.pth（兼容旧路径），
+        # 平台侧以 model.onnx 为准。
         cmd = [sys.executable, "tools/export.py", "-c", config_path,
                "--weights", str(self.spec.weights_path),
-               "--save-dir", str(out_dir)]
+               "--save-dir", str(out_dir), "--onnx"]
         opts = _build_opts(self.spec)
         if opts:
             cmd += ["-o"] + opts
         # stdout/stderr 默认继承（透传）
         proc = subprocess.run(cmd, cwd=self.repo_root)
-        if proc.returncode == 0:
-            sink.emit("end", {"exit_reason": "finished", "output_dir": out_dir})
-            return 0
-        sink.emit("end", {"exit_reason": "error",
-                          "error": "export exited with code {}".format(
-                              proc.returncode)})
-        return 1
+        if proc.returncode != 0:
+            sink.emit("end", {"exit_reason": "error",
+                              "error": "export exited with code {}".format(
+                                  proc.returncode)})
+            return 1
+        # ⚠️ tools/export.py 对 ONNX 导出异常只 print、进程仍 exit 0（历史行为）。
+        #    平台要的是 ONNX，必须用产物存在性兜底，否则「没导出 ONNX」会被
+        #    当成成功（模型仓库里拿不到可部署文件）。
+        onnx_path = os.path.join(out_dir, "model.onnx")
+        if not os.path.isfile(onnx_path):
+            sink.emit("end", {"exit_reason": "error",
+                              "error": "ONNX 导出失败：未生成 {}".format(onnx_path)})
+            return 1
+        sink.emit("end", {"exit_reason": "finished", "output_dir": out_dir,
+                          "onnx_path": onnx_path})
+        return 0
 
 
 # ---------------------------------------------------------------- CLI

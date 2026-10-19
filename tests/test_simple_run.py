@@ -262,28 +262,52 @@ def test_predict_failure_emits_error_end(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- export
 def test_export_dispatch_subprocess_success(tmp_path, monkeypatch):
     calls = []
+    out_dir = tmp_path / "exp"
 
     class R:
         returncode = 0
 
     def fake_run(cmd, **kw):
         calls.append((cmd, kw))
+        # tools/export.py 正常会写 model.onnx；这里模拟产物
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "model.onnx").write_bytes(b"onnx")
         return R()
 
     monkeypatch.setattr(sr.subprocess, "run", fake_run)
     sp = _write_spec(tmp_path, kind="export", weights_path="w.pth",
-                     params={"Global.output": "/tmp/exp"})
+                     params={"Global.output": str(out_dir)})
     rc, rec = run_one([sp, "--callback-url", "u", "--token", "t"], monkeypatch)
 
     assert rc == 0
     cmd, kw = calls[0]
     assert cmd[0] == sys.executable
     assert cmd[1] == "tools/export.py"
+    assert "--onnx" in cmd, "简单模式导出必须请求 ONNX"
     assert cmd[cmd.index("--weights") + 1] == "w.pth"
-    assert cmd[cmd.index("--save-dir") + 1] == "/tmp/exp"
+    assert cmd[cmd.index("--save-dir") + 1] == str(out_dir)
     assert kw.get("cwd") == str(REPO)
     assert rec.events[-1]["type"] == "end"
     assert rec.events[-1]["exit_reason"] == "finished"
+    assert rec.events[-1]["onnx_path"] == str(out_dir / "model.onnx")
+
+
+def test_export_missing_onnx_is_failure(tmp_path, monkeypatch):
+    """tools/export.py 对 ONNX 失败只 print、仍 exit 0 —— 必须用产物兜底。"""
+    out_dir = tmp_path / "exp"
+
+    class R:
+        returncode = 0
+
+    monkeypatch.setattr(sr.subprocess, "run", lambda cmd, **kw: R())
+    sp = _write_spec(tmp_path, kind="export", weights_path="w.pth",
+                     params={"Global.output": str(out_dir)})
+    rc, rec = run_one([sp, "--callback-url", "u", "--token", "t"], monkeypatch)
+
+    assert rc == 1
+    assert rec.events[-1]["type"] == "end"
+    assert rec.events[-1]["exit_reason"] == "error"
+    assert "ONNX" in rec.events[-1].get("error", "")
 
 
 def test_export_failure_emits_error_end(tmp_path, monkeypatch):
