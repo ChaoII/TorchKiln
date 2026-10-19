@@ -210,7 +210,7 @@ def framework_info(repo_root):
         "metrics": {
             "file": "metrics.jsonl",
             "meta": "meta.json",
-            "events": ["step", "eval", "best", "end"],
+            "events": ["step", "eval", "best", "end", "env"],
             "note": "指标真值在 output_dir 的 JSONL 文件里，服务只做转发不做二次存储",
         },
         "job": {

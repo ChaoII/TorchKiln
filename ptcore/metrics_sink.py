@@ -25,6 +25,7 @@
                 预测**没有精度指标**——它没有 ground truth，任何 mAP 都是编出来的；
                 这里报的是「处理了多少张」这类可验证的事实
   ``end``   作业结束一条（best 值/轮次/退出原因），无论正常结束/早停/异常都会写
+  ``env``   环境指标采样一条（GPU/CPU 利用率等，字段结构由采集方定义）
 
 关闭：环境变量 ``TKILN_METRICS=0``，或配置 ``Global.metrics_sink: false``。
 关闭时返回 :class:`_NullSink`，调用点无需写 ``if``，热路径零开销。
@@ -181,6 +182,9 @@ class _NullSink:
     def end(self, **fields):
         pass
 
+    def env(self, fields):
+        pass
+
     def close(self):
         pass
 
@@ -212,7 +216,7 @@ class MetricSink(object):
         self._meta_written = True
         payload = clean_value(dict(meta or {}))
         payload.setdefault("schema_version", 1)
-        payload.setdefault("metric_events", ["step", "eval", "best", "predict", "end"])
+        payload.setdefault("metric_events", ["step", "eval", "best", "predict", "end", "env"])
         payload["metrics_jsonl"] = os.path.basename(self.jsonl_path)
         try:
             tmp = self.meta_path + ".tmp"
@@ -269,6 +273,17 @@ class MetricSink(object):
         """训练结束一条，然后关闭文件。"""
         self.emit("end", **fields)
         self.close()
+
+    def env(self, fields):
+        """环境指标采样一条（GPU/CPU 利用率等；字段结构由采集方定义）。
+
+        与其他事件的 ``**fields`` 不同，这里收**整体 dict**（接口约定
+        ``env(fields: dict)``）：采样载荷是嵌套结构（gpu 列表等），调用点
+        ``sink.env(sample)`` 更自然。内部展开委托 :meth:`emit`，行格式
+        ``{"ts", "seq", "type": "env", **fields}`` 与其他事件完全一致
+        （同 seq 计数器 / None 丢弃 / 逐行 flush）。
+        """
+        self.emit("env", **fields)
 
     # ---------------------------------------------------------------- 其它
     def close(self):
