@@ -96,7 +96,7 @@ def test_train_dispatch_injects_sink_and_returns_zero(tmp_path, monkeypatch):
     assert rec.events[-1]["exit_reason"] == "finished"
 
 
-def test_train_builder_failure_emits_failed(tmp_path, monkeypatch):
+def test_train_builder_failure_emits_single_error_end(tmp_path, monkeypatch):
     def boom(config, **kwargs):
         raise RuntimeError("config exploded")
     monkeypatch.setattr(sr, "build_trainer", boom)
@@ -104,8 +104,10 @@ def test_train_builder_failure_emits_failed(tmp_path, monkeypatch):
     rc, rec = run_one([sp, "--callback-url", "u", "--token", "t"], monkeypatch)
 
     assert rc == 1
-    # 无法构造 end（trainer 没建起来）-> failed，且不能补 end
-    assert rec.types() == ["failed"]
+    # trainer 没建起来，trainer 的 finally 不会执行，但 end 仍可构造：
+    # 四 kind 一致发 end(error)，不发 failed，且只有这一条终态
+    assert rec.types() == ["end"]
+    assert rec.events[0]["exit_reason"] == "error"
     assert "config exploded" in rec.events[0].get("error", "")
 
 
@@ -296,6 +298,20 @@ def test_export_failure_emits_error_end(tmp_path, monkeypatch):
     assert rec.events[-1]["type"] == "end"
     assert rec.events[-1]["exit_reason"] == "error"
     assert "1" in rec.events[-1].get("error", "")
+
+
+def test_export_missing_weights_emits_single_error_end(tmp_path, monkeypatch):
+    # spec 已解析但 job 无法开始：end 可构造 -> end(error)，不发 failed
+    calls = []
+    monkeypatch.setattr(sr.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    sp = _write_spec(tmp_path, kind="export")   # 无 weights_path
+    rc, rec = run_one([sp, "--callback-url", "u", "--token", "t"], monkeypatch)
+
+    assert rc == 1
+    assert not calls, "缺 weights_path 不应真的起 export 子进程"
+    assert rec.types() == ["end"]
+    assert rec.events[0]["exit_reason"] == "error"
+    assert "weights_path" in rec.events[0].get("error", "")
 
 
 # ---------------------------------------------------------------- 启动即失败

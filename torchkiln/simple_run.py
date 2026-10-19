@@ -27,7 +27,8 @@ body = ``{"task_id": task_id, "seq": ..., "ts": ..., "type": ..., **fields}``）
     already_complete / error）。train 路径由 trainer 的 finally 自动 emit；
     eval / predict / export 路径由本层补发；
   - ``failed`` 只用于**无法构造 end** 的启动即失败（spec 文件不存在 / JSON
-    非法 / kind 未知 / 配置解析或 trainer 构造失败）；
+    非法 / kind 未知——都发生在作业进程真正可用之前）；spec 已解析后
+    任何 kind 的失败（含配置解析 / trainer 构造失败）一律发 ``end(error)``；
   - **不发双终态事件**：``terminal_emitted`` 标记保证失败兜底只在尚未发出
     终态时才补。
 
@@ -312,14 +313,23 @@ class SimpleRun:
         return self._run_export(sink)
 
     def _run_train(self, sink):
-        opts = _train_dataset_opts(self.spec) + _build_opts(self.spec)
-        config = self._load_config(opts)
-        trainer = build_trainer(config, event_sink=sink)
         try:
-            trainer.train()
-        except BaseException:  # noqa: BLE001 - end(error) 已由 trainer finally 发出
+            opts = _train_dataset_opts(self.spec) + _build_opts(self.spec)
+            config = self._load_config(opts)
+            trainer = build_trainer(config, event_sink=sink)
+            try:
+                trainer.train()
+            except BaseException:  # noqa: BLE001 - end(error) 已由 trainer finally 发出
+                return 1
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            # 配置解析 / trainer 构造失败：trainer 的 finally 不会执行，
+            # 但 end 完全可以由本层构造（与其余 kind 一致）→ end(error)，不发 failed
+            if not getattr(sink, "terminal_emitted", False):
+                sink.emit("end", {"exit_reason": "error",
+                                  "error": "{}: {}".format(
+                                      type(exc).__name__, exc)})
             return 1
-        return 0
 
     def _run_eval(self, sink):
         try:
@@ -424,6 +434,16 @@ class SimpleRun:
         return 0
 
     def _run_export(self, sink):
+        try:
+            return self._export(sink)
+        except Exception as exc:  # noqa: BLE001 - 失败也补 end（能构造）
+            if not getattr(sink, "terminal_emitted", False):
+                sink.emit("end", {"exit_reason": "error",
+                                  "error": "{}: {}".format(
+                                      type(exc).__name__, exc)})
+            return 1
+
+    def _export(self, sink):
         if not self.spec.weights_path:
             raise ValueError("export 作业需要 spec.weights_path")
         config_path = self._resolve_config_path()
