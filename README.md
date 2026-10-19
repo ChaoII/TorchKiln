@@ -32,6 +32,7 @@
 | 本文件 §4~§13 | OCR 侧完整细节(数据准备、日志格式、断点续训、结构详解...) |
 | 本文件 §14 / §15 | YOLO 七任务 / YAML 图模型与 ultralytics 兼容性 |
 | 本文件 §16 / §17 | 车牌(检测+识别)/ 属性识别(行人/车辆) |
+| 本文件 §19 | 简单模式:子进程 `simple_run` + HTTP 事件回调(无需 Docker) |
 
 ---
 
@@ -1418,5 +1419,123 @@ E:\TorchKiln
 
 **依赖方向**:`configs → ptcore.config → ptcore.factory → ptcore.trainer.BaseTrainer ← {torchkiln.ocr.TaskAdapter, torchkiln.TaskAdapter}`;
 `ptcore` 不反向依赖任何产品线;`torchkiln/ocr/utils/*`、`torchkiln/ocr/optimizer/` 是兼容 shim(真实现在 `ptcore/`)。
+
+---
+
+## 19. 简单模式(`python -m torchkiln.simple_run`)
+
+**简单模式**让平台侧(如 AIStation)以**单作业子进程**直接调用 TorchKiln:不依赖 Docker 镜像、
+无常驻 service,一个 train/eval/predict/export 作业在本进程内跑完即退出;
+事件经 **HTTP loopback** 推送到 `--callback-url`(header `X-Torchkiln-Token` 鉴权),
+与容器模式(service + SSE/tail)**并存**——两条路线的事件契约同形
+(`simple_run` 的回调 body 与 `metrics.jsonl` 行格式一致,顶层 `None` 字段同样丢弃)。
+
+### 19.1 用法(CLI)
+
+```powershell
+python -m torchkiln.simple_run spec.json `
+  --callback-url http://127.0.0.1:8001/api/v1/train/internal/events `
+  --token <token> `
+  --task-id 42
+```
+
+| 参数 | 说明 |
+|---|---|
+| `spec` | JobSpec JSON 文件路径(契约:`service/schemas.py::JobSpec`) |
+| `--callback-url` | 事件回调地址(HTTP loopback,**必填**) |
+| `--token` | 回调鉴权,放入 `X-Torchkiln-Token` 头(**必填**) |
+| `--task-id` | 作业 ID;每条回调 body 里带 `task_id` 字段 |
+| `--repo-root` | 仓库根(缺省取本文件上一级目录);用于 `sys.path` 注入、配置解析与子进程 `cwd` |
+
+退出码:成功 0,任何失败 1(平台侧按 `returncode` 判定)。
+
+`spec.json` 常用字段:
+
+| 字段 | 适用 kind | 说明 |
+|---|---|---|
+| `kind` | 全部 | `train` / `eval` / `predict` / `export`(缺省 `train`) |
+| `model_name` / `config_path` | 全部 | 二选一;`configs/**` 下的 yml 名/路径(解析优先级见 `ptcore.config_schema.resolve_config`) |
+| `weights_path` | eval / predict / export | 权重路径;eval 注入 `Global.pretrained_model` |
+| `input_dir` | predict | 输入图片文件(单张)或目录(递归) |
+| `params` | 全部 | 点分键 → `-o k=v`,如 `{"Global.epoch_num": 50, "Global.output": "output/xxx"}` |
+| `dataset` | train / eval | `data_dir` / `train_list` / `val_list`(注入 Train/Eval 的 dataset 配置) |
+| `resources` | 全部 | `gpu`(默认 1);predict 时 `>0` 用 `cuda:0`,否则 `cpu` |
+| `seed` | 全部 | 注入 `Global.seed` |
+
+train 作业示例:
+
+```json
+{
+  "kind": "train",
+  "model_name": "PP-OCRv6_small_det",
+  "dataset": {"data_dir": "datasets/ocr/paddleocr_det_demo", "train_list": "train.txt", "val_list": "val.txt"},
+  "params": {"Global.epoch_num": 50, "Global.output": "output/PP-OCRv6_small_det"},
+  "resources": {"gpu": 1},
+  "seed": 2026
+}
+```
+
+kind 分派语义(`torchkiln/simple_run.py`):
+
+| kind | 执行方式 | 说明 |
+|---|---|---|
+| `train` | 进程内 `build_trainer(..., event_sink=).train()` | 事件(step/eval/best/env/end)由 trainer 发出 |
+| `eval` | 进程内 `trainer.evaluate()` | 强制 `epoch_num=0` / `use_ema=False`(对齐 `tools/eval.py`);eval 与 end 事件由本层补发 |
+| `predict` | 进程内 `torchkiln.infer_api.Runtime` 逐张推理 | 可视化结果写到 `params["Global.output"]`(缺省 `output/predict_results`);逐张发 `predict` 进度事件 |
+| `export` | 子进程 `python tools/export.py` | 短任务,stdout/stderr 透传 |
+
+### 19.2 事件契约
+
+每条事件经 HTTP POST 推送,body 形如 `{"task_id", "seq", "ts", "type", **fields}`:
+`seq` 自增、`ts` 为 epoch 秒;字段值为 `None` 的键丢弃(与 `metrics.jsonl` 契约同形)。
+发送失败重试 3 次(1s/2s/4s 退避),仍失败仅记 warning 后丢弃——**事件可丢,训练循环绝不被 HTTP 阻塞**。
+
+| `type` | 频率 | 载荷字段 |
+|---|---|---|
+| `step` | 每 `Global.print_batch_step` 步 | `epoch` `epoch_num` `global_step` `steps_per_epoch` `lr` `loss` `comps` `ips` `eta_sec` `mem_reserved` `mem_allocated` |
+| `eval` | 每次评估 | `main_indicator` `main_value` `main_indicator_mode` `is_best` `fps` `metrics`(全部指标) |
+| `best` | 主指标刷新最优 | `main_indicator` `main_value` `main_indicator_mode` `metrics` `checkpoint`(best 权重已落盘 `best_accuracy.pth`) |
+| `env` | 每 `Global.env_sample_interval` 秒(训练路径) | 见 19.3 |
+| `predict` | predict 作业每完成一张 | `images_total` `images_done` |
+| `end` | **终态,必发一条** | `exit_reason` ∈ `finished` / `early_stop` / `already_complete` / `error`,另含 `epoch` `epoch_num` `global_step` `main_indicator` `main_value` `main_indicator_mode` `best_epoch` `duration_sec`(失败时含 `error`) |
+| `failed` | 仅**启动级失败** | `exit_reason: "setup_failed"` + `error`;只用于 spec 文件不存在 / JSON 非法 / kind 未识别等**作业进程真正可用之前**的失败 |
+
+终态约定:spec 解析成功后,任何 kind 的失败(配置解析 / trainer 构造 / 训练异常)
+都保证发 `end(error)`;`failed` 与之不重复(内部 `terminal_emitted` 标记保证不发双终态)。
+平台侧判定规则与容器模式一致:**进程退出且没收到终态事件 = 异常中断**(断电 / SIGKILL),
+按最后 `seq` + 进程状态判。
+
+### 19.3 env 事件(环境采样)
+
+训练循环按 `Global.env_sample_interval` 秒(默认 5)节流采样,
+由 `ptcore/env_sampler.py` 产出,字段固定为:
+
+```json
+{"type": "env",
+ "gpu": [{"id": 0, "util": 42, "mem_reserved_mb": 4300.1, "mem_allocated_mb": 4100.2,
+          "mem_total_mb": 24564.0, "temp_c": 58, "power_w": 190.5}],
+ "cpu": 12.3, "cpu_per_core": [0.0, 24.5, 12.1, 8.8],
+ "mem": {"used_mb": 8192.0, "total_mb": 32768.0},
+ "disk": {"read_mb_s": 0.0, "write_mb_s": 0.4, "free_mb": 102400.0},
+ "net": {"rx_mb_s": 0.0, "tx_mb_s": 0.0}}
+```
+
+- GPU 显存(`mem_*_mb`)来自 `torch.cuda`,跨平台可用;`util` / `temp_c` / `power_w` 由
+  **可选** `pynvml` 补齐,未安装时这 3 个字段为 `null`;
+- 无 CUDA 时 `gpu == []`;
+- `disk` / `net` 的速率由累计值差值除以时间差得出,**首次采样返回 0**(先记基线);
+- 任何单项采样失败都降级为空值继续,绝不中断训练。
+
+### 19.4 依赖
+
+- **`psutil`** —— 硬依赖(新增),CPU / 内存 / 磁盘 / 网络采样,跨平台无 Linux-only API;
+- **`pynvml`** —— 可选依赖,提供 GPU `util` / `temp_c` / `power_w`,缺失时这些字段为 `null`,不影响其余采样。
+
+### 19.5 Windows
+
+简单模式主链路(配置解析 → 建图 → 训练/评估/推理/导出 → HTTP 事件回调 → 环境采样)
+**跨平台可用**,Windows 实测通过(细节见 [`docs/windows_compat.md`](docs/windows_compat.md))。
+唯一例外:**PSE C 扩展**(OCR PSENet 场景)在 Windows 需要 VS C++ 工具链编译。
+
 
 
