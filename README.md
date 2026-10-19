@@ -1428,7 +1428,8 @@ E:\TorchKiln
 无常驻 service,一个 train/eval/predict/export 作业在本进程内跑完即退出;
 事件经 **HTTP loopback** 推送到 `--callback-url`(header `X-Torchkiln-Token` 鉴权),
 与容器模式(service + SSE/tail)**并存**——两条路线的事件契约同形
-(`simple_run` 的回调 body 与 `metrics.jsonl` 行格式一致,顶层 `None` 字段同样丢弃)。
+(`simple_run` 的回调 body 与 `metrics.jsonl` 行格式**同形**,仅多注入 `task_id` 一个键;
+顶层 `None` 字段同样丢弃)。
 
 ### 19.1 用法(CLI)
 
@@ -1444,10 +1445,10 @@ python -m torchkiln.simple_run spec.json `
 | `spec` | JobSpec JSON 文件路径(契约:`service/schemas.py::JobSpec`) |
 | `--callback-url` | 事件回调地址(HTTP loopback,**必填**) |
 | `--token` | 回调鉴权,放入 `X-Torchkiln-Token` 头(**必填**) |
-| `--task-id` | 作业 ID;每条回调 body 里带 `task_id` 字段 |
+| `--task-id` | 作业 ID;指定后每条回调 body 带 `task_id` 字段(缺省省略) |
 | `--repo-root` | 仓库根(缺省取本文件上一级目录);用于 `sys.path` 注入、配置解析与子进程 `cwd` |
 
-退出码:成功 0,任何失败 1(平台侧按 `returncode` 判定)。
+退出码:成功 0;失败非 0(常规失败 1,CLI 用法错误按 argparse 约定为 2;平台侧按 `returncode` 判定)。
 
 `spec.json` 常用字段:
 
@@ -1497,12 +1498,16 @@ kind 分派语义(`torchkiln/simple_run.py`):
 | `best` | 主指标刷新最优 | `main_indicator` `main_value` `main_indicator_mode` `metrics` `checkpoint`(best 权重已落盘 `best_accuracy.pth`) |
 | `env` | 每 `Global.env_sample_interval` 秒(训练路径) | 见 19.3 |
 | `predict` | predict 作业每完成一张 | `images_total` `images_done` |
-| `end` | **终态,必发一条** | `exit_reason` ∈ `finished` / `early_stop` / `already_complete` / `error`,另含 `epoch` `epoch_num` `global_step` `main_indicator` `main_value` `main_indicator_mode` `best_epoch` `duration_sec`(失败时含 `error`) |
+| `end` | **终态,必发一条** | `exit_reason` ∈ `finished` / `early_stop` / `already_complete` / `error`;以下字段为 **train 路径**:`epoch` `epoch_num` `global_step` `main_indicator` `main_value` `main_indicator_mode` `best_epoch` `duration_sec`(失败时含 `error`) |
 | `failed` | 仅**启动级失败** | `exit_reason: "setup_failed"` + `error`;只用于 spec 文件不存在 / JSON 非法 / kind 未识别等**作业进程真正可用之前**的失败 |
 
 终态约定:spec 解析成功后,任何 kind 的失败(配置解析 / trainer 构造 / 训练异常)
 都保证发 `end(error)`;`failed` 与之不重复(内部 `terminal_emitted` 标记保证不发双终态)。
-平台侧判定规则与容器模式一致:**进程退出且没收到终态事件 = 异常中断**(断电 / SIGKILL),
+eval / predict / export 的 `end` 由 `simple_run` 本层补发,载荷较简:
+eval 为 `main_indicator` / `main_value`,predict 为 `images_total` / `images_done` / `elapsed_sec` / `output_dir`,
+export 为 `output_dir`(失败时同样含 `error`)。
+平台侧判定规则与容器模式一致:**进程退出且没收到终态事件 = 异常**(断电 / SIGKILL,
+或 pre-sink 失败——CLI 用法错误 / 模块级 import 失败,后者可凭**非零退出码 + stderr** 与断电区分),
 按最后 `seq` + 进程状态判。
 
 ### 19.3 env 事件(环境采样)
