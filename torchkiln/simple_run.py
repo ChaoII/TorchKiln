@@ -319,8 +319,11 @@ class SimpleRun:
             trainer = build_trainer(config, event_sink=sink)
             try:
                 trainer.train()
-            except BaseException:  # noqa: BLE001 - end(error) 已由 trainer finally 发出
+            except Exception:  # noqa: BLE001 - end(error) 已由 trainer finally 发出
                 return 1
+            # 说明：这里只捕 Exception（与其余 kind 对称）。终态事件由 trainer 的
+            # finally 兜底（它对 BaseException 也发 end(error) 并 re-raise），
+            # KeyboardInterrupt/SystemExit 自然穿透，进程按中断语义退出。
             return 0
         except Exception as exc:  # noqa: BLE001
             # 配置解析 / trainer 构造失败：trainer 的 finally 不会执行，
@@ -489,20 +492,22 @@ def main(argv=None):
 
     # 启动即失败（spec 不存在/JSON 非法/字段错误）时也要发终态事件：
     # 此时 trainer 不存在、构造不出 end，按约定用 failed。
-    sink = build_http_events(args.callback_url, args.token, args.task_id)
+    # 仅在确实需要发 failed 的分支才创建 sink——happy path 不提前建
+    # （SimpleRun.run 会自己建），避免空转即关的冗余 sink。
     try:
-        try:
-            from service.schemas import JobSpec   # service 包不在 wheel 里，延迟导入
+        from service.schemas import JobSpec   # service 包不在 wheel 里，延迟导入
 
-            raw = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-            spec = JobSpec(**raw)
-        except Exception as exc:  # noqa: BLE001
+        raw = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+        spec = JobSpec(**raw)
+    except Exception as exc:  # noqa: BLE001
+        sink = build_http_events(args.callback_url, args.token, args.task_id)
+        try:
             sink.emit("failed", {"exit_reason": "setup_failed",
                                  "error": "{}: {}".format(
                                      type(exc).__name__, exc)})
-            return 1
-    finally:
-        sink.close()
+        finally:
+            sink.close()
+        return 1
 
     return SimpleRun(spec, args.callback_url, args.token, repo_root_s,
                      args.task_id).run()

@@ -5,7 +5,10 @@
 模型/数据集/优化器等重量依赖；``_emit`` 与 ``_maybe_emit_env``
 是真实的 BaseTrainer 方法，不 mock 被测逻辑。
 """
+import json
+
 from ptcore.events import CallbackList
+from ptcore.metrics_sink import _NullSink, build_sink
 from ptcore.trainers.base import BaseTrainer
 
 
@@ -22,6 +25,9 @@ class _FakeTrainer(BaseTrainer):
         self.config = config
         self.global_config = config["Global"]
         self.is_main = True
+        # 真实 __init__ 必有 metrics_sink（dump_config=False 时为 _NullSink）；
+        # _maybe_emit_env 的 JSONL 双路对它无 if 直调，这里用 _NullSink 兜底。
+        self.metrics_sink = _NullSink()
         # 与真实 __init__ 相同：train_path = dump_config and is_main
         self._init_events(event_sink, train_path=dump_config and self.is_main)
 
@@ -66,6 +72,30 @@ def test_env_sampler_interval_from_config():
     assert trainer._env_sampler._interval == 0.25
     default = _FakeTrainer(_config(), event_sink=None)
     assert default._env_sampler._interval == 5.0
+
+
+def test_env_event_dual_path_writes_metrics_jsonl(tmp_path, monkeypatch):
+    """I1 双路输出：_maybe_emit_env 同时写 metrics.jsonl（真实 build_sink）+ 回调通道。"""
+    events = []
+    cb = CallbackList([lambda t, f: events.append((t, f))])
+    trainer = _FakeTrainer(_config(), event_sink=cb)
+    # 真实 sink（不 mock 被测接线）：把 _FakeTrainer 的 _NullSink 换成 build_sink
+    trainer.metrics_sink = build_sink(
+        str(tmp_path), enabled=True, meta={"framework": "torchkiln"})
+    sample = {"cpu": 12.5, "mem": {"used_mb": 100.0, "total_mb": 200.0}}
+    monkeypatch.setattr(trainer._env_sampler, "maybe_sample", lambda: sample)
+    trainer._maybe_emit_env()
+
+    # 回调通道
+    assert events[-1][0] == "env" and events[-1][1]["cpu"] == 12.5
+    # JSONL 通道：metrics.jsonl 里真实出现 type=="env" 行且字段一致
+    with open(trainer.metrics_sink.jsonl_path, encoding="utf-8") as f:
+        lines = [json.loads(line) for line in f if line.strip()]
+    env_lines = [line for line in lines if line.get("type") == "env"]
+    assert len(env_lines) == 1
+    assert env_lines[0]["cpu"] == 12.5
+    assert env_lines[0]["mem"] == {"used_mb": 100.0, "total_mb": 200.0}
+    assert {"ts", "seq", "type"} <= set(env_lines[0])
 
 
 def test_dump_config_false_still_emits():

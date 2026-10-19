@@ -374,8 +374,9 @@ class BaseTrainer:
 
         # ---- 事件回调（与 metrics_sink 并列，独立通道）----
         # 事件路径与 JSONL sink 解耦：`dump_config=False`（sink 为 _NullSink）
-        # 时 event_sink 仍必须收到事件。EnvSampler 仅训练路径（dump_config 且 rank0）
-        # 创建，eval/check 等非训练路径置 None（_maybe_emit_env 直接 no-op）。
+        # 时 event_sink 仍必须收到事件。event_cb 与 metrics_sink 同样按 rank0
+        # 门控（显式传入 event_sink 时不受限），EnvSampler 仅训练路径
+        # （dump_config 且 rank0）创建，eval/check 等非训练路径置 None。
         self._init_events(event_sink, train_path=dump_config and self.is_main)
 
     def _init_events(self, event_sink, train_path):
@@ -385,8 +386,13 @@ class BaseTrainer:
         :param train_path: 仅训练路径创建 :class:`EnvSampler`（间隔读
             ``Global.env_sample_interval``，默认 5.0 秒），其余路径置 None。
         """
+        # 事件通道与 metrics_sink 一样按 rank0 门控：DDP 下非主 rank 各建一份
+        # CallbackList 会使 seq 在每个 rank 都从 1 起，平台按 seq 去重/补序失效。
+        # 显式传入 event_sink（简单模式单进程场景）必须生效，不受该门控限制。
         self._event_cb = (
-            CallbackList([event_sink]) if event_sink is not None else CallbackList()
+            CallbackList([event_sink])
+            if event_sink is not None
+            else (CallbackList() if self.is_main else None)
         )
         self._env_sampler = (
             EnvSampler(
@@ -397,13 +403,21 @@ class BaseTrainer:
         )
 
     def _emit(self, type, fields):  # noqa: A002 - 与 EventSink.emit 契约一致
-        """发出一条事件；seq/ts 由 CallbackList 注入，异常由其吞掉。"""
-        if self._event_cb:
+        """发出一条事件；seq/ts 由 CallbackList 注入，异常由其吞掉。
+
+        ``_event_cb is None``（DDP 非主 rank 未建事件通道）直接返回，
+        防止多 rank 重复事件。
+        """
+        if self._event_cb is not None:
             self._event_cb.emit(type, fields)
 
     def _maybe_emit_env(self):
-        """按 ``Global.env_sample_interval`` 节流发 ``env`` 事件。
+        """按 ``Global.env_sample_interval`` 节流发 ``env`` 事件（双路输出）。
 
+        与 step/eval/best/end 一致的双路：``metrics_sink.env`` 写
+        ``metrics.jsonl``（容器模式 service tail 零改动转发）+ ``_emit`` 走
+        事件回调通道（简单模式）。``dump_config=False`` 时 sink 是
+        ``_NullSink``，天然 no-op，无需 if。
         与 print_batch_step 打印节流解耦：采样节奏只由 EnvSampler 决定。
         非训练路径（``_env_sampler is None``）直接返回。
         """
@@ -411,6 +425,7 @@ class BaseTrainer:
             return
         data = self._env_sampler.maybe_sample()
         if data is not None:
+            self.metrics_sink.env(data)
             self._emit("env", data)
 
     def _metrics_meta(self):
