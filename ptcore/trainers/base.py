@@ -16,6 +16,8 @@ from torch.utils.data import DataLoader
 
 from ptcore.batch_sampler import PaddleBatchSampler
 from ptcore.ema import ModelEMA
+from ptcore.env_sampler import EnvSampler
+from ptcore.events import CallbackList
 from ptcore.metrics_sink import build_sink, finite_or_none, runtime_env, sink_enabled
 from ptcore.optimizer import build_optimizer
 from ptcore.precision import enable_paddle_like_precision
@@ -67,7 +69,7 @@ class BaseTrainer:
     (``self.task``). Subclasses only need to provide ``_default_task``.
     """
 
-    def __init__(self, config, dump_config=True, task=None):
+    def __init__(self, config, dump_config=True, task=None, event_sink=None):
         self.config = config
         self.global_config = config["Global"]
         gcfg = self.global_config
@@ -369,6 +371,47 @@ class BaseTrainer:
             self.logger.info(
                 "Metrics sink: %s (DDP rank0 only)" % self.metrics_sink.jsonl_path
             )
+
+        # ---- 事件回调（与 metrics_sink 并列，独立通道）----
+        # 事件路径与 JSONL sink 解耦：`dump_config=False`（sink 为 _NullSink）
+        # 时 event_sink 仍必须收到事件。EnvSampler 仅训练路径（dump_config 且 rank0）
+        # 创建，eval/check 等非训练路径置 None（_maybe_emit_env 直接 no-op）。
+        self._init_events(event_sink, train_path=dump_config and self.is_main)
+
+    def _init_events(self, event_sink, train_path):
+        """接线事件回调与环境采样器（事件通道独立于 metrics_sink）。
+
+        :param event_sink: EventSink 对象（带 ``emit``）或同签名函数；None 时空回调。
+        :param train_path: 仅训练路径创建 :class:`EnvSampler`（间隔读
+            ``Global.env_sample_interval``，默认 5.0 秒），其余路径置 None。
+        """
+        self._event_cb = (
+            CallbackList([event_sink]) if event_sink is not None else CallbackList()
+        )
+        self._env_sampler = (
+            EnvSampler(
+                interval=float(self.global_config.get("env_sample_interval", 5.0))
+            )
+            if train_path
+            else None
+        )
+
+    def _emit(self, type, fields):  # noqa: A002 - 与 EventSink.emit 契约一致
+        """发出一条事件；seq/ts 由 CallbackList 注入，异常由其吞掉。"""
+        if self._event_cb:
+            self._event_cb.emit(type, fields)
+
+    def _maybe_emit_env(self):
+        """按 ``Global.env_sample_interval`` 节流发 ``env`` 事件。
+
+        与 print_batch_step 打印节流解耦：采样节奏只由 EnvSampler 决定。
+        非训练路径（``_env_sampler is None``）直接返回。
+        """
+        if self._env_sampler is None:
+            return
+        data = self._env_sampler.maybe_sample()
+        if data is not None:
+            self._emit("env", data)
 
     def _metrics_meta(self):
         """``meta.json`` 的内容：训练启动即写一次。
@@ -887,7 +930,25 @@ class BaseTrainer:
                     mem_reserved=mem_res,
                     mem_allocated=mem_alloc,
                 )
+                # ---- 结构化 step 事件（与 metrics.jsonl 并行的事件通道）----
+                self._emit(
+                    "step",
+                    {
+                        "epoch": epoch + 1,
+                        "epoch_num": self.epoch_num,
+                        "global_step": self.global_step,
+                        "steps_per_epoch": self.steps_per_epoch,
+                        "lr": lr,
+                        "loss": avg_loss,
+                        "comps": comp_vals,
+                        "ips": ips,
+                        "eta_sec": int(remain * avg_batch),
+                        "mem_reserved": mem_res,
+                        "mem_allocated": mem_alloc,
+                    },
+                )
             self._maybe_eval_and_save()
+            self._maybe_emit_env()
         # 对齐 ultralytics:每个 epoch 末更新 E2E loss 的 o2m/o2o 增益调度
         if hasattr(self.loss, "update"):
             self.loss.update()
@@ -1044,6 +1105,18 @@ class BaseTrainer:
             fps=fps,
             metrics=metrics,
         )
+        # ---- 结构化 eval 事件（与 metrics.jsonl 并行的事件通道）----
+        self._emit(
+            "eval",
+            {
+                "main_indicator": self.main_indicator,
+                "main_value": value,
+                "main_indicator_mode": mode,
+                "is_best": bool(better),
+                "fps": fps,
+                "metrics": metrics,
+            },
+        )
         if better:
             self.best_metric = value
             self.best_epoch = self.current_epoch
@@ -1059,6 +1132,16 @@ class BaseTrainer:
                 main_indicator_mode=mode,
                 metrics=dict(self.best_metrics),
                 checkpoint="best_accuracy.pth",
+            )
+            self._emit(
+                "best",
+                {
+                    "main_indicator": self.main_indicator,
+                    "main_value": self.best_metric,
+                    "main_indicator_mode": mode,
+                    "metrics": dict(self.best_metrics),
+                    "checkpoint": "best_accuracy.pth",
+                },
             )
         best = self.best_metrics or dict(metrics)
         others = ", ".join(
@@ -1138,6 +1221,21 @@ class BaseTrainer:
                 metrics=dict(self.best_metrics or {}),
                 duration_sec=round(time.time() - started, 2),
             )
+            self._emit(
+                "end",
+                {
+                    "exit_reason": "already_complete",
+                    "error": None,
+                    "epoch": self.current_epoch,
+                    "epoch_num": self.epoch_num,
+                    "global_step": self.global_step,
+                    "main_indicator": self.main_indicator,
+                    "main_value": finite_or_none(self.best_metric),
+                    "main_indicator_mode": self._indicator_mode,
+                    "best_epoch": self.best_epoch,
+                    "duration_sec": round(time.time() - started, 2),
+                },
+            )
             return
         if self.resumed:
             self.train_batch_sampler.set_epoch(self.start_epoch)
@@ -1194,6 +1292,23 @@ class BaseTrainer:
                 metrics=dict(self.best_metrics or {}),
                 duration_sec=round(time.time() - started, 2),
             )
+            self._emit(
+                "end",
+                {
+                    "exit_reason": reason,
+                    "error": err,
+                    "epoch": self.current_epoch,
+                    "epoch_num": self.epoch_num,
+                    "global_step": self.global_step,
+                    "main_indicator": self.main_indicator,
+                    "main_value": finite_or_none(self.best_metric),
+                    "main_indicator_mode": self._indicator_mode,
+                    "best_epoch": self.best_epoch,
+                    "duration_sec": round(time.time() - started, 2),
+                },
+            )
+            if self._env_sampler is not None:
+                self._env_sampler.close()
         self.logger.info(
             "Training finished. Best %s = %.5f", self.main_indicator, self.best_metric
         )

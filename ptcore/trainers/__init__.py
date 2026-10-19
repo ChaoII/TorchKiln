@@ -90,6 +90,8 @@ def build_trainer(config, **kwargs):
     路由优先级：**显式 ``Architecture.task`` > ``model_family`` > 默认(ocr)**。
     （原先 ``family`` 默认 "ocr" 会吞掉所有只在 ``task`` 里声明家族的新任务，
       例如 ``task: kokoro_tts`` 被误发给 OcrTrainer。）
+
+    ``event_sink``（及其余 kwargs）原样透传给 trainer 构造函数。
     """
     arch = config.get("Architecture") or {}
     task = arch.get("task")
